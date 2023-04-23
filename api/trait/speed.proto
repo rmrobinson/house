@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Speed describes the part of a device which controls the speed setting.
+// This can apply to fans as one example.
+message Speed {
+  message Attributes {
+    // If true, control of the device input property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // The lowest speed that the device is capable of.
+    int32 minimum_speed = 2;
+    // The fastest speed that the device is capable of.
+    int32 maximum_speed = 3;
+    // The increment the speed can be changed by.
+    int32 speed_increment = 4;
+  }
+  message State {
+    int32 current_speed = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

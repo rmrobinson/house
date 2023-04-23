@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/app.proto";
+import "api/trait/brightness.proto";
+import "api/trait/colour.proto";
+import "api/trait/onoff.proto";
+
+// Light is a device which represents a light in a house.
+message Light {
+  faltung.house.api.trait.OnOff on_off = 1;
+  optional faltung.house.api.trait.Brightness brightness = 2;
+  optional faltung.house.api.trait.Colour colour = 3;
+  optional faltung.house.api.trait.App scene = 4;
+}

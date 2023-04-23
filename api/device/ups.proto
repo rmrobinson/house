@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/battery.proto";
+import "api/trait/onoff.proto";
+import "api/trait/power.proto";
+
+// UPS is a device which represents an un-interruptable power supply unit.
+message UPS {
+  faltung.house.api.trait.OnOff on_off = 1;
+  faltung.house.api.trait.Battery battery = 2;
+  faltung.house.api.trait.Power power = 3;
+}

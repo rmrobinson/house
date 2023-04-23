@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+import "google/protobuf/timestamp.proto";
+
+// Time describes the part of a device which configures the time management feature.
+message Time {
+  enum Format {
+    TIME_FORMAT_UNSPECIFIED = 0;
+    TIME_FORMAT_24H = 1;
+    TIME_FORMAT_12H = 2;
+  }
+
+  message Attributes {
+    // If true, control of the device time property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // Can this device be configured to use NTP?
+    bool supports_ntp = 2;
+  }
+
+  message State {
+    // Should we set the timezone automatically (i.e. based on location?)
+    bool set_timezone_automatically = 1;
+    // What timezone is configured for this device?
+    string timezone = 2;
+
+    // How are we showing the time to the user?
+    Format time_format = 3;
+
+    // The NTP server address to use to retrieve time. Only valid if attributes.supports_ntp is true.
+    string ntp_server_addr = 4;
+
+    // The utc time reported on this device.
+    google.protobuf.Timestamp utc = 5;
+
+    // The RFC3999-formatted time this device will be showing (synthesized from the utc + timezone properties).
+    string local_time = 6;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

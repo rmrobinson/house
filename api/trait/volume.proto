@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Volume describes the part of a device which outputs audio.
+message Volume {
+  message Attributes {
+    // If true, control of the device volume property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // Is the device able to be muted? If false, it is necessary to set volume to 0 to disable audio.
+    bool can_mute = 2;
+    // What is the maximum level the device can be set to? It is assumed the minimum is 0.
+    int32 maximum_level = 3;
+  }
+
+  message State {
+    // Is the device currently muted?
+    bool is_muted = 1;
+    // What is the current level of the volume? It will be in the range between 0 and attribute.maximum_level.
+    int32 level = 2;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

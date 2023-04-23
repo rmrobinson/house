@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/device/av_receiver.proto";
+import "api/device/clock.proto";
+import "api/device/generic.proto";
+import "api/device/light.proto";
+import "api/device/sensor.proto";
+import "api/device/thermostat.proto";
+import "api/device/ups.proto";
+
+// Device contains all the relevant information about a device.
+message Device {
+  // Address contains the information required to connect to the bridge managing this device.
+  message Address {
+    // The network address that the bridge managing this device can be reached at.
+    string address = 1;
+
+    // Whether the device is currently reachable at the specified address.
+    bool is_reachable = 2;
+
+    // How many hops the bridge managing this device has to reach this device.
+    int32 hop_count = 3;
+  }
+
+  // Config contains basic configuration information about this device.
+  message Config {
+    // The name of the device.
+    string name = 1;
+    // The description of the device.
+    string description = 2;
+  }
+
+  // Unique ID of this device. Immutable.
+  // Will remain constant even as the address used to reach it changes.
+  // This is safe to use as a storage ID and as a map index to reference the device.
+  // This is read-only.
+  string id = 1;
+
+  // The ID of the device model. Different manufacturers may reuse model IDs, so it is only unique when taken
+  // alongside the manufacturer. This is read-only.
+  string model_id = 10;
+  // The name of the manufacturer of the device. This is read-only.
+  string manufacturer = 11;
+
+  // A marketing name for the device, versus the model ID which is likely to be a more opaque value.
+  optional string model_name = 12;
+  // A description of the device which may assist users in understanding the device behaviour.
+  optional string model_description = 13;
+
+  // Address that this device is currently being reached via.
+  // May change as bridges proxy requests across the mesh.
+  // It is possible that a client may connect to multiple bridges and encounter a device with the same ID.
+  // The client SHOULD choose the address of the bridge that is marking the device as reachable and has the fewest
+  // number of hops to minimize command execution latency.
+  // This is read-only.
+  Address address = 50;
+
+  // Common metadata about the device which the user can set.
+  Config config = 51;
+
+  // The specifics of the device this is.
+  // Control of these is done via spending relevant 'Command' entities to the Bridge.
+  // Each device has a set of supported commands; these can be seen in the comments on the specific device.
+  oneof details {
+    faltung.house.api.device.Generic generic = 100;
+    faltung.house.api.device.AVReceiver av_receiver = 101;
+    faltung.house.api.device.Clock clock = 102;
+    faltung.house.api.device.Light light = 103;
+    faltung.house.api.device.Sensor sensor = 104;
+    faltung.house.api.device.Thermostat thermostat = 105;
+    faltung.house.api.device.UPS ups = 106;
+  }
+}

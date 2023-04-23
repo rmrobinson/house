@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Presence describes the detection of a person or motion in a given location.
+message Presence {
+  message Attributes {
+    // can_control is absent since this is a read only trait.
+  }
+  message State {
+    // Has motion been detected?
+    bool motion_detected = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

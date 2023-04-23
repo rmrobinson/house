@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/air_properties.proto";
+import "api/trait/power.proto";
+import "api/trait/onoff.proto";
+import "api/trait/thermostat.proto";
+
+// Thermostat is a device which represents a thermostat in a house.
+message Thermostat {
+  faltung.house.api.trait.OnOff on_off = 1;
+  faltung.house.api.trait.Thermostat thermostat = 2;
+  faltung.house.api.trait.AirProperties air_properties = 3;
+  optional faltung.house.api.trait.Power power = 4;
+}

@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Battery describes the part of a device which stores power for future consumption.
+// A battery can be part of a laptop, a UPS or a car.
+message Battery {
+  message Attributes {
+    // can_control is not present since this is a read_only trait.
+
+    // Set of potential statuses which can be shown.
+    repeated string statuses = 1;
+  }
+  message State {
+    // If true, the battery is being consumed.
+    bool discharging = 1;
+
+    // The current status of the battery. It is one of the values in attributes.statuses
+    string status = 2;
+
+    // What percentage of the battery capacity remains.
+    int32 capacity_remaining_pct = 3;
+    // What the estimated amount of time remaining on this battery capacity is, given the current consumption.
+    int32 capacity_remaining_mins = 4;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

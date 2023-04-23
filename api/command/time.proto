@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+import "api/trait/time.proto";
+
+// Time commands a device that supports time properties to update its configuration.
+message Time {
+  // The locale-specific timezone to set on this device
+  optional string timezone = 1;
+
+  // The time format to set on this device.
+  optional faltung.house.api.trait.Time.Format format = 2;
+}

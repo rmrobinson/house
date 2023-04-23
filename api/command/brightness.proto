@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// BrightnessRelative controls a device with the brightness trait by changing its brightness by
+// a relative amount from its current brightness.
+// Note: changing the brightness on a device which has an OnOff trait which is set off will not cause the device
+// to be turned on.
+message BrightnessRelative {
+  // The amount, as a fraction of 100, that we want to increase or decrease the brightness.
+  // This can't cause the brightness to exceed 100 or decrease below 0.
+  int32 change_percent = 1;
+}
+
+// BrightnessAbsolute controls a device with the brightness trait by changing its brightness to
+// the specified value, ignoring any current value set.
+// Note: setting the brightness on a device which has an OnOff trait which is set off will not cause the device
+// to be turned on.
+message BrightnessAbsolute {
+  // The amount, as a fraction of 100, to set the brightness to.
+  int32 brightness_percent = 1;
+}

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/air_properties.proto";
+import "api/trait/air_quality.proto";
+import "api/trait/app.proto";
+import "api/trait/audio_output.proto";
+import "api/trait/battery.proto";
+import "api/trait/brightness.proto";
+import "api/trait/colour.proto";
+import "api/trait/input.proto";
+import "api/trait/light_level.proto";
+import "api/trait/media.proto";
+import "api/trait/onoff.proto";
+import "api/trait/power.proto";
+import "api/trait/speed.proto";
+import "api/trait/thermostat.proto";
+import "api/trait/time.proto";
+import "api/trait/volume.proto";
+
+// Generic is a device which supports an arbitrary set of traits.
+// The user of it can't make any assumptions about what the device represents, but it enables flexibility
+// when devices are encountered which don't nicely fit into any of the existing pre-specified device set.
+// Why do we import every potential trait instead of just using a protobuf.Any field? That was done to simplify
+// client implementation - while a repeated protobuf.Any would also meet this requirement the development ergonomics
+// in some programming languages aren't the nicest. Given there is a reasonably fixed set of traits which devices
+// support, and all the implementations are part of this repo anyways, it was decided to add the overhead of adding
+// a new trait to this device every time one is created vs. simply using an Any field here.
+message Generic {
+  optional faltung.house.api.trait.AirProperties air_properties = 1;
+  optional faltung.house.api.trait.AirQuality air_quality = 2;
+  optional faltung.house.api.trait.App app = 3;
+  optional faltung.house.api.trait.AudioOutput audio_output = 4;
+  optional faltung.house.api.trait.Battery battery = 5;
+  optional faltung.house.api.trait.Brightness brightness = 6;
+  optional faltung.house.api.trait.Colour colour = 7;
+  optional faltung.house.api.trait.Input input = 8;
+  optional faltung.house.api.trait.LightLevel light_level = 9;
+  optional faltung.house.api.trait.Media media = 10;
+  optional faltung.house.api.trait.OnOff on_off = 11;
+  optional faltung.house.api.trait.Power power = 12;
+  optional faltung.house.api.trait.Speed speed = 13;
+  optional faltung.house.api.trait.Thermostat thermostat = 14;
+  optional faltung.house.api.trait.Time time = 15;
+  optional faltung.house.api.trait.Volume volume = 16;
+}

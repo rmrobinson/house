@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Power describes the part of a device which captures the current power consumption.
+message Power {
+  message Attributes {
+    // can_control is absent since this is a read only trait.
+
+    // The set of possible statuses of the power monitor.
+    repeated string statuses = 1;
+  }
+  message State {
+    // Current being measured; reported in 0.1 amps.
+    float current_a = 1;
+    // Power being measured; reported in watts.
+    float power_w = 2;
+    // Voltage being measured; reported in volts.
+    float voltage_v = 3;
+    // Frequency of the line voltage, reported in Hz.
+    optional float frequency_hz = 4;
+
+    // What is the current status of the power monitor?
+    string status = 5;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

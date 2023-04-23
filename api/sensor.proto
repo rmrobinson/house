@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+option go_package = "github.com/rmrobinson/house/api";
+
+message SwitchSensor {
+  int32 button = 1;
+  int32 gesture = 2;
+  int32 event_duration = 3;
+  int32 x = 4;
+  int32 y = 5;
+  int32 angle = 6;
+}
+
+message VibrationSensor {
+  bool vibration_detected = 1;
+
+  message Orientation {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+  }
+  Orientation orientation = 2;
+
+  float tilt_angle = 3;
+  float vibration_strength = 4;
+}

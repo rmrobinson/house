@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// AudioOutput describes the part of a device which controls the audio output settings.
+message AudioOutput {
+  message Attributes {
+    // If true, control of the device input property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+  }
+  message State {
+    // The treble adjustment setting.
+    int32 treble_level = 1;
+    // The bass adjustment setting.
+    int32 bass_level = 2;
+    // For stereo audio devices, the balance between outputs.
+    optional int32 balance = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

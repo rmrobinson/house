@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "google/protobuf/timestamp.proto";
+
+import "api/trait/air_properties.proto";
+import "api/trait/air_quality.proto";
+import "api/trait/battery.proto";
+import "api/trait/light_level.proto";
+import "api/trait/power.proto";
+import "api/trait/presence.proto";
+
+// Sensor is a general device which represents a read-only measurement device in a house.
+message Sensor {
+  // Common metadata describing a battery-powered sensor.
+  message Metadata {
+    // When was the last measurement taken from this sensor?
+    google.protobuf.Timestamp last_reported = 1;
+
+    // Is this device powered by a battery?
+    bool on_battery = 2;
+    // Is the battery of this device low? If so, this will be true. Will never be true for hardwired sensors.
+    bool low_battery = 3;
+    // Is the device charging?
+    bool charging = 4;
+  }
+
+  message PowerConsumption {
+    // Energy consumption as measured by the sensor. Reported in kW hours.
+    float consumption_kwh = 1;
+    // Power usage. Reported in watts.
+    float power_usage_w = 2;
+  }
+
+  message BinarySensor {
+    bool is_active = 1;
+  }
+
+  optional Metadata metadata = 1;
+
+  optional faltung.house.api.trait.AirProperties air_properties = 50;
+  optional faltung.house.api.trait.AirQuality air_quality = 10;
+  optional faltung.house.api.trait.Power power = 11;
+  optional faltung.house.api.trait.Battery battery = 12;
+  optional faltung.house.api.trait.LightLevel light_level = 13;
+  optional faltung.house.api.trait.Presence presence = 14;
+
+  // Has an alarm been tripped?
+  optional BinarySensor alarm = 51;
+  // Has a fire been detected?
+  optional BinarySensor fire = 52;
+  // Has water been detected?
+  optional BinarySensor water = 53;
+  // Has something opened? is_active is true if open; false if closed.s
+  optional BinarySensor opened_closed = 54;
+  // Properties of power consumption as measured by the sensor.
+  optional PowerConsumption power_consumption = 55;
+}

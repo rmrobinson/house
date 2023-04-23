@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// AirQuality describes the measurement of various air quality indicators.
+// All of these fields are optionally set as different air quality monitors expose different measurements.
+message AirQuality {
+  message Attributes {
+    // can_control is not present since these are pure measurements.
+
+    // The set of potentially set air qualities.
+    repeated string air_qualities = 1;
+  }
+  message State {
+    // Qualitative statement on the air quality being measured (good, poor, etc.)
+    optional string air_quality = 1;
+
+    // VOC, in parts per billion (PPB)
+    optional int32 volatile_organic_compounds_ppb = 2;
+
+    // Measured Particulate Matter 2.5 microns or smaller, in micrograms per metre cubed.
+    optional int32 pm2_5 = 3;
+
+    // Measured Particulate Matter 10 microns or smaller, in micrograms per metre cubed.
+    optional int32 pm10 = 4;
+
+    // Air Quality index; a scale from 0 - 500. See https://www.airnow.gov/aqi/aqi-basics/ for details.
+    optional int32 aqi = 5;
+
+    // Carbon dioxide measurement, in parts per million (PPM)
+    optional int32 co2_ppm = 6;
+
+    // Radon measurement, in Becquerel per cubic metre (Bq/m3)
+    optional int32 radon_bq_m3 = 7;
+
+    // Whether carbon monoxide has been detected. Binary only.
+    optional bool carbon_monoxide_detected = 8;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

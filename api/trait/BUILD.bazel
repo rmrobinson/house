@@ -1,0 +1,42 @@
+load("@rules_proto//proto:defs.bzl", "proto_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+
+proto_library(
+    name = "trait_proto",
+    srcs = [
+        "air_properties.proto",
+        "air_quality.proto",
+        "app.proto",
+        "audio_output.proto",
+        "battery.proto",
+        "brightness.proto",
+        "colour.proto",
+        "input.proto",
+        "light_level.proto",
+        "media.proto",
+        "onoff.proto",
+        "power.proto",
+        "presence.proto",
+        "speed.proto",
+        "thermostat.proto",
+        "time.proto",
+        "volume.proto",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["@com_google_protobuf//:timestamp_proto"],
+)
+
+go_proto_library(
+    name = "trait_go_proto",
+    importpath = "github.com/rmrobinson/house/api/trait",
+    proto = ":trait_proto",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "trait",
+    embed = [":trait_go_proto"],
+    importpath = "github.com/rmrobinson/house/api/trait",
+    visibility = ["//visibility:public"],
+)

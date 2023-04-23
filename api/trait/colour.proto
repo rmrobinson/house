@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Colour describes the part of a device which can illuminate colour.
+message Colour {
+  message Attributes {
+    // If true, control of the device colour property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    enum Mode {
+      MODE_UNSPECIFIED = 0;
+      MODE_RGB = 1;
+      MODE_HSB = 2;
+    }
+
+    message ColourTemperatureRange {
+      // The minimum colour temperature supported by this device, in Kelvin.
+      int32 min_k = 1;
+      // The maximum colour temperature supported by this device, in Kelvin.
+      int32 max_k = 2;
+    }
+
+    // The colour setting mode supported by this device.
+    Mode mode = 2;
+
+    // If the device supports a colour temperature setting, this will be set with the potential range.
+    // If the device does not support colour temperature, this will not be set.
+    ColourTemperatureRange colour_temperature_range = 3;
+
+  }
+  message State {
+    // The RGB representation of colour.
+    // This value will only be valid if the attributes.mode property is set to MODE_RGB.
+    message RGB {
+      // Red channel - between 0 and 255
+      int32 red = 1;
+      // Green channel - between 0 and 255
+      int32 green = 2;
+      // Blue channel - between 0 and 255
+      int32 blue = 3;
+    }
+    RGB rgb = 1;
+
+    // The HSB representation of colour.
+    // This value will only be valid if the attributes.mode property is set to MODE_HSB.
+    message HSB {
+      // In degrees - between 0 and 360
+      int32 hue = 1;
+      // In percent - between 0 and 100
+      int32 saturation = 2;
+      // In percent - between 0 and 100
+      int32 brightness = 3;
+    }
+    HSB hsb = 2;
+
+    // The colour temperature of the device, in Kelvin.
+    // This value will only be valid if the attributes.colour_temperature_range property is set.
+    int32 colour_temperature_k = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

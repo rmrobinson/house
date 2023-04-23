@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// AirProperties describes the measurement of some basic common air properties.
+message AirProperties {
+  message Attributes {
+    // can_control is not present since these are pure measurements.
+  }
+  message State {
+    // Measured in Celsius
+    float temperature_c = 1;
+
+    // Measured in hPa (hectopascal)
+    float pressure_hpa = 2;
+
+    // What is the humidity measured in the air?
+    float humidity_percentage = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

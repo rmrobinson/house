@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "device",
+    srcs = [
+        "brightness.go",
+        "device.go",
+        "onoff.go",
+        "time.go",
+    ],
+    importpath = "github.com/rmrobinson/house/clients/bridgecli/cmd/device",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/trait",
+        "@com_github_davecgh_go_spew//spew",
+        "@com_github_spf13_cobra//:cobra",
+    ],
+)

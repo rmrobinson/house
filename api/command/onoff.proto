@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// OnOff commands a device with the OnOff trait to be turned on or off.
+message OnOff {
+  // If true, the device will be turned on.
+  // If false, the device will be turned off.
+  bool on = 1;
+}

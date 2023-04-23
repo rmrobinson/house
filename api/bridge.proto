@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+option go_package = "github.com/rmrobinson/house/api";
+
+import "api/command/command.proto";
+import "api/device/device.proto";
+
+/* ----- Primitive Types ----- */
+message Address {
+  message Ip {
+    string host = 1;
+    int32 port = 4;
+  }
+  Ip ip = 1;
+
+  message Usb {
+    string path = 1;
+  }
+  Usb usb = 2;
+}
+
+
+message Bridge {
+  message Config {
+    string name = 1;
+    string description = 2;
+
+    Address address = 10;
+    string timezone = 11;
+  }
+
+  message State {
+    bool is_paired = 1;
+
+    message Zigbee {
+      int32 channel = 1;
+    }
+    Zigbee zigbee = 110;
+
+    message Zwave {
+      string home_id = 1;
+      string mode = 2;
+    }
+    Zwave zwave = 111;
+  }
+
+
+  string id = 1;
+  bool is_reachable = 2;
+
+  string model_id = 10;
+  string manufacturer = 11;
+
+  optional string model_name = 12;
+  optional string model_description = 13;
+
+  Config config = 100;
+  State state = 101;
+}
+
+/* ----- API request/response types ----- */
+
+message GetBridgeRequest {
+  string id = 1;
+}
+
+message ListDevicesRequest {
+}
+message ListDevicesResponse {
+  repeated faltung.house.api.device.Device devices = 1;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+}
+
+message UpdateDeviceConfigRequest {
+  string id = 1;
+  string version = 2;
+  faltung.house.api.device.Device.Config config = 10;
+}
+
+message BridgeUpdate {
+  Bridge bridge = 1;
+  string bridge_id = 2;
+}
+message DeviceUpdate {
+  faltung.house.api.device.Device device = 1;
+  string device_id = 2;
+  string bridge_id = 3;
+}
+
+message StreamBridgeUpdatesRequest {
+}
+message Update {
+  enum Action {
+    CHANGED = 0;
+    ADDED = 1;
+    REMOVED = 2;
+  }
+
+  Action action = 1;
+  oneof Update {
+    BridgeUpdate bridge_update = 2;
+    DeviceUpdate device_update = 3;
+  }
+}
+
+service BridgeService {
+  rpc GetBridge(GetBridgeRequest) returns (Bridge) {}
+
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse) {}
+  rpc GetDevice(GetDeviceRequest) returns (faltung.house.api.device.Device) {}
+  rpc UpdateDeviceConfig(UpdateDeviceConfigRequest) returns (faltung.house.api.device.Device) {}
+  rpc ExecuteCommand(faltung.house.api.command.Command) returns (faltung.house.api.device.Device) {}
+
+  rpc StreamBridgeUpdates(StreamBridgeUpdatesRequest) returns (stream Update) {}
+}

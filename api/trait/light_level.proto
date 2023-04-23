@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// LightLevel describes the part of a device which measures the ambient light level.
+message LightLevel {
+  message Attributes {
+    // If true, control of the device light level property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // Threshold after which the measured light level will stop being considered dark.
+    int32 light_level_dark_threshold = 2;
+    // Offset added to light_level_dark_threshold after which point it is considered to be daylight.
+    int32 light_level_daylight_offset = 3;
+  }
+
+  message State {
+    // The current light level, in lux.
+    float lux = 1;
+    // The current light level - measured as 10000 log10 (lux) + 1.
+    // This is used to determine if the is_dark and is_daylight properties should be set.
+    float light_level = 2;
+    // Whether the light level measurement is less than light_level_dark_threshold
+    bool is_dark = 3;
+    // Whether the light level measurement is greater than (light_level_dark_threshold + light_level_daylight_offset)
+    bool is_daylight = 4;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

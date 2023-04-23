@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Thermostat describes the part of a device which controls the temperature setting.
+message Thermostat {
+  message Attributes {
+    // If true, control of the device input property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // The set of possible modes the fan may be in.
+    repeated string fan_modes = 2;
+  }
+  message State {
+    // If the furnace is experiencing an error - what is the error?
+    optional string error_code = 1;
+    // What is the current mode of the fan?
+    string fan_mode = 2;
+    // What is the temperature set to?
+    float temperature_setpoint = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+import "api/command/brightness.proto";
+import "api/command/onoff.proto";
+import "api/command/time.proto";
+
+// Command contains the information required to request an action be taken on a device.
+message Command {
+  // The unique ID of the device that is going to be changed.
+  string device_id = 1;
+
+  // The specifics of the command we're executing.
+  // Control of these is done via spending relevant 'Command' entities to the Bridge.
+  // Each device has a set of supported commands; these can be seen in the comments on the specific device.
+  oneof details {
+    faltung.house.api.command.OnOff on_off = 100;
+    faltung.house.api.command.BrightnessAbsolute brightness_absolute = 101;
+    faltung.house.api.command.BrightnessRelative brightness_relative = 102;
+    faltung.house.api.command.Time time = 103;
+  }
+}

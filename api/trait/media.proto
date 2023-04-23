@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Media describes the part of a device which manages the playback of media.
+message Media {
+  // PlaybackState includes the possible states of the media controlled by a media player.
+  enum PlaybackState {
+    PS_UNSPECIFIED = 0;
+    PS_PLAYING = 1;
+    PS_PAUSED = 2;
+    PS_FAST_FORWARD = 3;
+    PS_REWIND = 4;
+    PS_BUFFERING = 5;
+  }
+  // DeviceState includes the possible states of the media player itself.
+  enum DeviceState {
+    DEVICE_STATE_UNSPECIFIED = 0;
+    DEVICE_STATE_INACTIVE = 1;
+    DEVICE_STATE_ACTIVE = 2;
+  }
+
+  message Attributes {
+    // If true, control of the media playing is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+  }
+  message State {
+    // The current state of the media playing device.
+    DeviceState device_state = 1;
+    // The current state of the media being played.
+    PlaybackState playback_state = 2;
+
+    optional string file_name = 3;
+    optional string title = 4;
+    optional string artist = 5;
+    optional string album = 6;
+    optional string playlist_name = 7;
+
+    // The length of the media being played, in seconds.
+    int32 playback_length_s = 10;
+    // The current position of the media, in seconds.
+    int32 playback_position_s = 11;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

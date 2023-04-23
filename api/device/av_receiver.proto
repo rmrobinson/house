@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/audio_output.proto";
+import "api/trait/input.proto";
+import "api/trait/onoff.proto";
+import "api/trait/volume.proto";
+
+// AVReceiver is a device which has an audio input and outputs this sound to a speaker.
+message AVReceiver {
+  faltung.house.api.trait.OnOff on_off = 1;
+  faltung.house.api.trait.Volume volume = 2;
+  faltung.house.api.trait.Input input = 3;
+  faltung.house.api.trait.AudioOutput audio_output = 4;
+}

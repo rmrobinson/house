@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// App describes the part of the device running an application.
+// This is intended to be utilized for devices which can support a single active app at any one time;
+// it can also be used in lieu of a 'scene' for devices with scene selection.
+message App {
+  message Attributes {
+    // If true, control of the device application property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // The list of potential applications to select from.
+    repeated string applications = 2;
+  }
+  message State {
+    // The name of the active application. Can be unset or empty if no application is running.
+    string application_id = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

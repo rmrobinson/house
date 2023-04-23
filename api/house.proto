@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+option go_package = "github.com/rmrobinson/house/api";
+
+import "api/device/device.proto";
+
+message Room {
+  message Config {
+
+  }
+  message Properties {
+    // Air quality
+    // Light level
+    // Power consumption?
+    // Presence
+  }
+
+  Config config = 1;
+  Properties properties = 2;
+  repeated faltung.house.api.device.Device devices = 11;
+}
+
+message Floor {
+  message Config {
+    // Which level?
+  }
+  message Properties {
+    // Power consumption?
+    // Presence?
+  }
+
+  Properties properties = 1;
+  repeated Room rooms = 11;
+}
+
+message Building {
+  message Config {
+    // Which location?
+  }
+  message State {
+    // Who is present?
+    // Weather station info?
+  }
+
+  Config config = 1;
+  State state = 2;
+  repeated Floor floors = 11;
+}
+
+message ListBuildingsRequest {
+}
+message ListBuildingsResponse {
+  repeated Building buildings = 1;
+}
+message GetBuildingRequest {
+
+}
+
+service HouseService {
+  rpc ListBuildings(ListBuildingsRequest) returns (ListBuildingsResponse) {}
+  rpc GetDevice(GetBuildingRequest) returns (Building) {}
+
+}

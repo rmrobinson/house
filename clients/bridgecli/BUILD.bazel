@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "bridgecli_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/rmrobinson/house/clients/bridgecli",
+    visibility = ["//visibility:private"],
+    deps = ["//clients/bridgecli/cmd"],
+)
+
+go_binary(
+    name = "bridgecli",
+    embed = [":bridgecli_lib"],
+    visibility = ["//visibility:public"],
+)

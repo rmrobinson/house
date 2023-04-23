@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "raspi-clock_lib",
+    srcs = [
+        "bridge.go",
+        "clock.go",
+        "main.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/raspi-clock",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/bridge",
+        "@com_github_rafalop_sevensegment//:sevensegment",
+        "@org_golang_google_grpc//:go_default_library",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "raspi-clock",
+    embed = [":raspi-clock_lib"],
+    visibility = ["//visibility:public"],
+)

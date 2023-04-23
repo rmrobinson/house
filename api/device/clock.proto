@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/brightness.proto";
+import "api/trait/onoff.proto";
+import "api/trait/time.proto";
+
+// Clock is a device which shows time to a user.
+message Clock {
+  faltung.house.api.trait.OnOff on_off = 1;
+  optional faltung.house.api.trait.Brightness brightness = 2;
+  faltung.house.api.trait.Time time = 3;
+}

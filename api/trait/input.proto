@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Input describes a selection of potential input feeds which can be selected from.
+// These may represent AV inputs to a receiver or TV, for example.
+message Input {
+  // InputDetails stores an input and its associated metadata (such as name).
+  message InputDetails {
+    // ID of the input. Unique and immutable for a given device
+    string id = 1;
+    // The human-presentable way to refer to this input.
+    string name = 2;
+  }
+
+  message Attributes {
+    // If true, control of the device input property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // The list of available inputs on this device.
+    repeated InputDetails inputs = 2;
+
+    // If true, the inputs here should be displayed in the received order.
+    bool is_ordered = 3;
+  }
+  message State {
+    // The ID of the currently selected input.
+    string current_input_id = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}
