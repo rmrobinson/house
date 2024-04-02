@@ -92,7 +92,7 @@ message DeviceUpdate {
   string bridge_id = 3;
 }
 
-message StreamBridgeUpdatesRequest {
+message StreamUpdatesRequest {
 }
 message Update {
   enum Action {
@@ -116,5 +116,5 @@ service BridgeService {
   rpc UpdateDeviceConfig(UpdateDeviceConfigRequest) returns (faltung.house.api.device.Device) {}
   rpc ExecuteCommand(faltung.house.api.command.Command) returns (faltung.house.api.device.Device) {}
 
-  rpc StreamBridgeUpdates(StreamBridgeUpdatesRequest) returns (stream Update) {}
+  rpc StreamUpdates(StreamUpdatesRequest) returns (stream Update) {}
 }
