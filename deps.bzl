@@ -37,7 +37,6 @@ def go_dependencies():
         sum = "h1:p1EgwI/C7NhT0JmVkwCD2ZBK8j4aeHQX2pMHHBfMQ6w=",
         version = "v2.0.2",
     )
-
     go_repository(
         name = "com_github_davecgh_go_spew",
         importpath = "github.com/davecgh/go-spew",
@@ -62,7 +61,6 @@ def go_dependencies():
         sum = "h1:nfP3RFugxnNRyKgeWd4oI1nYvXpxrx8ck8ZrcizshdQ=",
         version = "v1.0.0",
     )
-
     go_repository(
         name = "com_github_golang_protobuf",
         importpath = "github.com/golang/protobuf",
@@ -93,7 +91,6 @@ def go_dependencies():
         sum = "h1:9BSCMi8C+0qdApAp4auwX0RkLGUjs956h0EkuQymUhg=",
         version = "v0.3.0",
     )
-
     go_repository(
         name = "com_github_pkg_errors",
         importpath = "github.com/pkg/errors",
@@ -112,7 +109,6 @@ def go_dependencies():
         sum = "h1:Gd6UmIprEXQ9XsCmNYGbK5WADnTq6xUqUr4lon1YzlA=",
         version = "v0.0.0-20230407112555-2f144c34733e",
     )
-
     go_repository(
         name = "com_github_russross_blackfriday_v2",
         importpath = "github.com/russross/blackfriday/v2",
@@ -131,7 +127,6 @@ def go_dependencies():
         sum = "h1:iy+VFUOCP1a+8yFto/drg2CJ5u0yRoB7fZw3DKv/JXA=",
         version = "v1.0.5",
     )
-
     go_repository(
         name = "com_github_stretchr_testify",
         importpath = "github.com/stretchr/testify",
@@ -876,7 +871,6 @@ def go_dependencies():
         sum = "h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=",
         version = "v0.0.0-20161208181325-20d25e280405",
     )
-
     go_repository(
         name = "in_gopkg_yaml_v3",
         importpath = "gopkg.in/yaml.v3",
@@ -901,7 +895,6 @@ def go_dependencies():
         sum = "h1:T5ojZ2wvnZHGPS4h95N2ZpcCyHnsvH3YRZ1UUUiv5CQ=",
         version = "v3.8.0",
     )
-
     go_repository(
         name = "org_golang_google_appengine",
         importpath = "google.golang.org/appengine",
@@ -920,7 +913,6 @@ def go_dependencies():
         sum = "h1:LAv2ds7cmFV/XTS3XG1NneeENYrXGmorPxsBbptIjNc=",
         version = "v1.53.0",
     )
-
     go_repository(
         name = "org_golang_google_protobuf",
         importpath = "google.golang.org/protobuf",
@@ -969,14 +961,12 @@ def go_dependencies():
         sum = "h1:VveCTK38A2rkS8ZqFY25HIDFscX5X9OoEhJd3quQmXU=",
         version = "v0.1.12",
     )
-
     go_repository(
         name = "org_golang_x_xerrors",
         importpath = "golang.org/x/xerrors",
         sum = "h1:E7g+9GITq07hpfrRu66IVDexMakfv52eLZ2CXBWiKr4=",
         version = "v0.0.0-20191204190536-9bdfabe68543",
     )
-
     go_repository(
         name = "org_uber_go_atomic",
         importpath = "go.uber.org/atomic",
