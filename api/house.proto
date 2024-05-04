@@ -8,7 +8,9 @@ import "api/device/device.proto";
 
 message Room {
   message Config {
-
+    string name = 1;
+    // TODO: use an enum for the Room type
+    int32 type = 2;
   }
   message Properties {
     // Air quality
@@ -17,36 +19,25 @@ message Room {
     // Presence
   }
 
-  Config config = 1;
-  Properties properties = 2;
+  string id = 1;
+  Config config = 2;
+  Properties properties = 3;
   repeated faltung.house.api.device.Device devices = 11;
-}
-
-message Floor {
-  message Config {
-    // Which level?
-  }
-  message Properties {
-    // Power consumption?
-    // Presence?
-  }
-
-  Properties properties = 1;
-  repeated Room rooms = 11;
 }
 
 message Building {
   message Config {
-    // Which location?
+    string name = 1;
   }
   message State {
     // Who is present?
     // Weather station info?
   }
 
-  Config config = 1;
-  State state = 2;
-  repeated Floor floors = 11;
+  string id = 1;
+  Config config = 2;
+  State state = 3;
+  repeated Room rooms = 11;
 }
 
 message ListBuildingsRequest {
@@ -55,11 +46,11 @@ message ListBuildingsResponse {
   repeated Building buildings = 1;
 }
 message GetBuildingRequest {
-
+  string id = 1;
 }
 
 service HouseService {
   rpc ListBuildings(ListBuildingsRequest) returns (ListBuildingsResponse) {}
-  rpc GetDevice(GetBuildingRequest) returns (Building) {}
+  rpc GetBuilding(GetBuildingRequest) returns (Building) {}
 
 }

@@ -98,21 +98,19 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 			return a.svc.handler.ProcessCommand(ctx, req)
 		}
 	} else if d.GetSensor() != nil {
-
 	} else if d.GetThermostat() != nil {
 		if req.GetOnOff() != nil {
 			logger.Debug("processing onoff command")
 			return a.svc.handler.ProcessCommand(ctx, req)
 		}
 	} else if d.GetUps() != nil {
-
 	}
 
 	logger.Info("unsupported command received")
 	return nil, ErrCommandNotSupported
 }
 
-func (a *API) StreamBridgeUpdates(req *api2.StreamBridgeUpdatesRequest, stream api2.BridgeService_StreamBridgeUpdatesServer) error {
+func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {
 	// TODO: register this request for updates with the API
 	// TODO: stream updates
 	return nil

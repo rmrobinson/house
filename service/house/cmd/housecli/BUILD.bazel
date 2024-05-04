@@ -1,21 +1,19 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "housed_lib",
+    name = "housecli_lib",
     srcs = ["main.go"],
-    importpath = "github.com/rmrobinson/house/service/house/cmd/housed",
+    importpath = "github.com/rmrobinson/house/service/house/cmd/housecli",
     visibility = ["//visibility:private"],
     deps = [
-        "//api",
-        "//service/house",
         "//service/house/db",
-        "@org_golang_google_grpc//:go_default_library",
+        "@com_github_mattn_go_sqlite3//:go-sqlite3",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_binary(
-    name = "housed",
-    embed = [":housed_lib"],
+    name = "housecli",
+    embed = [":housecli_lib"],
     visibility = ["//visibility:public"],
 )
