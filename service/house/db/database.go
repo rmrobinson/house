@@ -119,6 +119,26 @@ func (db *Database) CreateRoom(ctx context.Context, r *Room) (*Room, error) {
 	return r, nil
 }
 
+func (db *Database) UpdateRoom(ctx context.Context, r *Room) (*Room, error) {
+	_, err := db.db.ExecContext(ctx, "UPDATE room SET name=?,type=? WHERE id=?", r.Name, r.Type, r.ID)
+	if err != nil {
+		db.logger.Error("unable to update room", zap.String("room_id", r.ID), zap.Error(err))
+		return nil, err
+	}
+
+	return r, nil
+}
+
+func (db *Database) DeleteRoom(ctx context.Context, roomID string) error {
+	_, err := db.db.ExecContext(ctx, "DELETE FROM room WHERE id = ?", roomID)
+	if err != nil {
+		db.logger.Error("unable to delete room", zap.String("room_id", roomID), zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 func (db *Database) GetRoom(ctx context.Context, roomID string) (*Room, error) {
 	room := &Room{}
 	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,name,type FROM room WHERE id=?", roomID)
