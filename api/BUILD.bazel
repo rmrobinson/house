@@ -13,6 +13,7 @@ proto_library(
     deps = [
         "//api/command:command_proto",
         "//api/device:device_proto",
+        "@com_google_protobuf//:empty_proto",
     ],
 )
 
