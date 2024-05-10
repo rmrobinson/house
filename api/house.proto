@@ -5,6 +5,7 @@ package faltung.house.api;
 option go_package = "github.com/rmrobinson/house/api";
 
 import "api/device/device.proto";
+import "google/protobuf/empty.proto";
 
 message Room {
   message Config {
@@ -48,9 +49,18 @@ message ListBuildingsResponse {
 message GetBuildingRequest {
   string id = 1;
 }
+message LinkDeviceRequest {
+  string device_id = 1;
+  string room_id = 2;
+}
+message UnlinkDeviceRequest {
+  string device_id = 1;
+}
 
 service HouseService {
   rpc ListBuildings(ListBuildingsRequest) returns (ListBuildingsResponse) {}
   rpc GetBuilding(GetBuildingRequest) returns (Building) {}
 
+  rpc LinkDevice(LinkDeviceRequest) returns (Room) {}
+  rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
 }

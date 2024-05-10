@@ -135,22 +135,64 @@ func (db *Database) GetRoom(ctx context.Context, roomID string) (*Room, error) {
 }
 
 func (db *Database) GetBuildingRooms(ctx context.Context, buildingID string) ([]Room, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT id,building_id,name,type FROM room WHERE building_id=?", buildingID)
+	rows, err := db.db.QueryContext(ctx, "SELECT room.id AS room_id,room.building_id,room.name,room.type,device_room.id FROM room LEFT JOIN device_room ON room.id=device_room.room_id WHERE room.building_id=?", buildingID)
 	if err != nil {
-		db.logger.Error("unable to get building rooms", zap.String("building_id", buildingID), zap.Error(err))
+		db.logger.Error("unable to get building rooms and devices", zap.String("building_id", buildingID), zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
 
-	var rooms []Room
+	rooms := map[string]Room{}
 	for rows.Next() {
 		room := Room{}
-		err = rows.Scan(&room.ID, &room.BuildingID, &room.Name, &room.Type)
+		var deviceID sql.NullString
+		err = rows.Scan(&room.ID, &room.BuildingID, &room.Name, &room.Type, &deviceID)
 		if err != nil && err != sql.ErrNoRows {
 			db.logger.Error("unable to scan room row", zap.String("building_id", buildingID), zap.Error(err))
 			return nil, err
 		}
-		rooms = append(rooms, room)
+
+		if deviceID.Valid {
+			device := Device{}
+			device.ID = deviceID.String
+			device.RoomID = room.ID
+
+			if r, found := rooms[room.ID]; found {
+				room.Devices = append(r.Devices, device)
+			} else {
+				room.Devices = []Device{device}
+			}
+		}
+
+		rooms[room.ID] = room
 	}
-	return rooms, nil
+
+	var ret []Room
+	for _, r := range rooms {
+		ret = append(ret, r)
+	}
+	return ret, nil
+}
+
+func (db *Database) CreateDevice(ctx context.Context, deviceID string, room Room) (*Device, error) {
+	_, err := db.db.ExecContext(ctx, "INSERT INTO device_room (id, room_id) VALUES (?, ?)", deviceID, room.ID)
+	if err != nil {
+		db.logger.Error("unable to create device", zap.String("device_id", deviceID), zap.Error(err))
+		return nil, err
+	}
+
+	return &Device{
+		ID:     deviceID,
+		RoomID: room.ID,
+	}, nil
+}
+
+func (db *Database) DeleteDevice(ctx context.Context, deviceID string) error {
+	_, err := db.db.ExecContext(ctx, "DELETE FROM device_room WHERE id = ?", deviceID)
+	if err != nil {
+		db.logger.Error("unable to delete device", zap.String("device_id", deviceID), zap.Error(err))
+		return err
+	}
+
+	return nil
 }

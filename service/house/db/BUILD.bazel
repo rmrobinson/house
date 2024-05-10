@@ -5,11 +5,14 @@ go_library(
     srcs = [
         "building.go",
         "database.go",
+        "device.go",
         "room.go",
     ],
     embedsrcs = [
-        "migrations/20231010143848_setup.down.sql",
-        "migrations/20231010143848_setup.up.sql",
+        "migrations/000001_setup.down.sql",
+        "migrations/000001_setup.up.sql",
+        "migrations/000002_add_device_mapping.down.sql",
+        "migrations/000002_add_device_mapping.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/house/db",
     visibility = ["//visibility:public"],

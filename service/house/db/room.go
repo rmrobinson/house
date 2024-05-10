@@ -25,4 +25,6 @@ type Room struct {
 	BuildingID string
 	Name       string
 	Type       RoomType
+
+	Devices []Device
 }
