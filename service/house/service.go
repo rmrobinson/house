@@ -93,10 +93,55 @@ func (s *Service) LinkDevice(ctx context.Context, req *api2.LinkDeviceRequest) (
 }
 
 func (s *Service) UnlinkDevice(ctx context.Context, req *api2.UnlinkDeviceRequest) (*emptypb.Empty, error) {
-	err := s.db.DeleteDevice(ctx, req.DeviceId)
+	err := s.db.DeleteDevice(ctx, req.Id)
 	if err != nil {
-		s.logger.Error("unable to unlink device", zap.String("device_id", req.DeviceId), zap.Error(err))
+		s.logger.Error("unable to unlink device", zap.String("device_id", req.Id), zap.Error(err))
 		return nil, status.Error(codes.Internal, "unable to unlink device")
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+func (s *Service) CreateRoom(ctx context.Context, req *api2.CreateRoomRequest) (*api2.Room, error) {
+	room := &db.Room{
+		Name:       req.Config.Name,
+		BuildingID: req.BuildingId,
+		Type:       db.RoomType(req.Config.Type),
+	}
+
+	res, err := s.db.CreateRoom(context.Background(), room)
+	if err != nil {
+		s.logger.Error("unable to create room", zap.Error(err))
+		return nil, status.Error(codes.Internal, "unable to create room")
+	}
+
+	return roomDBToAPI(*res), nil
+}
+
+func (s *Service) UpdateRoom(ctx context.Context, req *api2.UpdateRoomRequest) (*api2.Room, error) {
+	room, err := s.db.GetRoom(ctx, req.Id)
+	if err != nil {
+		s.logger.Error("unable to get room", zap.String("room_id", req.Id), zap.Error(err))
+		return nil, status.Error(codes.Internal, "unable to get room")
+	}
+
+	room.Name = req.Config.Name
+	room.Type = db.RoomType(req.Config.Type)
+
+	res, err := s.db.UpdateRoom(ctx, room)
+	if err != nil {
+		s.logger.Error("unable to update room", zap.String("room_id", req.Id), zap.Error(err))
+		return nil, status.Error(codes.Internal, "unable to update room")
+	}
+
+	return roomDBToAPI(*res), nil
+}
+
+func (s *Service) DeleteRoom(ctx context.Context, req *api2.DeleteRoomRequest) (*emptypb.Empty, error) {
+	err := s.db.DeleteRoom(ctx, req.Id)
+	if err != nil {
+		s.logger.Error("unable to delete room", zap.String("room_id", req.Id), zap.Error(err))
+		return nil, status.Error(codes.Internal, "unable to delete room")
 	}
 
 	return &emptypb.Empty{}, nil

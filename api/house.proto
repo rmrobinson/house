@@ -54,7 +54,19 @@ message LinkDeviceRequest {
   string room_id = 2;
 }
 message UnlinkDeviceRequest {
-  string device_id = 1;
+  string id = 1;
+}
+
+message CreateRoomRequest {
+  string building_id = 1;
+  Room.Config config = 2;
+}
+message UpdateRoomRequest {
+  string id = 1;
+  Room.Config config = 2;
+}
+message DeleteRoomRequest {
+  string id = 1;
 }
 
 service HouseService {
@@ -63,4 +75,8 @@ service HouseService {
 
   rpc LinkDevice(LinkDeviceRequest) returns (Room) {}
   rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
+
+  rpc CreateRoom(CreateRoomRequest) returns (Room) {}
+  rpc UpdateRoom(UpdateRoomRequest) returns (Room) {}
+  rpc DeleteRoom(DeleteRoomRequest) returns (google.protobuf.Empty) {}
 }
