@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// ChargingSession describes the measurement of a device drawing power to charge.
+message ChargingSession {
+  message Attributes {
+    // can_control is not present since these are pure measurements.
+  }
+  message State {
+    // Measured in seconds
+    int32 duration_s = 1;
+
+    // Measured in watt hours
+    float energy_wh = 2;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

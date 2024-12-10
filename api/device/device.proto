@@ -6,6 +6,7 @@ option go_package = "github.com/rmrobinson/house/api/device";
 
 import "api/device/av_receiver.proto";
 import "api/device/clock.proto";
+import "api/device/ev_charger.proto";
 import "api/device/generic.proto";
 import "api/device/light.proto";
 import "api/device/sensor.proto";
@@ -73,5 +74,6 @@ message Device {
     faltung.house.api.device.Sensor sensor = 104;
     faltung.house.api.device.Thermostat thermostat = 105;
     faltung.house.api.device.UPS ups = 106;
+    faltung.house.api.device.EVCharger ev_charger = 107;
   }
 }
