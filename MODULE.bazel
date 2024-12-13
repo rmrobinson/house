@@ -1,6 +1,7 @@
 """
 This project contains an API and a series of microservices for managing an IoT-enabled house.
-"""module(
+"""
+module(
     name = "house",
     version = "1.0.0",
 )
