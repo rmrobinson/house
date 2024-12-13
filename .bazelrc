@@ -1,0 +1,3 @@
+# Necessary to properly build protobuf on MacOS
+# See https://github.com/protocolbuffers/protobuf/issues/16944 for details
+build --host_cxxopt=-std=c++14 --cxxopt=-std=c++14

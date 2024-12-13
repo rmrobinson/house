@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "bridge",
@@ -10,9 +10,9 @@ go_library(
     importpath = "github.com/rmrobinson/house/service/bridge",
     visibility = ["//visibility:public"],
     deps = [
-        "//api",
-        "//api/command",
-        "//api/device",
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",

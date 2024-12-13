@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "device",
@@ -11,9 +11,9 @@ go_library(
     importpath = "github.com/rmrobinson/house/clients/bridgecli/cmd/device",
     visibility = ["//visibility:public"],
     deps = [
-        "//api",
-        "//api/command",
-        "//api/trait",
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/trait:trait_go_proto",
         "@com_github_davecgh_go_spew//spew",
         "@com_github_spf13_cobra//:cobra",
     ],

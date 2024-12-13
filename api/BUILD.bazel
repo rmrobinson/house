@@ -1,6 +1,7 @@
+load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+
+#gazelle:exclude empty.go
 
 proto_library(
     name = "api_proto",
@@ -13,25 +14,18 @@ proto_library(
     deps = [
         "//api/command:command_proto",
         "//api/device:device_proto",
-        "@com_google_protobuf//:empty_proto",
+        "@protobuf//:empty_proto",
     ],
 )
 
 go_proto_library(
     name = "api_go_proto",
-    compilers = ["@io_bazel_rules_go//proto:go_grpc"],
+    compilers = ["@rules_go//proto:go_grpc"],
     importpath = "github.com/rmrobinson/house/api",
     proto = ":api_proto",
     visibility = ["//visibility:public"],
     deps = [
-        "//api/command",
-        "//api/device",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
     ],
-)
-
-go_library(
-    name = "api",
-    embed = [":api_go_proto"],
-    importpath = "github.com/rmrobinson/house/api",
-    visibility = ["//visibility:public"],
 )

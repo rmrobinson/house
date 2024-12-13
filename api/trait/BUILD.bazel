@@ -1,6 +1,7 @@
+load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
-load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+
+#gazelle:exclude empty.go
 
 proto_library(
     name = "trait_proto",
@@ -24,19 +25,12 @@ proto_library(
         "volume.proto",
     ],
     visibility = ["//visibility:public"],
-    deps = ["@com_google_protobuf//:timestamp_proto"],
+    deps = ["@protobuf//:timestamp_proto"],
 )
 
 go_proto_library(
     name = "trait_go_proto",
     importpath = "github.com/rmrobinson/house/api/trait",
     proto = ":trait_proto",
-    visibility = ["//visibility:public"],
-)
-
-go_library(
-    name = "trait",
-    embed = [":trait_go_proto"],
-    importpath = "github.com/rmrobinson/house/api/trait",
     visibility = ["//visibility:public"],
 )
