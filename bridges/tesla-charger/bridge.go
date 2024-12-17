@@ -4,10 +4,11 @@ import (
 	"context"
 	"sync"
 
+	"go.uber.org/zap"
+
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/bridge"
-	"go.uber.org/zap"
 )
 
 // ChargerBridge acts as the handler for Bridge requests for this charger.
@@ -16,7 +17,17 @@ type ChargerBridge struct {
 
 	charger *Charger
 	svc     *bridge.Service
-	dLock   sync.Mutex
+	dLock   *sync.Mutex
+}
+
+// NewChargerBridge creates a new charger bridge
+func NewChargerBridge(logger *zap.Logger, charger *Charger) *ChargerBridge {
+	return &ChargerBridge{
+		logger:  logger,
+		charger: charger,
+		svc:     nil,
+		dLock:   &sync.Mutex{},
+	}
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
@@ -30,7 +41,7 @@ func (cb *ChargerBridge) ProcessCommand(ctx context.Context, cmd *command.Comman
 // since there isn't 'remote' state which needs to be refreshed.
 func (cb *ChargerBridge) Refresh(ctx context.Context) error {
 	// TODO: call to the Tesla API to refresh the local state.
-	err := cb.charger.Refresh(ctx)
+	_ = cb.charger.Refresh()
 	// TODO: convert err to a Bridge API error
 	return nil
 }
@@ -41,12 +52,11 @@ func (cb *ChargerBridge) updateDevice(d *device.Device) {
 
 	// If the devices are different, trigger an update to registered listeners
 	// TODO: need to use a deep compare
-	if d != cb.d {
+	// TODO: this isn't right
+	if d != cb.charger.deviceFromCachedState() {
 		// Compute delta
 
 		// Send update
 		cb.svc.UpdateDevice(d)
-
-		cb.d = d
 	}
 }

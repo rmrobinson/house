@@ -9,6 +9,7 @@ proto_library(
         "av_receiver.proto",
         "clock.proto",
         "device.proto",
+        "ev_charger.proto",
         "generic.proto",
         "light.proto",
         "sensor.proto",

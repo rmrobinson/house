@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"time"
+
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/bridge"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
 )
 
 func main() {
@@ -17,9 +19,8 @@ func main() {
 		panic(err)
 	}
 
-	cb := &ChargerBridge{
-		c: c,
-	}
+	charger := NewCharger(logger, "http://10.17.16.103", &http.Client{})
+	cb := NewChargerBridge(logger, charger)
 
 	b := &api2.Bridge{
 		Id:               "temporary-id",
@@ -47,7 +48,8 @@ func main() {
 	svc := bridge.NewService(logger, cb, b)
 	api := bridge.NewAPI(logger, svc)
 
-	svc.UpdateDevice(cb.d)
+	cb.svc = svc
+	svc.UpdateDevice(charger.deviceFromCachedState())
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 12345))
 	if err != nil {

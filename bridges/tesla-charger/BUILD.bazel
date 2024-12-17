@@ -1,0 +1,34 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "tesla-charger_lib",
+    srcs = [
+        "bridge.go",
+        "charger.go",
+        "main.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/tesla-charger",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
+        "//api/trait:trait_go_proto",
+        "//service/bridge",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "tesla-charger",
+    embed = [":tesla-charger_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "tesla-charger_test",
+    srcs = ["charger_test.go"],
+    embed = [":tesla-charger_lib"],
+    deps = ["@org_uber_go_zap//zaptest"],
+)

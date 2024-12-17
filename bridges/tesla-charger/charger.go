@@ -1,11 +1,16 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/rmrobinson/house/api/device"
 	"go.uber.org/zap"
+
+	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/api/trait"
 )
 
 // TODO: <IP>/api/1/wifi_status
@@ -26,9 +31,9 @@ type vitalAPIResponse struct {
 	VoltageBAmps             float64 `json:"voltageB_v"`
 	VoltageCAmps             float64 `json:"voltageC_v"`
 	RelayCoilVolts           float64 `json:"relay_coil_v"`
-	PCBATemperatureCelsius   float64 `json:"pcba_temp_c"`
-	HandleTemperatureCelsius float64 `json:"handle_temp_c"`
-	MCUTemperatureCelsius    float64 `json:"mcu_temp_c"`
+	PCBATemperatureCelsius   float32 `json:"pcba_temp_c"`
+	HandleTemperatureCelsius float32 `json:"handle_temp_c"`
+	MCUTemperatureCelsius    float32 `json:"mcu_temp_c"`
 	UptimeSeconds            int     `json:"uptime_s"`
 	InputTermopileUV         int     `json:"input_thermopile_uv"`
 	ProxVoltage              float64 `json:"prox_v"`
@@ -93,7 +98,8 @@ func (c *Charger) Refresh() error {
 
 	c.lastRefreshed = time.Now()
 
-	c.bridge.UpdateDevice(c.deviceFromCachedState())
+	c.bridge.updateDevice(c.deviceFromCachedState())
+	return nil
 }
 
 func (c *Charger) getDataFromAPI(path string, apiPayload interface{}) error {
@@ -109,14 +115,14 @@ func (c *Charger) getDataFromAPI(path string, apiPayload interface{}) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOk {
-		c.logger.Info("got non-200 response code from api request, returning error", zap.String("path", path), zap.Int("response_code", vitalsResp.StatusCode))
+	if resp.StatusCode != http.StatusOK {
+		c.logger.Info("got non-200 response code from api request, returning error", zap.String("path", path), zap.Int("response_code", resp.StatusCode))
 		return errors.New("charger response non-200")
 	}
 
-	err := json.NewDecoder(resp.Body).Decode(apiPayload)
+	err = json.NewDecoder(resp.Body).Decode(apiPayload)
 	if err != nil {
-		c.logger.Info("unable to decode api response body", , zap.String("path", path), zap.Error(err))
+		c.logger.Info("unable to decode api response body", zap.String("path", path), zap.Error(err))
 		return err
 	}
 
@@ -124,9 +130,9 @@ func (c *Charger) getDataFromAPI(path string, apiPayload interface{}) error {
 }
 
 func (c *Charger) refreshCachedValues() error {
-	vitals := vitalAPIResponse{}
-	lifetime := lifetimeAPIResponse{}
-	version := versionAPIResponse{}
+	vitals := &vitalAPIResponse{}
+	lifetime := &lifetimeAPIResponse{}
+	version := &versionAPIResponse{}
 
 	if err := c.getDataFromAPI(fmt.Sprintf("%s/api/1/vitals", c.baseURL), vitals); err != nil {
 		c.logger.Error("unable to query vitals api", zap.Error(err))
@@ -156,10 +162,10 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 	modelName := "Tesla Wall Connector"
 	var chargingSession *trait.ChargingSession
 	if c.cachedVitals.SessionDurationSeconds > 0 {
-		chargingSession := &trait.ChargingSession{
+		chargingSession = &trait.ChargingSession{
 			Attributes: &trait.ChargingSession_Attributes{},
 			State: &trait.ChargingSession_State{
-				DurationS: c.cachedVitals.SessionDurationSeconds,
+				DurationS: int32(c.cachedVitals.SessionDurationSeconds),
 				EnergyWh:  c.cachedVitals.SessionEnergyWattHours,
 			},
 		}
@@ -167,7 +173,7 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 
 	var vehiclePower *trait.Power
 	if c.cachedVitals.VehicleConnected {
-		vehiclePower := &trait.Power{
+		vehiclePower = &trait.Power{
 			Attributes: &trait.Power_Attributes{},
 			State: &trait.Power_State{
 				CurrentA: c.cachedVitals.VehicleCurrentAmps,
@@ -176,25 +182,25 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 	}
 
 	return &device.Device{
-		Id:           c.cachedVitals.SerialNumber,
-		ModelId:      c.cachedVitals.PartNumber,
+		Id:           c.cachedVersion.SerialNumber,
+		ModelId:      c.cachedVersion.PartNumber,
 		Manufacturer: "Tesla",
 		ModelName:    &modelName,
-		Details: &device.Device_EVCharger{
-			EVCharger: &device.EVCharger{
+		Details: &device.Device_EvCharger{
+			EvCharger: &device.EVCharger{
 				OnOff: &trait.OnOff{
 					Attributes: &trait.OnOff_Attributes{
 						CanControl: false,
 					},
 					State: &trait.OnOff_State{
-						IsOn: c.cachedVitals.VehicleConnected,
+						IsOn: c.cachedVitals.ContactorClosed,
 					},
 				},
 				WallPower: &trait.Power{
 					Attributes: &trait.Power_Attributes{},
 					State: &trait.Power_State{
 						VoltageV:    c.cachedVitals.GridVoltage,
-						FrequencyHz: c.cachedVitals.GridFrequencyHertz,
+						FrequencyHz: &c.cachedVitals.GridFrequencyHertz,
 					},
 				},
 				ExteriorConditions: &trait.AirProperties{
@@ -202,7 +208,7 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 					State: &trait.AirProperties_State{
 						TemperatureC: c.cachedVitals.HandleTemperatureCelsius,
 					},
-				}
+				},
 				ChargingSession: chargingSession,
 				VehiclePower:    vehiclePower,
 			},

@@ -14,7 +14,7 @@ message ChargingSession {
     int32 duration_s = 1;
 
     // Measured in watt hours
-    float energy_wh = 2;
+    double energy_wh = 2;
   }
 
   Attributes attributes = 1;
