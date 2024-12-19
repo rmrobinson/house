@@ -175,10 +175,12 @@ func (b *ExampleBridge) Run() {
 		case sig := <-sigChan:
 			b.logger.Debug("received signal", zap.String("value", sig.String()))
 			if sig == syscall.SIGUSR1 {
-				// TODO: update a value on device 1
+				// Toggle the light on or off
+				b.d1.isOn = !b.d1.isOn
 				b.svc.UpdateDevice(b.d1.toDevice())
 			} else if sig == syscall.SIGUSR2 {
-				// TODO: update a value on device 2
+				// Reset the lux level to a low starting value
+				b.d2.luxLevel = 100
 				b.svc.UpdateDevice(b.d2.toDevice())
 			}
 		case <-devTimer.C:

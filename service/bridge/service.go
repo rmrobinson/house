@@ -87,7 +87,13 @@ func (s *Service) UpdateBridge(b *api2.Bridge) {
 		s.logger.Fatal("nil bridge supplied")
 	}
 
-	s.bridge = b
+	if proto.Equal(s.bridge, b) {
+		s.logger.Debug("skipping update since bridge hasn't changed",
+			zap.String("bridge_id", b.Id))
+		return
+	}
+
+	s.bridge = proto.Clone(b).(*api2.Bridge)
 
 	s.updates.SendMessage(&api2.Update{
 		Action: api2.Update_CHANGED,
@@ -111,17 +117,24 @@ func (s *Service) UpdateDevice(d *device.Device) {
 		s.logger.Fatal("nil device supplied")
 	}
 
+	dClone := proto.Clone(d).(*device.Device)
 	action := api2.Update_CHANGED
-	if _, exists := s.devices[d.Id]; exists {
+	if existingDevice, exists := s.devices[d.Id]; exists {
+		if proto.Equal(existingDevice, dClone) {
+			s.logger.Debug("skipping update since device hasn't changed",
+				zap.String("device_id", d.Id))
+			return
+		}
+
 		s.logger.Debug("updating device",
 			zap.String("device_id", d.Id),
 		)
-		s.devices[d.Id] = d
+		s.devices[d.Id] = dClone
 	} else {
 		s.logger.Debug("adding device",
 			zap.String("device_id", d.Id),
 		)
-		s.devices[d.Id] = d
+		s.devices[d.Id] = dClone
 		action = api2.Update_ADDED
 	}
 
@@ -131,7 +144,7 @@ func (s *Service) UpdateDevice(d *device.Device) {
 			DeviceUpdate: &api2.DeviceUpdate{
 				BridgeId: s.bridge.GetId(),
 				DeviceId: d.GetId(),
-				Device:   proto.Clone(d).(*device.Device),
+				Device:   dClone,
 			},
 		},
 	})
@@ -189,7 +202,8 @@ func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*de
 	// In case of error, forward the error on
 	if err != nil {
 		if _, ok := status.FromError(err); !ok {
-			s.logger.Info("received a non-gRPC status error when processing command. rewriting to unknown", zap.Error(err))
+			s.logger.Info("received a non-gRPC status error when processing command. rewriting to unknown",
+				zap.Error(err))
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		return nil, err
