@@ -19,14 +19,15 @@ import (
 type ClockBridge struct {
 	logger *zap.Logger
 
-	c *Clock
+	svc *bridge.Service
+	c   *Clock
 
 	b *api2.Bridge
 	d *device.Device
 }
 
 // NewClockBridge creates a new bridge for the clock implementation
-func NewClockBridge(logger *zap.Logger, c *Clock) *ClockBridge {
+func NewClockBridge(logger *zap.Logger, svc *bridge.Service, c *Clock) *ClockBridge {
 	// Get IDs and configured valeus from viper
 	viper.SetConfigName("raspi-clock")
 	viper.SetConfigType("yaml")
@@ -115,12 +116,17 @@ func NewClockBridge(logger *zap.Logger, c *Clock) *ClockBridge {
 		},
 	}
 
-	return &ClockBridge{
+	cb := &ClockBridge{
 		logger: logger,
+		svc:    svc,
 		c:      c,
 		b:      b,
 		d:      d,
 	}
+
+	svc.RegisterHandler(cb, cb.b)
+
+	return cb
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.

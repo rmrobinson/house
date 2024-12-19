@@ -21,6 +21,8 @@ func main() {
 		panic(err)
 	}
 
+	svc := bridge.NewService(logger)
+
 	d := sevensegment.NewSevenSegment(i2cAddress)
 	d.Clear()
 	d.SetBrightness(0)
@@ -28,12 +30,7 @@ func main() {
 	c := NewClock(d)
 	go c.Run(context.Background())
 
-	cb := NewClockBridge(logger, c)
-
-	svc := bridge.NewService(logger, cb, cb.b)
-	api := bridge.NewAPI(logger, svc)
-
-	svc.UpdateDevice(cb.d)
+	_ = NewClockBridge(logger, svc, c)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 12345))
 	if err != nil {
@@ -43,7 +40,7 @@ func main() {
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)
 
-	api2.RegisterBridgeServiceServer(grpcServer, api)
+	api2.RegisterBridgeServiceServer(grpcServer, svc.API())
 
 	logger.Info("serving requests", zap.String("address", lis.Addr().String()))
 	grpcServer.Serve(lis)

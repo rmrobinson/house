@@ -29,6 +29,7 @@ type Handler interface {
 // Service contains the relevant fields to allow management of devices on the bridge.
 type Service struct {
 	logger *zap.Logger
+	api    *API
 
 	handler Handler
 
@@ -41,16 +42,40 @@ type Service struct {
 }
 
 // NewService creates a new device service
-func NewService(logger *zap.Logger, handler Handler, bridge *api2.Bridge) *Service {
+func NewService(logger *zap.Logger) *Service {
 	svc := &Service{
 		logger:  logger,
-		handler: handler,
-		bridge:  bridge,
 		devices: make(map[string]*device.Device),
 		updates: NewSource(logger),
 	}
+	svc.api = newAPI(logger, svc)
 
 	return svc
+}
+
+// API() returns the associated gRPC API for this service implementation.
+func (s *Service) API() *API {
+	return s.api
+}
+
+// RegisterHandler is to be called by the bridge implementation when it is ready to begin processing requests.
+func (s *Service) RegisterHandler(h Handler, b *api2.Bridge) {
+	if h == nil || b == nil {
+		s.logger.Fatal("nil handler or bridge supplied")
+	}
+
+	s.handler = h
+	s.bridge = b
+
+	s.updates.SendMessage(&api2.Update{
+		Action: api2.Update_ADDED,
+		Update: &api2.Update_BridgeUpdate{
+			BridgeUpdate: &api2.BridgeUpdate{
+				BridgeId: s.bridge.GetId(),
+				Bridge:   proto.Clone(s.bridge).(*api2.Bridge),
+			},
+		},
+	})
 }
 
 // UpdateBridge takes the supplied bridge info and updates it within the service.

@@ -14,6 +14,8 @@ import (
 )
 
 var (
+	// ErrBridgeNotReady is returned if the bridge is in the process of initializing and isn't ready to process requests
+	ErrBridgeNotReady = status.Error(codes.Unavailable, "bridge not ready")
 	// ErrDeviceNotFound is returned when a specified device ID is requested but isn't registered.
 	ErrDeviceNotFound = status.Error(codes.NotFound, "device id not found")
 	// ErrCommandNotSupported is returned when a command is targeted to a device which doesn't support the specified command type.
@@ -30,7 +32,7 @@ type API struct {
 	svc *Service
 }
 
-func NewAPI(logger *zap.Logger, svc *Service) *API {
+func newAPI(logger *zap.Logger, svc *Service) *API {
 	return &API{
 		logger: logger,
 		svc:    svc,
@@ -38,20 +40,29 @@ func NewAPI(logger *zap.Logger, svc *Service) *API {
 }
 
 func (a *API) GetBridge(ctx context.Context, req *api2.GetBridgeRequest) (*api2.Bridge, error) {
+	if a.svc.bridge == nil {
+		return nil, ErrBridgeNotReady
+	}
 	return a.svc.bridge, nil
 }
 
 func (a *API) ListDevices(ctx context.Context, req *api2.ListDevicesRequest) (*api2.ListDevicesResponse, error) {
+	if a.svc.bridge == nil {
+		return nil, ErrBridgeNotReady
+	}
+
 	ret := &api2.ListDevicesResponse{
 		Devices: a.svc.getDevices(),
 	}
-
 	return ret, nil
 }
 
 func (a *API) GetDevice(ctx context.Context, req *api2.GetDeviceRequest) (*device.Device, error) {
-	d := a.svc.getDevice(req.GetId())
+	if a.svc.bridge == nil {
+		return nil, ErrBridgeNotReady
+	}
 
+	d := a.svc.getDevice(req.GetId())
 	if d != nil {
 		return d, nil
 	}
@@ -63,6 +74,10 @@ func (a *API) UpdateDeviceConfig(ctx context.Context, req *api2.UpdateDeviceConf
 }
 
 func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device.Device, error) {
+	if a.svc.bridge == nil {
+		return nil, ErrBridgeNotReady
+	}
+
 	a.svc.devicesLock.Lock()
 	defer a.svc.devicesLock.Unlock()
 
