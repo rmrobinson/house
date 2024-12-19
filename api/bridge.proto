@@ -7,7 +7,6 @@ option go_package = "github.com/rmrobinson/house/api";
 import "api/command/command.proto";
 import "api/device/device.proto";
 
-/* ----- Primitive Types ----- */
 message Address {
   message Ip {
     string host = 1;
@@ -19,6 +18,11 @@ message Address {
     string path = 1;
   }
   Usb usb = 2;
+
+  message I2c {
+    int32 address = 1;
+  }
+  I2c i2c = 3;
 }
 
 
@@ -45,7 +49,6 @@ message Bridge {
     }
     Zwave zwave = 111;
   }
-
 
   string id = 1;
   bool is_reachable = 2;
@@ -91,6 +94,10 @@ message DeviceUpdate {
   string device_id = 2;
   string bridge_id = 3;
 }
+message InitUpdate {
+  Bridge bridge = 1;
+  repeated faltung.house.api.device.Device devices = 2;
+}
 
 message StreamUpdatesRequest {
 }
@@ -99,12 +106,14 @@ message Update {
     CHANGED = 0;
     ADDED = 1;
     REMOVED = 2;
+    INIT = 3;
   }
 
   Action action = 1;
   oneof Update {
-    BridgeUpdate bridge_update = 2;
-    DeviceUpdate device_update = 3;
+    InitUpdate init_update = 2;
+    BridgeUpdate bridge_update = 3;
+    DeviceUpdate device_update = 4;
   }
 }
 

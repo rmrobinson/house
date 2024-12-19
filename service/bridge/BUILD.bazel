@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "bridge",
@@ -6,6 +6,8 @@ go_library(
         "api.go",
         "error.go",
         "service.go",
+        "sink.go",
+        "source.go",
     ],
     importpath = "github.com/rmrobinson/house/service/bridge",
     visibility = ["//visibility:public"],
@@ -13,8 +15,22 @@ go_library(
         "//api:api_go_proto",
         "//api/command:command_go_proto",
         "//api/device:device_go_proto",
+        "@com_github_google_uuid//:uuid",
         "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//peer",
         "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "bridge_test",
+    srcs = ["source_test.go"],
+    embed = [":bridge"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@org_golang_google_protobuf//reflect/protoreflect",
+        "@org_uber_go_zap//zaptest",
     ],
 )

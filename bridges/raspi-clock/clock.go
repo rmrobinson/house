@@ -43,20 +43,15 @@ type Clock struct {
 	display *sevensegment.SevenSegment
 }
 
-// NewClock creates a new clock running in 24 hour time against the UTC location.
+// NewClock creates a new clock running in 24 hour time against the current location.
 func NewClock(d *sevensegment.SevenSegment) *Clock {
-	utc, err := time.LoadLocation("UTC")
-	if err != nil {
-		panic(err)
-	}
-
 	return &Clock{
 		brightnessUpdates: make(chan int),
 		currBrightness:    100,
 		isOnUpdates:       make(chan bool),
 		isOn:              true,
 		timeMode:          TwentyFourHour,
-		timezone:          utc,
+		timezone:          time.Now().Local().Location(),
 		display:           d,
 	}
 }
@@ -159,7 +154,6 @@ func (c *Clock) Run(ctx context.Context) {
 			}
 
 			c.display.WriteData()
-
 		}
 	}
 }
@@ -174,7 +168,7 @@ func (c *Clock) SetBrightness(level int) {
 	c.brightnessUpdates <- level
 }
 
-//SetTimeMode allows for the display time to be changed from 24 hour (default) to 12 hour.
+// SetTimeMode allows for the display time to be changed from 24 hour (default) to 12 hour.
 func (c *Clock) SetTimeMode(mode int) {
 	c.timeMode = mode
 }
