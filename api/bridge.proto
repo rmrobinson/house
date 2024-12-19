@@ -103,10 +103,11 @@ message StreamUpdatesRequest {
 }
 message Update {
   enum Action {
-    CHANGED = 0;
-    ADDED = 1;
-    REMOVED = 2;
-    INIT = 3;
+    UNSPECIFIED = 0;
+    INIT = 1;
+    CHANGED = 2;
+    ADDED = 3;
+    REMOVED = 4;
   }
 
   Action action = 1;

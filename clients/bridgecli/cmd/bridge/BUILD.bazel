@@ -5,6 +5,8 @@ go_library(
     srcs = [
         "bridge.go",
         "get.go",
+        "listDevices.go",
+        "monitor.go",
     ],
     importpath = "github.com/rmrobinson/house/clients/bridgecli/cmd/bridge",
     visibility = ["//visibility:public"],

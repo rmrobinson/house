@@ -26,9 +26,9 @@ go_library(
 
 go_test(
     name = "bridge_test",
+    size = "small",
     srcs = ["source_test.go"],
     embed = [":bridge"],
-    size = "small",
     deps = [
         "@com_github_stretchr_testify//assert",
         "@org_golang_google_protobuf//reflect/protoreflect",

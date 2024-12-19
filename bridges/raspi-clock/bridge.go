@@ -53,7 +53,7 @@ func NewClockBridge(logger *zap.Logger, svc *bridge.Service, c *Clock) *ClockBri
 	bridgeModelName := "Adafruit 1269"
 	bridgeModelDescription := "4 digit 7 segment display"
 	b := &api2.Bridge{
-		Id:               "temporary-id",
+		Id:               viper.GetString("bridge.id"),
 		IsReachable:      true,
 		ModelId:          "RPiClk1",
 		Manufacturer:     "Faltung Networks",
@@ -79,7 +79,7 @@ func NewClockBridge(logger *zap.Logger, svc *bridge.Service, c *Clock) *ClockBri
 	}
 
 	d := &device.Device{
-		Id:           "temporary-id",
+		Id:           viper.GetString("device.id"),
 		ModelId:      "ADA-879",
 		Manufacturer: "Adafruit",
 		ModelName:    &deviceModelName,

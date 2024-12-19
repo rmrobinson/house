@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
@@ -109,15 +111,17 @@ func (s *Service) UpdateDevice(d *device.Device) {
 		s.logger.Fatal("nil device supplied")
 	}
 
-	s.logger.Debug("adding device",
-		zap.String("device_id", d.Id),
-	)
-
-	_, added := s.devices[d.Id]
-	s.devices[d.Id] = d
-
 	action := api2.Update_CHANGED
-	if added {
+	if _, exists := s.devices[d.Id]; exists {
+		s.logger.Debug("updating device",
+			zap.String("device_id", d.Id),
+		)
+		s.devices[d.Id] = d
+	} else {
+		s.logger.Debug("adding device",
+			zap.String("device_id", d.Id),
+		)
+		s.devices[d.Id] = d
 		action = api2.Update_ADDED
 	}
 
@@ -178,4 +182,24 @@ func (s *Service) getDevice(id string) *device.Device {
 		return proto.Clone(d).(*device.Device)
 	}
 	return nil
+}
+
+func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+	retDevice, err := s.handler.ProcessCommand(ctx, cmd)
+	// In case of error, forward the error on
+	if err != nil {
+		if _, ok := status.FromError(err); !ok {
+			s.logger.Info("received a non-gRPC status error when processing command. rewriting to unknown", zap.Error(err))
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		return nil, err
+	}
+
+	// Check if the new device state is different from what we have internally - and if it is update & publish this change.
+	existingDevice := s.getDevice(cmd.DeviceId)
+	if !proto.Equal(existingDevice, retDevice) {
+		s.UpdateDevice(retDevice)
+	}
+
+	return retDevice, nil
 }

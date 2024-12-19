@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "example_lib",
+    srcs = [
+        "bridge.go",
+        "main.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/example",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
+        "//api/trait:trait_go_proto",
+        "//service/bridge",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "example",
+    embed = [":example_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -13,6 +13,7 @@ import (
 	"github.com/rmrobinson/house/api/device"
 )
 
+// These errors are ones that the API itself can return
 var (
 	// ErrBridgeNotReady is returned if the bridge is in the process of initializing and isn't ready to process requests
 	ErrBridgeNotReady = status.Error(codes.Unavailable, "bridge not ready")
@@ -43,7 +44,7 @@ func (a *API) GetBridge(ctx context.Context, req *api2.GetBridgeRequest) (*api2.
 	if a.svc.bridge == nil {
 		return nil, ErrBridgeNotReady
 	}
-	return a.svc.bridge, nil
+	return a.svc.getBridge(), nil
 }
 
 func (a *API) ListDevices(ctx context.Context, req *api2.ListDevicesRequest) (*api2.ListDevicesResponse, error) {
@@ -78,13 +79,9 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 		return nil, ErrBridgeNotReady
 	}
 
-	a.svc.devicesLock.Lock()
-	defer a.svc.devicesLock.Unlock()
-
 	logger := a.logger.With(zap.String("device_id", req.DeviceId))
-	var d *device.Device
-	found := false
-	if d, found = a.svc.devices[req.DeviceId]; !found {
+	d := a.svc.getDevice(req.DeviceId)
+	if d == nil {
 		logger.Debug("request made for unknown device")
 		return nil, ErrDeviceNotFound
 	}
@@ -92,32 +89,32 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 	if d.GetAvReceiver() != nil {
 		if req.GetOnOff() != nil {
 			logger.Debug("processing onoff command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetClock() != nil {
 		if req.GetOnOff() != nil {
 			logger.Debug("processing onoff command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		} else if d.GetClock().GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
 			logger.Debug("processing brightness command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		} else if d.GetClock().GetTime() != nil && req.GetTime() != nil {
 			logger.Debug("processing time command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetLight() != nil {
 		if req.GetOnOff() != nil {
 			logger.Debug("processing onoff command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		} else if d.GetLight().GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
 			logger.Debug("processing brightness command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetSensor() != nil {
 	} else if d.GetThermostat() != nil {
 		if req.GetOnOff() != nil {
 			logger.Debug("processing onoff command")
-			return a.svc.handler.ProcessCommand(ctx, req)
+			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetUps() != nil {
 	}
