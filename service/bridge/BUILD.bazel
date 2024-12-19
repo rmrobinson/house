@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "api.go",
         "error.go",
+        "server.go",
         "service.go",
         "sink.go",
         "source.go",
@@ -16,6 +17,7 @@ go_library(
         "//api/command:command_go_proto",
         "//api/device:device_go_proto",
         "@com_github_google_uuid//:uuid",
+        "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//peer",
         "@org_golang_google_grpc//status",
