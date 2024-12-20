@@ -4,8 +4,11 @@ package faltung.house.api.device;
 
 option go_package = "github.com/rmrobinson/house/api/device";
 
+import "google/protobuf/timestamp.proto";
+
 import "api/device/av_receiver.proto";
 import "api/device/clock.proto";
+import "api/device/ev_charger.proto";
 import "api/device/generic.proto";
 import "api/device/light.proto";
 import "api/device/sensor.proto";
@@ -62,6 +65,9 @@ message Device {
   // Common metadata about the device which the user can set.
   Config config = 51;
 
+  // When this device was last seen.
+  google.protobuf.Timestamp last_seen = 52;
+
   // The specifics of the device this is.
   // Control of these is done via spending relevant 'Command' entities to the Bridge.
   // Each device has a set of supported commands; these can be seen in the comments on the specific device.
@@ -73,5 +79,6 @@ message Device {
     faltung.house.api.device.Sensor sensor = 104;
     faltung.house.api.device.Thermostat thermostat = 105;
     faltung.house.api.device.UPS ups = 106;
+    faltung.house.api.device.EVCharger ev_charger = 107;
   }
 }

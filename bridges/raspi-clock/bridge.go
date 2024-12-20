@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
 	api2 "github.com/rmrobinson/house/api"
@@ -28,38 +29,16 @@ type ClockBridge struct {
 
 // NewClockBridge creates a new bridge for the clock implementation
 func NewClockBridge(logger *zap.Logger, svc *bridge.Service, c *Clock) *ClockBridge {
-	// Get IDs and configured valeus from viper
-	viper.SetConfigName("raspi-clock")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/house")
-	viper.AddConfigPath("$HOME/house")
-	viper.AddConfigPath(".")
+	// Get IDs and configured values from viper
 
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			deviceID := uuid.New().String()
-			bridgeID := uuid.New().String()
-
-			logger.Debug("config missing, saving new device and bridge ids", zap.String("bridge_id", bridgeID), zap.String("device_id", deviceID))
-
-			viper.Set("bridge.id", bridgeID)
-			viper.Set("device.id", deviceID)
-
-			viper.WriteConfig()
-		}
-		logger.Fatal("unable to read viper config", zap.Error(err))
-	}
-
-	bridgeModelName := "Adafruit 1269"
-	bridgeModelDescription := "4 digit 7 segment display"
 	b := &api2.Bridge{
-		Id:               viper.GetString("bridge.id"),
-		IsReachable:      true,
-		ModelId:          "RPiClk1",
-		Manufacturer:     "Faltung Networks",
-		ModelName:        &bridgeModelName,
-		ModelDescription: &bridgeModelDescription,
+		Id:           viper.GetString("bridge.id"),
+		IsReachable:  true,
+		ModelId:      "RPiClk1",
+		Manufacturer: "Faltung Networks",
 		Config: &api2.Bridge_Config{
+			Name:        viper.GetString("bridge.name"),
+			Description: viper.GetString("bridge.description"),
 			Address: &api2.Address{
 				I2C: &api2.Address_I2C{
 					Address: i2cAddress,
@@ -73,16 +52,19 @@ func NewClockBridge(logger *zap.Logger, svc *bridge.Service, c *Clock) *ClockBri
 	}
 
 	deviceModelName := "Adafruit 7 Segment Display"
+	deviceModelDescription := "4 digit 7 segment display"
 	deviceMode := trait.Time_TIME_FORMAT_24H
 	if c.timeMode == TwelveHour {
 		deviceMode = trait.Time_TIME_FORMAT_12H
 	}
 
 	d := &device.Device{
-		Id:           viper.GetString("device.id"),
-		ModelId:      "ADA-879",
-		Manufacturer: "Adafruit",
-		ModelName:    &deviceModelName,
+		Id:               viper.GetString("device.id"),
+		ModelId:          "ADA-879",
+		Manufacturer:     "Adafruit",
+		ModelName:        &deviceModelName,
+		ModelDescription: &deviceModelDescription,
+		LastSeen:         timestamppb.New(time.Now()),
 		Details: &device.Device_Clock{
 			Clock: &device.Clock{
 				OnOff: &trait.OnOff{
@@ -169,6 +151,7 @@ func (cb *ClockBridge) ProcessCommand(ctx context.Context, cmd *command.Command)
 		return nil, bridge.ErrUnsupportedCommand
 	}
 
+	cb.d.LastSeen = timestamppb.New(time.Now())
 	return cb.d, nil
 }
 

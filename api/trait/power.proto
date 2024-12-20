@@ -14,13 +14,13 @@ message Power {
   }
   message State {
     // Current being measured; reported in 0.1 amps.
-    float current_a = 1;
+    double current_a = 1;
     // Power being measured; reported in watts.
-    float power_w = 2;
+    double power_w = 2;
     // Voltage being measured; reported in volts.
-    float voltage_v = 3;
+    double voltage_v = 3;
     // Frequency of the line voltage, reported in Hz.
-    optional float frequency_hz = 4;
+    optional double frequency_hz = 4;
 
     // What is the current status of the power monitor?
     string status = 5;

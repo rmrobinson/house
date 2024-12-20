@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/air_properties.proto";
+import "api/trait/charging_session.proto";
+import "api/trait/onoff.proto";
+import "api/trait/power.proto";
+
+// EVCharger is a device which provides power to an electric vehicle.
+message EVCharger {
+  faltung.house.api.trait.OnOff on_off = 1;
+  faltung.house.api.trait.Power wall_power = 2;
+  optional faltung.house.api.trait.Power vehicle_power = 3;
+  optional faltung.house.api.trait.AirProperties exterior_conditions = 5;
+  optional faltung.house.api.trait.ChargingSession charging_session = 6;
+}
