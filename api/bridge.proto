@@ -94,7 +94,7 @@ message DeviceUpdate {
   string device_id = 2;
   string bridge_id = 3;
 }
-message InitUpdate {
+message InitialUpdate {
   Bridge bridge = 1;
   repeated faltung.house.api.device.Device devices = 2;
 }
@@ -104,7 +104,7 @@ message StreamUpdatesRequest {
 message Update {
   enum Action {
     UNSPECIFIED = 0;
-    INIT = 1;
+    INITIAL = 1;
     CHANGED = 2;
     ADDED = 3;
     REMOVED = 4;
@@ -112,7 +112,7 @@ message Update {
 
   Action action = 1;
   oneof Update {
-    InitUpdate init_update = 2;
+    InitialUpdate initial_update = 2;
     BridgeUpdate bridge_update = 3;
     DeviceUpdate device_update = 4;
   }

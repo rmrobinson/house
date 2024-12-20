@@ -134,9 +134,9 @@ func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeSe
 	logger.Debug("bridge stream initialized")
 
 	initUpdate := &api2.Update{
-		Action: api2.Update_INIT,
-		Update: &api2.Update_InitUpdate{
-			InitUpdate: &api2.InitUpdate{
+		Action: api2.Update_INITIAL,
+		Update: &api2.Update_InitialUpdate{
+			InitialUpdate: &api2.InitialUpdate{
 				Bridge:  a.svc.getBridge(),
 				Devices: a.svc.getDevices(),
 			},
