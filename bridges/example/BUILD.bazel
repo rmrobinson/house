@@ -1,13 +1,12 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "raspi-clock_lib",
+    name = "example_lib",
     srcs = [
         "bridge.go",
-        "clock.go",
         "main.go",
     ],
-    importpath = "github.com/rmrobinson/house/bridges/raspi-clock",
+    importpath = "github.com/rmrobinson/house/bridges/example",
     visibility = ["//visibility:private"],
     deps = [
         "//api:api_go_proto",
@@ -15,16 +14,13 @@ go_library(
         "//api/device:device_go_proto",
         "//api/trait:trait_go_proto",
         "//service/bridge",
-        "@com_github_google_uuid//:uuid",
-        "@com_github_rafalop_sevensegment//:sevensegment",
-        "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_binary(
-    name = "raspi-clock",
-    embed = [":raspi-clock_lib"],
+    name = "example",
+    embed = [":example_lib"],
     visibility = ["//visibility:public"],
 )
