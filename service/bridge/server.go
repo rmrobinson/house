@@ -17,7 +17,7 @@ type Server struct {
 	svc        *Service
 }
 
-// NewServer creates a new server.
+// NewServer creates a new server with an opinionated set of options set.
 // Once ready it is necessary to call Serve() or ServeOnPort() to expose the service.
 func NewServer(logger *zap.Logger, svc *Service) *Server {
 	var opts []grpc.ServerOption

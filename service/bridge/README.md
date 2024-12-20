@@ -12,3 +12,7 @@ The typical implementation of a bridge would entail the following steps:
 Since a bridge might be started without having established communication with the remote system, the `Service` type is created first. When the `Handler` is ready to process requests, it should register itself with the `Service` using the `RegisterHandler` method. This signals to the remote clients that requests will be processed. After calling `RegisterHandler` the bridge should register the available devices through the `UpdateDevice` method on the service; and use both this and the `UpdateBridge` methods as further updates happen to ensure the state is kept in sync between the remote nodes and the `Service`.
 
 Internally, the `Service` clones any object it receives from the handler to avoid changes from being made to the object without a related `Update` call being made.
+
+## What Might Change?
+- the API type is exported to allow bridge implementations to register the server itself - this might not actually end up being useful and could be made private
+- the Source and Sink types should probably be moved to be either package private or refactored to be a separate library

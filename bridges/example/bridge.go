@@ -79,6 +79,7 @@ func (d *dev) toDevice() *device.Device {
 	return ret
 }
 
+// ExampleBridge contains an implementation of a bridge with 2 virtual devices.
 type ExampleBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
@@ -88,6 +89,7 @@ type ExampleBridge struct {
 	d2 *dev
 }
 
+// NewExampleBridge creates a bridge with a hardcoded ID, and 2 hardcoded devices.
 func NewExampleBridge(logger *zap.Logger, svc *bridge.Service) *ExampleBridge {
 	bridgeModelName := "Example Bridge 1"
 	bridgeModelDescription := "Example bridge implementation for testing"
@@ -164,6 +166,9 @@ func (b *ExampleBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 	return nil
 }
 
+// Run begins processing async updates - instead of interfacing with real-world devices
+// instead the SIGUSR1 and SIGUSR2 signals are listened as triggers for state changes.
+// This also starts a timer which updates the lux of the second device every 30 seconds.
 func (b *ExampleBridge) Run() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGUSR1, syscall.SIGUSR2)
