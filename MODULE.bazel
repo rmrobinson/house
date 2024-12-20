@@ -32,10 +32,12 @@ use_repo(
     "com_github_mdlayher_apcupsd",
     "com_github_picatz_roku",
     "com_github_rafalop_sevensegment",
+    "com_github_rmrobinson_airthings_btle",
     "com_github_spf13_cobra",
     "com_github_spf13_viper",
     "com_github_stretchr_testify",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
+    "org_tinygo_x_bluetooth",
     "org_uber_go_zap",
 )

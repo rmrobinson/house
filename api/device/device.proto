@@ -56,6 +56,9 @@ message Device {
   // A description of the device which may assist users in understanding the device behaviour.
   optional string model_description = 13;
 
+  // A version string for the software running on the device.
+  optional string software_version = 15;
+
   // Address that this device is currently being reached via.
   // May change as bridges proxy requests across the mesh.
   // It is possible that a client may connect to multiple bridges and encounter a device with the same ID.
