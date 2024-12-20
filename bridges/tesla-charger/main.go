@@ -1,15 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"net"
 	"net/http"
-	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 
-	api2 "github.com/rmrobinson/house/api"
+	"github.com/google/uuid"
+	"github.com/spf13/viper"
+
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -19,48 +17,51 @@ func main() {
 		panic(err)
 	}
 
-	charger := NewCharger(logger, "http://10.17.16.103", &http.Client{})
-	cb := NewChargerBridge(logger, charger)
+	viper.SetConfigName("tesla-charger")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("$HOME/.config/house")
+	viper.AddConfigPath(".")
 
-	b := &api2.Bridge{
-		Id:               "temporary-id",
-		IsReachable:      true,
-		ModelId:          "TWC1",
-		Manufacturer:     "Faltung Networks",
-		ModelName:        nil,
-		ModelDescription: nil,
-		Config: &api2.Bridge_Config{
-			Name:        "",
-			Description: "",
-			Address: &api2.Address{
-				Ip: &api2.Address_Ip{
-					Host: "10.17.20.102",
-					Port: 12345,
-				},
-			},
-			Timezone: time.Local.String(),
-		},
-		State: &api2.Bridge_State{
-			IsPaired: true,
-		},
+	if err := viper.ReadInConfig(); err != nil {
+		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	svc := bridge.NewService(logger, cb, b)
-	api := bridge.NewAPI(logger, svc)
+	if len(viper.GetString("bridge.id")) < 1 {
+		bridgeID := uuid.New().String()
 
-	cb.svc = svc
-	svc.UpdateDevice(charger.deviceFromCachedState())
+		logger.Info("config missing bridge id, saving new bridge id",
+			zap.String("bridge_id", bridgeID))
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 12345))
+		viper.Set("bridge.id", bridgeID)
+
+		err = viper.WriteConfig()
+		if err != nil {
+			logger.Fatal("unable to write new config", zap.Error(err))
+		}
+	}
+
+	svc := bridge.NewService(logger)
+
+	chargerIP := viper.GetString("charger.ip")
+	if len(chargerIP) < 1 {
+		logger.Fatal("charger.ip must be set in the config")
+	}
+
+	charger := NewCharger(logger, chargerIP, &http.Client{})
+	cb := NewChargerBridge(logger, svc, charger)
+
+	state, err := charger.State()
 	if err != nil {
-		logger.Fatal("failed to listen", zap.Error(err))
+		logger.Fatal("unable to get state from charger", zap.Error(err))
 	}
 
-	var opts []grpc.ServerOption
-	grpcServer := grpc.NewServer(opts...)
+	// Once we've successfully gotten the device state, register the handler and device with the service
+	svc.RegisterHandler(cb, cb.b)
+	svc.UpdateDevice(state.toDevice())
 
-	api2.RegisterBridgeServiceServer(grpcServer, api)
+	// Check for updates periodically
+	go cb.Run()
 
-	logger.Info("serving requests", zap.String("address", lis.Addr().String()))
-	grpcServer.Serve(lis)
+	s := bridge.NewServer(logger, svc)
+	s.Serve()
 }

@@ -66,6 +66,8 @@ func (s *Service) RegisterHandler(h Handler, b *api2.Bridge) {
 		s.logger.Fatal("nil handler or bridge supplied")
 	}
 
+	s.logger.Info("registering handler", zap.String("bridge_id", b.Id))
+
 	s.handler = h
 	s.bridge = b
 

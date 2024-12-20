@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/api/trait"
@@ -68,124 +69,48 @@ type versionAPIResponse struct {
 	SerialNumber    string `json:"serial_number"`
 }
 
-type Charger struct {
-	logger *zap.Logger
+// ChargerState contains the snapshot of the state of the charger at a specified point in time.
+type ChargerState struct {
+	vitals   *vitalAPIResponse
+	lifetime *lifetimeAPIResponse
+	version  *versionAPIResponse
 
-	baseURL string
-	client  *http.Client
-
-	lastRefreshed  time.Time
-	cachedVitals   *vitalAPIResponse
-	cachedLifetime *lifetimeAPIResponse
-	cachedVersion  *versionAPIResponse
-
-	bridge *ChargerBridge
+	retrievedAt time.Time
 }
 
-func NewCharger(logger *zap.Logger, baseURL string, client *http.Client) *Charger {
-	return &Charger{
-		logger:  logger,
-		baseURL: baseURL,
-		client:  client,
-	}
-}
-
-func (c *Charger) Refresh() error {
-	if err := c.refreshCachedValues(); err != nil {
-		c.logger.Info("error refreshing cached values", zap.Error(err))
-		return err
-	}
-
-	c.lastRefreshed = time.Now()
-
-	c.bridge.updateDevice(c.deviceFromCachedState())
-	return nil
-}
-
-func (c *Charger) getDataFromAPI(path string, apiPayload interface{}) error {
-	req, err := http.NewRequest(http.MethodGet, path, nil)
-	if err != nil {
-		c.logger.Error("unable to create http request for vitals", zap.Error(err))
-		return err
-	}
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		c.logger.Info("unable to make api get", zap.String("path", path), zap.Error(err))
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		c.logger.Info("got non-200 response code from api request, returning error", zap.String("path", path), zap.Int("response_code", resp.StatusCode))
-		return errors.New("charger response non-200")
-	}
-
-	err = json.NewDecoder(resp.Body).Decode(apiPayload)
-	if err != nil {
-		c.logger.Info("unable to decode api response body", zap.String("path", path), zap.Error(err))
-		return err
-	}
-
-	return nil
-}
-
-func (c *Charger) refreshCachedValues() error {
-	vitals := &vitalAPIResponse{}
-	lifetime := &lifetimeAPIResponse{}
-	version := &versionAPIResponse{}
-
-	if err := c.getDataFromAPI(fmt.Sprintf("%s/api/1/vitals", c.baseURL), vitals); err != nil {
-		c.logger.Error("unable to query vitals api", zap.Error(err))
-		return err
-	}
-	if err := c.getDataFromAPI(fmt.Sprintf("%s/api/1/lifetime", c.baseURL), lifetime); err != nil {
-		c.logger.Error("unable to query lifetime api", zap.Error(err))
-		return err
-	}
-	if err := c.getDataFromAPI(fmt.Sprintf("%s/api/1/version", c.baseURL), version); err != nil {
-		c.logger.Error("unable to query version api", zap.Error(err))
-		return err
-	}
-
-	c.cachedVitals = vitals
-	c.cachedLifetime = lifetime
-	c.cachedVersion = version
-
-	return nil
-}
-
-func (c *Charger) deviceFromCachedState() *device.Device {
-	if c.cachedVitals == nil || c.cachedVersion == nil || c.cachedLifetime == nil {
+func (cs *ChargerState) toDevice() *device.Device {
+	if cs.vitals == nil || cs.version == nil || cs.lifetime == nil {
 		return nil
 	}
 
 	modelName := "Tesla Wall Connector"
 	var chargingSession *trait.ChargingSession
-	if c.cachedVitals.SessionDurationSeconds > 0 {
+	if cs.vitals.SessionDurationSeconds > 0 {
 		chargingSession = &trait.ChargingSession{
 			Attributes: &trait.ChargingSession_Attributes{},
 			State: &trait.ChargingSession_State{
-				DurationS: int32(c.cachedVitals.SessionDurationSeconds),
-				EnergyWh:  c.cachedVitals.SessionEnergyWattHours,
+				DurationS: int32(cs.vitals.SessionDurationSeconds),
+				EnergyWh:  cs.vitals.SessionEnergyWattHours,
 			},
 		}
 	}
 
 	var vehiclePower *trait.Power
-	if c.cachedVitals.VehicleConnected {
+	if cs.vitals.VehicleConnected {
 		vehiclePower = &trait.Power{
 			Attributes: &trait.Power_Attributes{},
 			State: &trait.Power_State{
-				CurrentA: c.cachedVitals.VehicleCurrentAmps,
+				CurrentA: cs.vitals.VehicleCurrentAmps,
 			},
 		}
 	}
 
 	return &device.Device{
-		Id:           c.cachedVersion.SerialNumber,
-		ModelId:      c.cachedVersion.PartNumber,
+		Id:           cs.version.SerialNumber,
+		ModelId:      cs.version.PartNumber,
 		Manufacturer: "Tesla",
 		ModelName:    &modelName,
+		LastSeen:     timestamppb.New(cs.retrievedAt),
 		Details: &device.Device_EvCharger{
 			EvCharger: &device.EVCharger{
 				OnOff: &trait.OnOff{
@@ -193,20 +118,20 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 						CanControl: false,
 					},
 					State: &trait.OnOff_State{
-						IsOn: c.cachedVitals.ContactorClosed,
+						IsOn: cs.vitals.ContactorClosed,
 					},
 				},
 				WallPower: &trait.Power{
 					Attributes: &trait.Power_Attributes{},
 					State: &trait.Power_State{
-						VoltageV:    c.cachedVitals.GridVoltage,
-						FrequencyHz: &c.cachedVitals.GridFrequencyHertz,
+						VoltageV:    cs.vitals.GridVoltage,
+						FrequencyHz: &cs.vitals.GridFrequencyHertz,
 					},
 				},
 				ExteriorConditions: &trait.AirProperties{
 					Attributes: &trait.AirProperties_Attributes{},
 					State: &trait.AirProperties_State{
-						TemperatureC: c.cachedVitals.HandleTemperatureCelsius,
+						TemperatureC: cs.vitals.HandleTemperatureCelsius,
 					},
 				},
 				ChargingSession: chargingSession,
@@ -214,4 +139,91 @@ func (c *Charger) deviceFromCachedState() *device.Device {
 			},
 		},
 	}
+}
+
+// Charger provides access to the Tesla charger through its REST API.
+type Charger struct {
+	logger *zap.Logger
+
+	ipAddr string
+	client *http.Client
+}
+
+// NewCharger creates a new charger using the supplied IP for connectivity.
+func NewCharger(logger *zap.Logger, chargerIP string, client *http.Client) *Charger {
+	return &Charger{
+		logger: logger,
+		ipAddr: chargerIP,
+		client: client,
+	}
+}
+
+func (c *Charger) getDataFromAPI(path string, apiPayload interface{}) error {
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s%s", c.ipAddr, path), nil)
+	if err != nil {
+		c.logger.Error("unable to create http request for vitals",
+			zap.Error(err))
+		return err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		c.logger.Info("unable to make api get",
+			zap.String("charger_ip", c.ipAddr),
+			zap.String("path", path),
+			zap.Error(err))
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		c.logger.Error("got non-200 response code from api request, returning error",
+			zap.String("charger_ip", c.ipAddr),
+			zap.String("path", path),
+			zap.Int("response_code", resp.StatusCode))
+		return errors.New("charger response non-200")
+	} else if resp.Header.Get("Content-Type") != "application/json" {
+		c.logger.Error("got non-json content type from api request, returning error",
+			zap.String("charger_ip", c.ipAddr),
+			zap.String("path", path),
+			zap.String("content_type", resp.Header.Get("Content-Type")))
+		return errors.New("charger response non-json")
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(apiPayload)
+	if err != nil {
+		c.logger.Info("unable to decode api response body",
+			zap.String("charger_ip", c.ipAddr),
+			zap.String("path", path),
+			zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+// State queries the charger and returns its current state.
+func (c *Charger) State() (*ChargerState, error) {
+	vitals := &vitalAPIResponse{}
+	lifetime := &lifetimeAPIResponse{}
+	version := &versionAPIResponse{}
+
+	if err := c.getDataFromAPI("/api/1/vitals", vitals); err != nil {
+		c.logger.Error("unable to query vitals api", zap.Error(err))
+		return nil, err
+	}
+	if err := c.getDataFromAPI("/api/1/lifetime", lifetime); err != nil {
+		c.logger.Error("unable to query lifetime api", zap.Error(err))
+		return nil, err
+	}
+	if err := c.getDataFromAPI("/api/1/version", version); err != nil {
+		c.logger.Error("unable to query version api", zap.Error(err))
+		return nil, err
+	}
+
+	return &ChargerState{
+		vitals:      vitals,
+		lifetime:    lifetime,
+		version:     version,
+		retrievedAt: time.Now(),
+	}, nil
 }

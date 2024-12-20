@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
-	"sync"
+	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
+	"github.com/spf13/viper"
+
+	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/bridge"
@@ -14,20 +19,42 @@ import (
 // ChargerBridge acts as the handler for Bridge requests for this charger.
 type ChargerBridge struct {
 	logger *zap.Logger
+	svc    *bridge.Service
 
 	charger *Charger
-	svc     *bridge.Service
-	dLock   *sync.Mutex
+	b       *api2.Bridge
 }
 
 // NewChargerBridge creates a new charger bridge
-func NewChargerBridge(logger *zap.Logger, charger *Charger) *ChargerBridge {
-	return &ChargerBridge{
-		logger:  logger,
-		charger: charger,
-		svc:     nil,
-		dLock:   &sync.Mutex{},
+func NewChargerBridge(logger *zap.Logger, svc *bridge.Service, charger *Charger) *ChargerBridge {
+	b := &api2.Bridge{
+		Id:           viper.GetString("bridge.id"),
+		IsReachable:  true,
+		ModelId:      "TWC1",
+		Manufacturer: "Faltung Networks",
+		Config: &api2.Bridge_Config{
+			Name:        viper.GetString("bridge.name"),
+			Description: viper.GetString("bridge.description"),
+			Address: &api2.Address{
+				Ip: &api2.Address_Ip{
+					Host: charger.ipAddr,
+					Port: 80,
+				},
+			},
+		},
+		State: &api2.Bridge_State{
+			IsPaired: true,
+		},
 	}
+
+	cb := &ChargerBridge{
+		logger:  logger,
+		svc:     svc,
+		charger: charger,
+		b:       b,
+	}
+
+	return cb
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
@@ -37,26 +64,46 @@ func (cb *ChargerBridge) ProcessCommand(ctx context.Context, cmd *command.Comman
 	return nil, bridge.ErrUnsupportedCommand
 }
 
-// Refresh is present to conform to the bridge.Handler interface. In this implementation it does nothing
-// since there isn't 'remote' state which needs to be refreshed.
-func (cb *ChargerBridge) Refresh(ctx context.Context) error {
-	// TODO: call to the Tesla API to refresh the local state.
-	_ = cb.charger.Refresh()
-	// TODO: convert err to a Bridge API error
+// SetBridgeConfig takes the supplied config params and saves them for future reference.
+func (cb *ChargerBridge) SetBridgeConfig(ctx context.Context, config bridge.Config) error {
+	cb.b.Config.Name = config.Name
+	cb.b.Config.Description = config.Description
+
+	viper.Set("bridge.name", config.Name)
+	viper.Set("bridge.description", config.Description)
+	viper.WriteConfig()
+
 	return nil
 }
 
-func (cb *ChargerBridge) updateDevice(d *device.Device) {
-	cb.dLock.Lock()
-	defer cb.dLock.Unlock()
+// Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
+// the charger API and returns the current state of the charger.
+func (cb *ChargerBridge) Refresh(ctx context.Context) error {
+	chargerState, err := cb.charger.State()
+	if err != nil {
+		cb.logger.Error("unable to get charger state",
+			zap.Error(err))
+		return status.Error(codes.Internal, "unable to refresh charger state")
+	}
 
-	// If the devices are different, trigger an update to registered listeners
-	// TODO: need to use a deep compare
-	// TODO: this isn't right
-	if d != cb.charger.deviceFromCachedState() {
-		// Compute delta
+	cb.svc.UpdateDevice(chargerState.toDevice())
+	return nil
+}
 
-		// Send update
-		cb.svc.UpdateDevice(d)
+// Run begins the process of polling the charger API and reporting back the state.
+func (cb *ChargerBridge) Run() {
+	refreshTimer := time.NewTicker(time.Minute * 5)
+	for {
+		select {
+		case <-refreshTimer.C:
+			chargerState, err := cb.charger.State()
+			if err != nil {
+				cb.logger.Error("unable to get charger state",
+					zap.Error(err))
+				continue
+			}
+
+			cb.svc.UpdateDevice(chargerState.toDevice())
+		}
 	}
 }

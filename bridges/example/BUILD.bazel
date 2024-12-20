@@ -14,7 +14,6 @@ go_library(
         "//api/device:device_go_proto",
         "//api/trait:trait_go_proto",
         "//service/bridge",
-        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],
 )
