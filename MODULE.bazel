@@ -26,6 +26,8 @@ use_repo(
     "com_github_davecgh_go_spew",
     "com_github_golang_migrate_migrate_v4",
     "com_github_google_uuid",
+    "com_github_hekmon_plexwebhooks",
+    "com_github_lukehagar_plexgo",
     "com_github_mattn_go_sqlite3",
     "com_github_mdlayher_apcupsd",
     "com_github_rafalop_sevensegment",

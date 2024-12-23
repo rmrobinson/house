@@ -14,12 +14,60 @@ message Media {
     PS_FAST_FORWARD = 3;
     PS_REWIND = 4;
     PS_BUFFERING = 5;
+    PS_STOPPED = 6;
+    PS_COMPLETED = 7;
   }
   // DeviceState includes the possible states of the media player itself.
   enum DeviceState {
     DEVICE_STATE_UNSPECIFIED = 0;
     DEVICE_STATE_INACTIVE = 1;
     DEVICE_STATE_ACTIVE = 2;
+  }
+
+  // Type includes the type of media being played.
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+    TYPE_SHOW = 1;
+    TYPE_MOVIE = 2;
+    TYPE_SONG = 3;
+  }
+
+  message ShowDetails {
+    string id = 1;
+    string episode_title = 2;
+    string episode_summary = 3;
+    int32 release_year = 4;
+    string content_rating = 5;
+    optional string art_url = 6;
+
+    string season_id = 10;
+    string season_title = 11;
+
+    string show_id = 20;
+    string show_title = 21;
+  }
+
+  message MovieDetails {
+    string id = 1;
+    string title = 2;
+    string summary = 3;
+    string studio = 4;
+    int32 release_year = 5;
+    string content_rating = 6;
+    optional string art_url = 7;
+  }
+
+  message SongDetails {
+    string id = 1;
+    string song_name = 2;
+    repeated string artists = 3;
+    string album_name = 4;
+    int32 release_year = 5;
+    optional string album_art_url = 6;
+
+    optional string playlist_id = 10;
+    optional string playlist_name = 11;
+    optional string playlist_art_url = 12;
   }
 
   message Attributes {
@@ -32,17 +80,17 @@ message Media {
     DeviceState device_state = 1;
     // The current state of the media being played.
     PlaybackState playback_state = 2;
+    // The type of media being played
+    Type media_type = 3;
 
-    optional string file_name = 3;
-    optional string title = 4;
-    optional string artist = 5;
-    optional string album = 6;
-    optional string playlist_name = 7;
+    optional ShowDetails show_details = 10;
+    optional MovieDetails movie_details = 11;
+    optional SongDetails song_details = 12;
 
     // The length of the media being played, in seconds.
-    int32 playback_length_s = 10;
+    double playback_length_s = 20;
     // The current position of the media, in seconds.
-    int32 playback_position_s = 11;
+    double playback_position_s = 21;
   }
 
   Attributes attributes = 1;

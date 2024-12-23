@@ -3,9 +3,11 @@ module github.com/rmrobinson/house
 go 1.22.9
 
 require (
+	github.com/LukeHagar/plexgo v0.17.0
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/golang-migrate/migrate/v4 v4.16.2
 	github.com/google/uuid v1.6.0
+	github.com/hekmon/plexwebhooks v1.2.0
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/mdlayher/apcupsd v0.0.0-20230802135538-48f5030bcd58
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
@@ -19,6 +21,7 @@ require (
 
 require (
 	github.com/benbjohnson/clock v1.1.0 // indirect
+	github.com/ericlagergren/decimal v0.0.0-20221120152707-495c53812d05 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect

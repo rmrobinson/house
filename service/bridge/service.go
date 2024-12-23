@@ -152,6 +152,10 @@ func (s *Service) UpdateDevice(d *device.Device) {
 	})
 }
 
+// TODO: create a function to take a set of devices and do a full replacement.
+// This can be useful to easily identify if devices have been added or removed under the hood
+// without each bridge implementation needing to query & delta this themselves.
+
 // RemoveDevice removes the specified device ID from the service.
 // This should be called by bridge implementations when a removal of the specified device is detected.
 func (s *Service) RemoveDevice(id string) {
