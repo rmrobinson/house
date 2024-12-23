@@ -12,6 +12,7 @@ proto_library(
         "ev_charger.proto",
         "generic.proto",
         "light.proto",
+        "media_player.proto",
         "sensor.proto",
         "thermostat.proto",
         "ups.proto",

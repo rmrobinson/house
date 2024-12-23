@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/media.proto";
+
+// MediaPlayer is a device which has the ability to play audio or video content.
+message MediaPlayer {
+  faltung.house.api.trait.Media media = 1;
+}
