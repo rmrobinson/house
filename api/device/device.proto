@@ -13,6 +13,7 @@ import "api/device/generic.proto";
 import "api/device/light.proto";
 import "api/device/media_player.proto";
 import "api/device/sensor.proto";
+import "api/device/television.proto";
 import "api/device/thermostat.proto";
 import "api/device/ups.proto";
 
@@ -82,6 +83,6 @@ message Device {
     faltung.house.api.device.UPS ups = 106;
     faltung.house.api.device.EVCharger ev_charger = 107;
     faltung.house.api.device.MediaPlayer media_player = 108;
-
+    faltung.house.api.device.Television television = 109;
   }
 }

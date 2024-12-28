@@ -10,6 +10,7 @@ require (
 	github.com/hekmon/plexwebhooks v1.2.0
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/mdlayher/apcupsd v0.0.0-20230802135538-48f5030bcd58
+	github.com/picatz/roku v0.0.0-20230221144619-ec649293f9b5
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.19.0
@@ -27,6 +28,7 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/koron/go-ssdp v0.0.4 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect

@@ -14,6 +14,7 @@ proto_library(
         "light.proto",
         "media_player.proto",
         "sensor.proto",
+        "television.proto",
         "thermostat.proto",
         "ups.proto",
     ],
