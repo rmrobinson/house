@@ -31,7 +31,7 @@ func rokuStateToDevice(info *roku.DeviceInfo, apps roku.Apps, activeApp *roku.Ap
 	appTrait := &trait.App{
 		Attributes: &trait.App_Attributes{
 			CanControl:   true,
-			Applications: []string{},
+			Applications: []*trait.App_Instance{},
 		},
 		State: &trait.App_State{},
 	}
@@ -42,7 +42,12 @@ func rokuStateToDevice(info *roku.DeviceInfo, apps roku.Apps, activeApp *roku.Ap
 				Id: app.ID, Name: app.Name,
 			})
 		} else {
-			appTrait.Attributes.Applications = append(appTrait.Attributes.Applications, app.Name)
+			appTrait.Attributes.Applications = append(appTrait.Attributes.Applications, &trait.App_Instance{
+				Id:      app.ID,
+				Name:    app.Name,
+				Version: app.Version,
+				Type:    app.Type,
+			})
 		}
 	}
 	if activeApp != nil {
@@ -143,7 +148,7 @@ func (rb *RokuBridge) Refresh(ctx context.Context) error {
 		return status.Error(codes.Internal, "unable to refresh roku endpoints")
 	}
 
-	var foundEndpoints map[string]bool
+	foundEndpoints := map[string]bool{}
 
 	for _, endpoint := range endpoints {
 		info, err := endpoint.DeviceInfo()
