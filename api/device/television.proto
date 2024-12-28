@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/app.proto";
+import "api/trait/input.proto";
+import "api/trait/media.proto";
+import "api/trait/onoff.proto";
+import "api/trait/volume.proto";
+
+// Television is a device which displays video to a user.
+// Different smart TVs have different capabilities, making all
+// of the traits here optional.
+// Smart-TV-enabling devices, such as Rokus or Chromecasts,
+// would also fit into this device type.
+message Television {
+  optional faltung.house.api.trait.OnOff on_off = 1;
+  optional faltung.house.api.trait.Volume volume = 2;
+  optional faltung.house.api.trait.Input input = 3;
+  optional faltung.house.api.trait.App app = 4;
+  optional faltung.house.api.trait.Media media = 5;
+}
