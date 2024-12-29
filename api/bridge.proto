@@ -23,6 +23,11 @@ message Address {
     int32 address = 1;
   }
   I2c i2c = 3;
+
+  message Bluetooth {
+    string address = 1;
+  }
+  Bluetooth bluetooth = 4;
 }
 
 
