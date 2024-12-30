@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Volume commands a device with the Volume trait to have its volume adjusted.
+message Volume {
+  // Sets the volume of the device to the specified value.
+  // The value must be within the range of [0, maximum volume specified in the Volume trait attribute] otherwise this command will fail.
+  int32 volume = 1;
+
+  // If true, the device will be muted.
+  // If false, the device will be unmuted.
+  // This is only going to succeed if the device is capable of being muted.
+  optional bool muted = 2;
+}

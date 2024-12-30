@@ -24,7 +24,7 @@ type PlexBridge struct {
 	client *Plex
 }
 
-// NewChargerBridge creates a new charger bridge
+// NewPlexBridge creates a new bridge to a Plex server instance.
 func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex) *PlexBridge {
 	var host string
 	var port int
@@ -62,14 +62,14 @@ func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex) *PlexB
 		},
 	}
 
-	cb := &PlexBridge{
+	pb := &PlexBridge{
 		logger: logger,
 		svc:    svc,
 		client: client,
 		b:      b,
 	}
 
-	return cb
+	return pb
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.

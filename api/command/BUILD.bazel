@@ -6,10 +6,13 @@ load("@rules_proto//proto:defs.bzl", "proto_library")
 proto_library(
     name = "command_proto",
     srcs = [
+        "audio_output.proto",
         "brightness.proto",
         "command.proto",
+        "input.proto",
         "onoff.proto",
         "time.proto",
+        "volume.proto",
     ],
     visibility = ["//visibility:public"],
     deps = ["//api/trait:trait_proto"],

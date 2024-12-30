@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "monop-amp_lib",
+    srcs = [
+        "bridge.go",
+        "main.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/monop-amp",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
+        "//api/trait:trait_go_proto",
+        "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_rmrobinson_monoprice_amp_go//:monoprice-amp-go",
+        "@com_github_spf13_viper//:viper",
+        "@com_github_tarm_serial//:serial",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "monop-amp",
+    embed = [":monop-amp_lib"],
+    visibility = ["//visibility:public"],
+)

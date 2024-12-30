@@ -1,0 +1,18 @@
+amp:
+  usb:
+    baud_rate: 9600
+    path: /dev/ttyUSB0
+  inputs:
+    - id: 1
+      name: "Input 1"
+      description: "First input"
+      active: true
+    - id: 2
+      name: "Input 2"
+      description: "Second input, which is disabled"
+      active: false
+  speakers:
+    - id: 1
+      name: "Speaker 1"
+      description: "First speaker output"
+      active: true

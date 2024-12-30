@@ -13,9 +13,11 @@ require (
 	github.com/picatz/roku v0.0.0-20230221144619-ec649293f9b5
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/rmrobinson/airthings-btle v0.0.0-20241220035602-bb278c332fcd
+	github.com/rmrobinson/monoprice-amp-go v0.0.0-20190217030552-ea909ba38552
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.9.0
+	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
 	go.uber.org/zap v1.24.0
 	google.golang.org/grpc v1.65.0
 	google.golang.org/protobuf v1.34.2

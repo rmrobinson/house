@@ -4,9 +4,12 @@ package faltung.house.api.command;
 
 option go_package = "github.com/rmrobinson/house/api/command";
 
+import "api/command/audio_output.proto";
 import "api/command/brightness.proto";
+import "api/command/input.proto";
 import "api/command/onoff.proto";
 import "api/command/time.proto";
+import "api/command/volume.proto";
 
 // Command contains the information required to request an action be taken on a device.
 message Command {
@@ -21,5 +24,8 @@ message Command {
     faltung.house.api.command.BrightnessAbsolute brightness_absolute = 101;
     faltung.house.api.command.BrightnessRelative brightness_relative = 102;
     faltung.house.api.command.Time time = 103;
+    faltung.house.api.command.Volume volume = 104;
+    faltung.house.api.command.Input input = 105;
+    faltung.house.api.command.AudioOutput audio_output = 106;
   }
 }

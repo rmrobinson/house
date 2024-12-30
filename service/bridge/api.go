@@ -21,6 +21,8 @@ var (
 	ErrDeviceNotFound = status.Error(codes.NotFound, "device id not found")
 	// ErrCommandNotSupported is returned when a command is targeted to a device which doesn't support the specified command type.
 	ErrCommandNotSupported = status.Error(codes.InvalidArgument, "the device does not support the specified command")
+	// ErrArgumentNotSupportedByDevice is returned when a command has values outside the specified supported set by the device attributes.
+	ErrArgumentNotSupportedByDevice = status.Error(codes.InvalidArgument, "the supplied arguments aren't supported by the device attributes")
 )
 
 // API contains the required implementation to confirm to the gRPC api.Bridge interface.
@@ -88,31 +90,104 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 
 	if d.GetAvReceiver() != nil {
 		if req.GetOnOff() != nil {
+			if !d.GetAvReceiver().GetOnOff().Attributes.CanControl {
+				logger.Info("received onoff request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing onoff command")
+			return a.svc.processCommand(ctx, req)
+		} else if req.GetVolume() != nil {
+			if !d.GetAvReceiver().GetVolume().Attributes.CanControl {
+				logger.Info("received volume request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			} else if req.GetVolume().Muted != nil && !d.GetAvReceiver().GetVolume().GetAttributes().CanMute {
+				logger.Info("received mute request to device which can't be muted")
+				return nil, ErrArgumentNotSupportedByDevice
+			} else if req.GetVolume().Volume < 0 || req.GetVolume().Volume > d.GetAvReceiver().GetVolume().Attributes.MaximumLevel {
+				logger.Info("received volume request with a volume outside the supported range",
+					zap.Int32("requested_volume", req.GetVolume().Volume),
+					zap.Int32("volume_limit", d.GetAvReceiver().Volume.Attributes.MaximumLevel))
+				return nil, ErrArgumentNotSupportedByDevice
+			}
+			logger.Debug("processing volume command")
+			return a.svc.processCommand(ctx, req)
+		} else if req.GetInput() != nil {
+			if !d.GetAvReceiver().GetInput().Attributes.CanControl {
+				logger.Info("received input request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
+			validInputID := false
+			for _, input := range d.GetAvReceiver().GetInput().GetAttributes().Inputs {
+				if req.GetInput().InputId == input.Id {
+					validInputID = true
+					break
+				}
+			}
+			if !validInputID {
+				logger.Info("received input request with an unknown input id",
+					zap.String("received_input_id", req.GetInput().InputId))
+				return nil, ErrArgumentNotSupportedByDevice
+			}
+			logger.Debug("processing input command")
+			return a.svc.processCommand(ctx, req)
+		} else if req.GetAudioOutput() != nil {
+			if !d.GetAvReceiver().GetAudioOutput().Attributes.CanControl {
+				logger.Info("received audio output request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
+			if req.GetAudioOutput().Balance != nil && d.GetAvReceiver().GetAudioOutput().GetState().Balance == nil {
+				logger.Info("received audio output request to change balance on a device without balance set")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
+			logger.Debug("processing audio output command")
 			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetClock() != nil {
 		if req.GetOnOff() != nil {
+			if !d.GetClock().GetOnOff().Attributes.CanControl {
+				logger.Info("received onoff request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing onoff command")
 			return a.svc.processCommand(ctx, req)
 		} else if d.GetClock().GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
+			if !d.GetClock().GetBrightness().Attributes.CanControl {
+				logger.Info("received brightness request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing brightness command")
 			return a.svc.processCommand(ctx, req)
 		} else if d.GetClock().GetTime() != nil && req.GetTime() != nil {
+			if !d.GetClock().GetTime().Attributes.CanControl {
+				logger.Info("received time request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing time command")
 			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetLight() != nil {
 		if req.GetOnOff() != nil {
+			if !d.GetLight().GetOnOff().Attributes.CanControl {
+				logger.Info("received onoff request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing onoff command")
 			return a.svc.processCommand(ctx, req)
 		} else if d.GetLight().GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
+			if !d.GetLight().GetBrightness().Attributes.CanControl {
+				logger.Info("received brightness request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing brightness command")
 			return a.svc.processCommand(ctx, req)
 		}
 	} else if d.GetSensor() != nil {
 	} else if d.GetThermostat() != nil {
 		if req.GetOnOff() != nil {
+			if !d.GetThermostat().GetOnOff().Attributes.CanControl {
+				logger.Info("received onoff request to a device which can't be controlled")
+				return nil, ErrArgumentNotSupportedByDevice
+			}
 			logger.Debug("processing onoff command")
 			return a.svc.processCommand(ctx, req)
 		}

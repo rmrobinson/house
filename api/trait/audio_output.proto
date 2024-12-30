@@ -10,6 +10,9 @@ message AudioOutput {
     // If true, control of the device input property is possible.
     // If false, control is not allowed and the property is read-only.
     bool can_control = 1;
+
+    // If true, this is a stero device (has a left and right speaker).
+    bool is_stero = 2;
   }
   message State {
     // The treble adjustment setting.
