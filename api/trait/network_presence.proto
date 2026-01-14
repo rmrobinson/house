@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// NetworkPresence describes the details of a device on a given network.
+message NetworkPresence {
+  message Attributes {
+    // can_control is absent since this is a read only trait.
+  }
+  message State {
+    // Hardware address (i.e. a MAC for Ethernet, an IMEI for LTE)
+    string hardware_address = 1;
+
+    // Network address(es). IPv4 or IPv6, or both.
+    repeated string ip_addresses = 2;
+
+    // The name of the device on the network
+    string hostname = 3;
+
+    // How strong is the signal (if wireless)
+    int32 signal_level = 4;
+
+    // What sort of network device might this be?
+    string device_category = 5;
+
+    // What is the network this device is connected to?
+    string network_id = 6;
+
+    // What is the device this device is connected to?
+    string network_device_id = 7;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

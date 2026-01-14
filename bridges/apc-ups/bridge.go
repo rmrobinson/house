@@ -110,7 +110,7 @@ func (ab *APCUPSBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 }
 
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
-// the charger API and returns the current state of the charger.
+// the UPS API and returns the current state of the UPS.
 func (ab *APCUPSBridge) Refresh(ctx context.Context) error {
 	s, err := ab.client.Status()
 	if err != nil {

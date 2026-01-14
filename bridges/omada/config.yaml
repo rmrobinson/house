@@ -1,0 +1,10 @@
+omada:
+    allow_insecure_tls: true
+    oauth:
+        cid: <Omada CID>
+        client_id: <OAuth client ID>
+        client_secret: <OAuth client secret>
+    ip: <Omada IP>
+    port: 8043
+    proto: <https|http>
+    site_id: <ID of the site to monitor> 

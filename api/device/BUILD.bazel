@@ -8,6 +8,7 @@ proto_library(
     srcs = [
         "av_receiver.proto",
         "clock.proto",
+        "connected_device.proto",
         "device.proto",
         "ev_charger.proto",
         "generic.proto",
