@@ -58,7 +58,7 @@ func main() {
 		logger.Fatal("unable to connect to ups", zap.Error(err))
 	}
 
-	cb := NewAPCUPSBridge(logger, svc, apcUPSClient, ipAddr, port)
+	upsb := NewAPCUPSBridge(logger, svc, apcUPSClient, ipAddr, port)
 
 	status, err := apcUPSClient.Status()
 	if err != nil {
@@ -66,11 +66,11 @@ func main() {
 	}
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
-	svc.RegisterHandler(cb, cb.b)
+	svc.RegisterHandler(upsb, upsb.b)
 	svc.UpdateDevice(statusToDevice(status))
 
 	// Check for updates periodically
-	go cb.Run()
+	go upsb.Run()
 
 	s := bridge.NewServer(logger, svc)
 	s.Serve()

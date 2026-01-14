@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/network_presence.proto";
+
+// ConnectedDevice is a device which is connected to the network.
+message ConnectedDevice {
+  faltung.house.api.trait.NetworkPresence network_presence = 1;
+}

@@ -17,6 +17,7 @@ proto_library(
         "input.proto",
         "light_level.proto",
         "media.proto",
+        "network_presence.proto",
         "onoff.proto",
         "power.proto",
         "presence.proto",

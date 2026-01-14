@@ -8,6 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 import "api/device/av_receiver.proto";
 import "api/device/clock.proto";
+import "api/device/connected_device.proto";
 import "api/device/ev_charger.proto";
 import "api/device/generic.proto";
 import "api/device/light.proto";
@@ -87,5 +88,6 @@ message Device {
     faltung.house.api.device.EVCharger ev_charger = 107;
     faltung.house.api.device.MediaPlayer media_player = 108;
     faltung.house.api.device.Television television = 109;
+    faltung.house.api.device.ConnectedDevice connected_device = 110;
   }
 }
