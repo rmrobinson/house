@@ -193,7 +193,7 @@ func (fb *FrigateBridge) Run(ctx context.Context) {
 		return
 	}
 
-	refreshTimer := time.NewTicker(time.Minute * 5)
+	refreshTimer := time.NewTicker(time.Minute * 1)
 	for {
 		select {
 		case <-refreshTimer.C:
