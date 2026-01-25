@@ -1,0 +1,9 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "frigate",
+    srcs = ["client.go"],
+    importpath = "github.com/rmrobinson/house/bridges/frigate/frigate",
+    visibility = ["//visibility:public"],
+    deps = ["@org_uber_go_zap//:zap"],
+)

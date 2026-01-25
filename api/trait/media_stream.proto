@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// MediaStream describes the information necessary to connect to an available media (audio, video) stream.
+message MediaStream {
+  message Attributes {
+    // can_control is absent since this is a read only trait.
+  }
+  message State {
+    // Where to connect to access the stream. This is a fully qualified URL including the protocol type exposed.
+    string url = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}
