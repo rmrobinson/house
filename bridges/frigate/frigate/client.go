@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	apiConfigPath        = "/api/config"
-	cameraRestreamFormat = "rtsp://%s:8554/%s"
+	apiConfigPath = "/api/config"
+	apiStatsPath  = "/api/stats"
 )
 
-type apiCamera struct {
+type CameraConfig struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 
@@ -40,31 +40,38 @@ type apiCamera struct {
 	} `json:"ffmpeg"`
 }
 
-type apiConfig struct {
-	Cameras map[string]apiCamera `json:"cameras"`
+type ConfigResponse struct {
+	Cameras map[string]CameraConfig `json:"cameras"`
 }
 
-type Camera struct {
-	Name    string
-	Enabled bool
+type CameraStats struct {
+	AudioDBFS        float32 `json:"audio_dBFS"`
+	AudioRMS         float32 `json:"audio_rms"`
+	CameraFPS        float32 `json:"camera_fps"`
+	CapturePID       int     `json:"capture_pid"`
+	DetectionEnabled bool    `json:"detection_enabled"`
+	DetectionFPS     float32 `json:"detection_fps"`
+	FfmpegPID        int     `json:"ffmpeg_pid"`
+	PID              int     `json:"pid"`
+	ProcessFPS       float32 `json:"process_fps"`
+	SkippedFPS       float32 `json:"skipped_fps"`
+}
 
-	Endpoint       *url.URL
-	MotionDetected bool
+type StatsResponse struct {
+	Cameras map[string]CameraStats `json:"cameras"`
 }
 
 type Client struct {
 	logger      *zap.Logger
 	client      *http.Client
 	apiEndpoint *url.URL
-	cameraHost  string
 }
 
-func NewClient(logger *zap.Logger, client *http.Client, apiEndpoint *url.URL, cameraHost string) *Client {
+func NewClient(logger *zap.Logger, client *http.Client, apiEndpoint *url.URL) *Client {
 	return &Client{
 		logger:      logger,
 		apiEndpoint: apiEndpoint,
 		client:      client,
-		cameraHost:  cameraHost,
 	}
 }
 
@@ -86,46 +93,43 @@ func (c *Client) GetPort() int {
 	return numPort
 }
 
-func (c *Client) GetCameras(ctx context.Context) ([]Camera, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s/%s", c.apiEndpoint.Scheme, c.apiEndpoint.Host, apiConfigPath), nil)
+func (c *Client) GetStats(ctx context.Context) (*StatsResponse, error) {
+	apiStats := &StatsResponse{}
+	err := c.apiRequest(ctx, apiStatsPath, apiStats)
+	return apiStats, err
+}
+
+func (c *Client) GetConfig(ctx context.Context) (*ConfigResponse, error) {
+	apiConfig := &ConfigResponse{}
+	err := c.apiRequest(ctx, apiConfigPath, apiConfig)
+	return apiConfig, err
+}
+
+func (c *Client) apiRequest(ctx context.Context, path string, apiResp any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s://%s/%s", c.apiEndpoint.Scheme, c.apiEndpoint.Host, path), nil)
 	if err != nil {
 		c.logger.Error("unable to create http request", zap.Error(err))
-		return nil, err
+		return err
 	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
 		c.logger.Error("unable to get config from frigate", zap.Error(err))
-		return nil, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		c.logger.Error("got failure response code", zap.Int("response_code", resp.StatusCode))
-		return nil, errors.New("unsuccessful request")
+		return errors.New("unsuccessful request")
 	} else if resp.Header.Get("Content-Type") != "application/json" {
 		c.logger.Error("got a non-json response", zap.String("content_type", resp.Header.Get("Content-Type")))
-		return nil, errors.New("unsuccessful request")
+		return errors.New("unsuccessful request")
 	}
 
-	apiConfig := &apiConfig{}
-	if err := json.NewDecoder(resp.Body).Decode(apiConfig); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(apiResp); err != nil {
 		c.logger.Error("unable to decode response body", zap.Error(err))
-		return nil, err
+		return err
 	}
 
-	cameras := []Camera{}
-	for _, camera := range apiConfig.Cameras {
-		ep, err := url.Parse(fmt.Sprintf(cameraRestreamFormat, c.cameraHost, camera.Name))
-		if err != nil {
-			c.logger.Error("unable to format url for camera stream", zap.String("camera_name", camera.Name), zap.String("format", cameraRestreamFormat))
-			continue
-		}
-		cameras = append(cameras, Camera{
-			Name:     camera.Name,
-			Enabled:  camera.Enabled,
-			Endpoint: ep,
-		})
-	}
-
-	return cameras, nil
+	return nil
 }

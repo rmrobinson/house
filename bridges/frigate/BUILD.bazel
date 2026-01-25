@@ -4,6 +4,7 @@ go_library(
     name = "frigate_lib",
     srcs = [
         "bridge.go",
+        "camera.go",
         "main.go",
     ],
     importpath = "github.com/rmrobinson/house/bridges/frigate",

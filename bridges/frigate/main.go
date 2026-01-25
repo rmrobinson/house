@@ -64,12 +64,14 @@ func main() {
 		logger.Fatal("provided api details aren't a valid url")
 	}
 
-	frigateClient := frigate.NewClient(logger, &http.Client{}, frigateAPIEndpoint, ipAddr)
+	frigateClient := frigate.NewClient(logger, &http.Client{}, frigateAPIEndpoint)
 
-	fb := NewFrigateBridge(logger, svc, frigateClient)
+	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(fb, fb.b)
+
+	fb.Setup(context.Background(), nil)
 
 	// Check for updates periodically
 	go fb.Run(context.Background())
