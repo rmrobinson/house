@@ -26,9 +26,9 @@ const (
 
 // CameraConfig includes basic configuration data for a specific camera identified using its Name
 type CameraConfig struct {
-	Name         string
-	Manufacturer string
-	ModelID      string
+	Name         string `mapstructure:"name"`
+	Manufacturer string `mapstructure:"manufacturer"`
+	ModelID      string `mapstructure:"model_id"`
 }
 
 // FrigateBridge is a bridge between the Frigate NVR system and the house.
@@ -145,6 +145,8 @@ func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) erro
 			fb.svc.UpdateDevice(camera.ToDevice())
 		}
 	}
+
+	fb.b.ModelId = stats.Service.Version
 
 	return nil
 }

@@ -71,7 +71,12 @@ func main() {
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(fb, fb.b)
 
-	fb.Setup(context.Background(), nil)
+	var cameraConfigs []CameraConfig
+	if err := viper.UnmarshalKey("frigate.cameras", &cameraConfigs); err != nil {
+		logger.Fatal("unable to parse 'cameras' key from config")
+	}
+
+	fb.Setup(context.Background(), cameraConfigs)
 
 	// Check for updates periodically
 	go fb.Run(context.Background())

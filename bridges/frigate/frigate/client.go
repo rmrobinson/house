@@ -17,6 +17,7 @@ const (
 	apiStatsPath  = "/api/stats"
 )
 
+// CameraConfig contains some of the configured fields in a camera. This is only a partial definition.
 type CameraConfig struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
@@ -40,10 +41,12 @@ type CameraConfig struct {
 	} `json:"ffmpeg"`
 }
 
+// ConfigResponse contains some of the fields returned from the /api/config endpoint. This is only a partial definition.
 type ConfigResponse struct {
 	Cameras map[string]CameraConfig `json:"cameras"`
 }
 
+// CameraStats contains the available stats for a given camera.
 type CameraStats struct {
 	AudioDBFS        float32 `json:"audio_dBFS"`
 	AudioRMS         float32 `json:"audio_rms"`
@@ -57,16 +60,25 @@ type CameraStats struct {
 	SkippedFPS       float32 `json:"skipped_fps"`
 }
 
-type StatsResponse struct {
-	Cameras map[string]CameraStats `json:"cameras"`
+// ServiceStats contains some of the available stats for the Frigate service.
+type ServiceStats struct {
+	Version string `json:"version"`
 }
 
+// StatsResponse contains some of the fields returned from the /api/stats endpoint. This is only a partial definition.
+type StatsResponse struct {
+	Cameras map[string]CameraStats `json:"cameras"`
+	Service ServiceStats           `json:"service"`
+}
+
+// Client is used to interact with an instance of the Frigate NVR API.
 type Client struct {
 	logger      *zap.Logger
 	client      *http.Client
 	apiEndpoint *url.URL
 }
 
+// NewClient creates a new instance of the Frigate API client.
 func NewClient(logger *zap.Logger, client *http.Client, apiEndpoint *url.URL) *Client {
 	return &Client{
 		logger:      logger,
@@ -75,10 +87,12 @@ func NewClient(logger *zap.Logger, client *http.Client, apiEndpoint *url.URL) *C
 	}
 }
 
+// GetIP returns the IP address or hostname of the configured endpoint.
 func (c *Client) GetIP() string {
 	return c.apiEndpoint.Hostname()
 }
 
+// GetPort returns the port of the configured endpoint; 0 if not available or not specified.
 func (c *Client) GetPort() int {
 	port := c.apiEndpoint.Port()
 	if port == "" {
@@ -93,12 +107,14 @@ func (c *Client) GetPort() int {
 	return numPort
 }
 
+// GetStats queries the stats HTTP endpoint and returns its response.
 func (c *Client) GetStats(ctx context.Context) (*StatsResponse, error) {
 	apiStats := &StatsResponse{}
 	err := c.apiRequest(ctx, apiStatsPath, apiStats)
 	return apiStats, err
 }
 
+// GetConfig queries the config HTTP endpoint and returns its response.
 func (c *Client) GetConfig(ctx context.Context) (*ConfigResponse, error) {
 	apiConfig := &ConfigResponse{}
 	err := c.apiRequest(ctx, apiConfigPath, apiConfig)
