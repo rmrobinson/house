@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "frigate_lib",
+    srcs = [
+        "bridge.go",
+        "camera.go",
+        "main.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/frigate",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api:api_go_proto",
+        "//api/command:command_go_proto",
+        "//api/device:device_go_proto",
+        "//api/trait:trait_go_proto",
+        "//bridges/frigate/frigate",
+        "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "frigate",
+    embed = [":frigate_lib"],
+    visibility = ["//visibility:public"],
+)
