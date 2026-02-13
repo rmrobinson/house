@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -32,6 +33,10 @@ func sensorToDevice(s *airthings.Sensor) *device.Device {
 		Manufacturer: "Airthings",
 		ModelName:    &modelName,
 		LastSeen:     timestamppb.Now(),
+		Address: &device.Device_Address{
+			Address:     s.Address(),
+			IsReachable: true,
+		},
 		Details: &device.Device_Sensor{
 			Sensor: &device.Sensor{
 				AirQuality: &trait.AirQuality{
@@ -59,11 +64,13 @@ type AirthingsBridge struct {
 	svc    *bridge.Service
 	b      *api2.Bridge
 
-	s *airthings.Sensor
+	scanner     *airthings.Scanner
+	refreshLock sync.Mutex
+	ids         []int
 }
 
 // NewAirthingsBridge creates a new bridge to an Airthings sensor
-func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, s *airthings.Sensor) *AirthingsBridge {
+func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, scanner *airthings.Scanner, sensorIDs []int) *AirthingsBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -72,11 +79,6 @@ func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, s *airthings.Se
 		Config: &api2.Bridge_Config{
 			Name:        viper.GetString("bridge.name"),
 			Description: viper.GetString("bridge.description"),
-			Address: &api2.Address{
-				Bluetooth: &api2.Address_Bluetooth{
-					Address: s.Address(),
-				},
-			},
 		},
 		State: &api2.Bridge_State{
 			IsPaired: true,
@@ -84,10 +86,11 @@ func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, s *airthings.Se
 	}
 
 	cb := &AirthingsBridge{
-		logger: logger,
-		svc:    svc,
-		s:      s,
-		b:      b,
+		logger:  logger,
+		svc:     svc,
+		scanner: scanner,
+		ids:     sensorIDs,
+		b:       b,
 	}
 
 	return cb
@@ -115,31 +118,47 @@ func (ab *AirthingsBridge) SetBridgeConfig(ctx context.Context, config bridge.Co
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
 // the charger API and returns the current state of the charger.
 func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
-	err := ab.s.Refresh()
-	if err != nil {
-		ab.logger.Error("unable to refresh sensor",
-			zap.Error(err))
-		return status.Error(codes.Internal, "unable to refresh sensor state")
-	}
+	ab.refreshLock.Lock()
+	defer ab.refreshLock.Unlock()
 
-	ab.svc.UpdateDevice(sensorToDevice(ab.s))
+	for _, id := range ab.ids {
+		sensor, err := ab.scanner.FindSensor(ctx, id)
+		if err != nil {
+			ab.logger.Error("unable to find sensor",
+				zap.Error(err))
+			return status.Error(codes.Internal, "unable to find sensor state")
+		}
+		if err = sensor.Refresh(); err != nil {
+			ab.logger.Error("unable to refresh sensor",
+				zap.Error(err))
+			return status.Error(codes.Internal, "unable to refresh sensor")
+		}
+		sensor.Disconnect()
+
+		ab.svc.UpdateDevice(sensorToDevice(sensor))
+	}
 	return nil
 }
 
 // Run begins the process of polling the sensor and reporting back the state.
-func (ab *AirthingsBridge) Run() {
+func (ab *AirthingsBridge) Run(ctx context.Context) {
+	ab.Refresh(ctx)
+
 	refreshTimer := time.NewTicker(time.Minute * 5)
 	for {
 		select {
 		case <-refreshTimer.C:
-			err := ab.s.Refresh()
+			err := ab.Refresh(ctx)
 			if err != nil {
-				ab.logger.Error("unable to refresh sensor",
+				ab.logger.Error("unable to refresh sensors",
 					zap.Error(err))
 				continue
+			} else {
+				ab.logger.Debug("refreshed")
 			}
-
-			ab.svc.UpdateDevice(sensorToDevice(ab.s))
+		case <-ctx.Done():
+			ab.logger.Info("run context cancelled")
+			return
 		}
 	}
 }

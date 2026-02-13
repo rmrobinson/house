@@ -46,9 +46,9 @@ func main() {
 
 	svc := bridge.NewService(logger)
 
-	sensorID := viper.GetInt("sensor.id")
-	if sensorID < 1 {
-		logger.Fatal("sensor.id must be set in the config")
+	sensorIDs := viper.GetIntSlice("sensor.ids")
+	if len(sensorIDs) < 1 {
+		logger.Fatal("sensor.ids must be set in the config")
 	}
 
 	btAdapter := bluetooth.DefaultAdapter
@@ -60,28 +60,13 @@ func main() {
 
 	scanner := airthings.NewScanner(btAdapter)
 
-	logger.Debug("beginning bluetooth scan")
-	sensor, err := scanner.FindSensor(context.Background(), viper.GetInt("sensor.id"))
-	if err != nil {
-		logger.Fatal("unable to find sensor", zap.Error(err))
-	}
-	if sensor == nil {
-		logger.Fatal("empty sensor")
-	}
-
-	cb := NewAirthingsBridge(logger, svc, sensor)
-
-	err = sensor.Refresh()
-	if err != nil {
-		logger.Fatal("unable to get state from sensor", zap.Error(err))
-	}
+	cb := NewAirthingsBridge(logger, svc, scanner, sensorIDs)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(cb, cb.b)
-	svc.UpdateDevice(sensorToDevice(sensor))
 
 	// Check for updates periodically
-	go cb.Run()
+	go cb.Run(context.Background())
 
 	s := bridge.NewServer(logger, svc)
 	s.Serve()
