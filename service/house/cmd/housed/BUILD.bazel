@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/rmrobinson/house/service/house/cmd/housed",
     visibility = ["//visibility:private"],
     deps = [
-        "//api:api_go_proto",
+        "//api",
         "//service/house",
         "//service/house/db",
         "@org_golang_google_grpc//:grpc",

@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/rmrobinson/house/clients/bridgecli/cmd",
     visibility = ["//visibility:public"],
     deps = [
-        "//api:api_go_proto",
+        "//api",
         "//clients/bridgecli/cmd/bridge",
         "//clients/bridgecli/cmd/device",
         "@com_github_spf13_cobra//:cobra",
