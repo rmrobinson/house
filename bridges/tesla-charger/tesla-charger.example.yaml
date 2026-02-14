@@ -1,0 +1,6 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17004
+  refresh_interval: 60
+charger:
+  ip: <IP address string that the Tesla wall unit is accessible at>

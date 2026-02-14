@@ -1,4 +1,0 @@
-sensor:
-  ids: [1, 2]
-bluetooth:
-  adapter_id: "hci1"

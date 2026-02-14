@@ -1,0 +1,8 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17003
+  refresh_interval: 60
+ups:
+  ip: <IP address string that the APC UPS daemon is listening on>
+  port: <Port that the APC UPS daemon is listening on>
+  proto: "tcp"

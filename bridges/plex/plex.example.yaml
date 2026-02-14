@@ -1,0 +1,8 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17006
+  refresh_interval: 1800
+plex:
+  server_url: <URL to reach the Plex server at>
+  api_key: <Key to access the Plex server API>
+  callback_port: <Port to listen for callbacks from the Plex server on>

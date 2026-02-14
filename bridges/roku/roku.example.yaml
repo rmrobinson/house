@@ -1,0 +1,4 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17005
+  refresh_interval: 300

@@ -6,7 +6,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/google/uuid"
-	airthings "github.com/rmrobinson/airthings-btle"
 	"github.com/spf13/viper"
 
 	"tinygo.org/x/bluetooth"
@@ -24,6 +23,9 @@ func main() {
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("bridge.refresh_interval", 300)
+	viper.SetDefault("bridge.listen_port", 17002)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
@@ -43,13 +45,6 @@ func main() {
 		}
 	}
 
-	svc := bridge.NewService(logger)
-
-	sensorIDs := viper.GetIntSlice("sensor.ids")
-	if len(sensorIDs) < 1 {
-		logger.Fatal("sensor.ids must be set in the config")
-	}
-
 	var btAdapter *bluetooth.Adapter
 
 	if viper.IsSet("bluetooth.adapter_id") {
@@ -63,16 +58,23 @@ func main() {
 		logger.Fatal("unable to enable bt adapter", zap.Error(err))
 	}
 
-	scanner := airthings.NewScanner(btAdapter)
+	sensorIDs := viper.GetIntSlice("sensor.ids")
+	if len(sensorIDs) < 1 {
+		logger.Fatal("sensor.ids must be set in the config")
+	}
 
-	cb := NewAirthingsBridge(logger, svc, scanner, sensorIDs)
+	svc := bridge.NewService(logger)
 
-	// Once we've successfully gotten the device state, register the handler and device with the service
-	svc.RegisterHandler(cb, cb.b)
+	ab := NewAirthingsBridge(logger, svc, btAdapter, sensorIDs)
+
+	svc.RegisterHandler(ab, ab.b)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Check for updates periodically
-	go cb.Run(context.Background())
+	go ab.Run(ctx)
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

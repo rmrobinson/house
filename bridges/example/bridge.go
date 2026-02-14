@@ -9,6 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/spf13/viper"
+
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
@@ -95,14 +97,16 @@ func NewExampleBridge(logger *zap.Logger, svc *bridge.Service) *ExampleBridge {
 	bridgeModelDescription := "Example bridge implementation for testing"
 
 	b := &api2.Bridge{
-		Id:               "example-bridge-id-1",
+		Id:               viper.GetString("bridge.id"),
 		IsReachable:      true,
 		ModelId:          "EXB1",
 		Manufacturer:     "Faltung Networks",
 		ModelName:        &bridgeModelName,
 		ModelDescription: &bridgeModelDescription,
 		Config: &api2.Bridge_Config{
-			Timezone: time.Local.String(),
+			Name:        viper.GetString("bridge.name"),
+			Description: viper.GetString("bridge.description"),
+			Timezone:    time.Local.String(),
 		},
 		State: &api2.Bridge_State{
 			IsPaired: true,
@@ -163,13 +167,17 @@ func (b *ExampleBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 	b.b.Config.Name = config.Name
 	b.b.Config.Description = config.Description
 
+	viper.Set("bridge.name", config.Name)
+	viper.Set("bridge.description", config.Description)
+	viper.WriteConfig()
+
 	return nil
 }
 
 // Run begins processing async updates - instead of interfacing with real-world devices
 // instead the SIGUSR1 and SIGUSR2 signals are listened as triggers for state changes.
 // This also starts a timer which updates the lux of the second device every 30 seconds.
-func (b *ExampleBridge) Run() {
+func (b *ExampleBridge) Run(ctx context.Context) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGUSR1, syscall.SIGUSR2)
 
@@ -192,6 +200,9 @@ func (b *ExampleBridge) Run() {
 			b.d2.luxLevel++
 
 			b.svc.UpdateDevice(b.d2.toDevice())
+		case <-ctx.Done():
+			b.logger.Info("context complete")
+			return
 		}
 	}
 }

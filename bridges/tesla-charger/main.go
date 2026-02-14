@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -22,6 +23,9 @@ func main() {
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 
+	viper.SetDefault("bridge.refresh_interval", 60)
+	viper.SetDefault("bridge.listen_port", 17004)
+
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
@@ -40,28 +44,26 @@ func main() {
 		}
 	}
 
-	svc := bridge.NewService(logger)
-
 	chargerIP := viper.GetString("charger.ip")
 	if len(chargerIP) < 1 {
 		logger.Fatal("charger.ip must be set in the config")
 	}
 
 	charger := NewCharger(logger, chargerIP, &http.Client{})
-	cb := NewChargerBridge(logger, svc, charger)
 
-	state, err := charger.State()
-	if err != nil {
-		logger.Fatal("unable to get state from charger", zap.Error(err))
-	}
+	svc := bridge.NewService(logger)
+
+	cb := NewChargerBridge(logger, svc, charger)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(cb, cb.b)
-	svc.UpdateDevice(state.toDevice())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Check for updates periodically
-	go cb.Run()
+	go cb.Run(ctx)
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

@@ -152,21 +152,23 @@ func (omb *OmadaBridge) Refresh(ctx context.Context) error {
 }
 
 // Run begins the process of polling the API and reporting back the state.
-func (omb *OmadaBridge) Run() {
-	omb.Refresh(context.Background())
+func (omb *OmadaBridge) Run(ctx context.Context) {
+	omb.Refresh(ctx)
 
-	refreshTimer := time.NewTicker(time.Minute * 1)
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	omb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
-			err := omb.Refresh(context.Background())
-			if err != nil {
+			if err := omb.Refresh(ctx); err != nil {
 				omb.logger.Error("unable to get status from API",
 					zap.Error(err))
 				continue
-			} else {
-				omb.logger.Debug("refreshed")
 			}
+			omb.logger.Debug("refreshed")
+		case <-ctx.Done():
+			omb.logger.Info("run context cancelled")
+			return
 		}
 	}
 }

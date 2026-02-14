@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -25,6 +26,9 @@ func main() {
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 
+	viper.SetDefault("bridge.refresh_interval", 60)
+	viper.SetDefault("bridge.listen_port", 17007)
+
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
@@ -42,8 +46,6 @@ func main() {
 			logger.Fatal("unable to write new config", zap.Error(err))
 		}
 	}
-
-	svc := bridge.NewService(logger)
 
 	omIpAddr := viper.GetString("omada.ip")
 	omPort := viper.GetInt("omada.port")
@@ -79,16 +81,21 @@ func main() {
 	}
 	omadaClient := omada.NewClient(logger, fmt.Sprintf("%s://%s:%d", omProto, omIpAddr, omPort), omID, omClientID, omClientSecret, httpClient)
 
-	// Create Kea client
+	// TODO: Create Kea client
+
+	svc := bridge.NewService(logger)
 
 	omb := NewOmadaBridge(logger, svc, omadaClient, omIpAddr, omPort, omSiteID, omID)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(omb, omb.b)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Check for updates periodically
-	go omb.Run()
+	go omb.Run(ctx)
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }
