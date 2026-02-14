@@ -13,9 +13,9 @@ go_library(
     importpath = "github.com/rmrobinson/house/service/bridge",
     visibility = ["//visibility:public"],
     deps = [
-        "//api:api_go_proto",
-        "//api/command:command_go_proto",
-        "//api/device:device_go_proto",
+        "//api",
+        "//api/command",
+        "//api/device",
         "@com_github_google_uuid//:uuid",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
