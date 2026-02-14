@@ -8,6 +8,7 @@ go_library(
     ],
     importpath = "github.com/rmrobinson/house/bridges/airthings",
     visibility = ["//visibility:private"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//api",
         "//api/command",
