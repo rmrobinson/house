@@ -6,9 +6,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/google/uuid"
-	"github.com/spf13/viper"
-
 	airthings "github.com/rmrobinson/airthings-btle"
+	"github.com/spf13/viper"
 
 	"tinygo.org/x/bluetooth"
 
@@ -51,7 +50,13 @@ func main() {
 		logger.Fatal("sensor.ids must be set in the config")
 	}
 
-	btAdapter := bluetooth.DefaultAdapter
+	var btAdapter *bluetooth.Adapter
+
+	if viper.IsSet("bluetooth.adapter_id") {
+		btAdapter = bluetooth.NewAdapter(viper.GetString("bluetooth.adapter_id"))
+	} else {
+		btAdapter = bluetooth.DefaultAdapter
+	}
 
 	err = btAdapter.Enable()
 	if err != nil {

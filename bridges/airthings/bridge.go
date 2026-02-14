@@ -122,11 +122,12 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 	defer ab.refreshLock.Unlock()
 
 	for _, id := range ab.ids {
+		ab.logger.Debug("scanning for sensor", zap.Int("sensor_id", id))
 		sensor, err := ab.scanner.FindSensor(ctx, id)
 		if err != nil {
 			ab.logger.Error("unable to find sensor",
 				zap.Error(err))
-			return status.Error(codes.Internal, "unable to find sensor state")
+			return status.Error(codes.Internal, "unable to find sensor")
 		}
 		if err = sensor.Refresh(); err != nil {
 			ab.logger.Error("unable to refresh sensor",
