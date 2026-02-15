@@ -20,6 +20,7 @@ func main() {
 
 	viper.SetConfigName("example")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 

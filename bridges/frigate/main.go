@@ -22,6 +22,7 @@ func main() {
 
 	viper.SetConfigName("frigate")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 

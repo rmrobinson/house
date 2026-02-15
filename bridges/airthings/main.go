@@ -21,6 +21,7 @@ func main() {
 
 	viper.SetConfigName("airthings")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 

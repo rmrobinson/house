@@ -23,6 +23,7 @@ func main() {
 
 	viper.SetConfigName("omada")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 

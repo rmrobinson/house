@@ -19,6 +19,7 @@ func main() {
 
 	viper.SetConfigName("roku")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
 
