@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
@@ -60,18 +59,14 @@ func main() {
 		logger.Fatal("unable to start plex", zap.Error(err))
 	}
 
-	go func() {
-		for {
-			time.Sleep(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
-			if err := p.Refresh(context.Background()); err != nil {
-				logger.Error("unable to refresh plex state", zap.Error(err))
-			}
-		}
-	}()
-
 	pb := NewPlexBridge(logger, svc, p)
 
 	svc.RegisterHandler(pb, pb.b)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go pb.Run(ctx)
 
 	plexCallbackPort := viper.GetInt("plex.callback_port")
 	if plexCallbackPort > 0 {
