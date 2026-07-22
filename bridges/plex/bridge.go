@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -95,5 +96,24 @@ func (pb *PlexBridge) Refresh(ctx context.Context) error {
 	return pb.client.Refresh(ctx)
 }
 
+// Run begins the process of polling the Plex server on an interval and reporting back the state.
+// The initial state is already fetched by Plex.Start before the bridge is registered, so the first
+// refresh here happens after one interval has elapsed rather than immediately.
 func (pb *PlexBridge) Run(ctx context.Context) {
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	pb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
+	for {
+		select {
+		case <-refreshTimer.C:
+			if err := pb.Refresh(ctx); err != nil {
+				pb.logger.Error("unable to refresh plex state",
+					zap.Error(err))
+				continue
+			}
+			pb.logger.Debug("refreshed")
+		case <-ctx.Done():
+			pb.logger.Info("run context cancelled")
+			return
+		}
+	}
 }
