@@ -28,23 +28,33 @@ func main() {
 	viper.SetDefault("bridge.listen_port", 17009)
 
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			deviceID := uuid.New().String()
-			bridgeID := uuid.New().String()
-
-			logger.Info("config missing, saving new device and bridge ids",
-				zap.String("bridge_id", bridgeID),
-				zap.String("device_id", deviceID))
-
-			viper.Set("bridge.id", bridgeID)
-			viper.Set("device.id", deviceID)
-
-			err = viper.WriteConfig()
-			if err != nil {
-				logger.Fatal("unable to write new config", zap.Error(err))
-			}
-		}
 		logger.Fatal("unable to read config", zap.Error(err))
+	}
+
+	var idsChanged bool
+	if len(viper.GetString("bridge.id")) < 1 {
+		bridgeID := uuid.New().String()
+
+		logger.Info("config missing bridge id, saving new bridge id",
+			zap.String("bridge_id", bridgeID))
+
+		viper.Set("bridge.id", bridgeID)
+		idsChanged = true
+	}
+	if len(viper.GetString("device.id")) < 1 {
+		deviceID := uuid.New().String()
+
+		logger.Info("config missing device id, saving new device id",
+			zap.String("device_id", deviceID))
+
+		viper.Set("device.id", deviceID)
+		idsChanged = true
+	}
+	if idsChanged {
+		err = viper.WriteConfig()
+		if err != nil {
+			logger.Fatal("unable to write new config", zap.Error(err))
+		}
 	}
 
 	svc := bridge.NewService(logger)

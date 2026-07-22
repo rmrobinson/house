@@ -29,20 +29,21 @@ func main() {
 	viper.SetDefault("bridge.listen_port", 17006)
 
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			bridgeID := uuid.New().String()
-
-			logger.Info("config missing, saving new device and bridge ids",
-				zap.String("bridge_id", bridgeID))
-
-			viper.Set("bridge.id", bridgeID)
-
-			err = viper.WriteConfig()
-			if err != nil {
-				logger.Fatal("unable to write new config", zap.Error(err))
-			}
-		}
 		logger.Fatal("unable to read config", zap.Error(err))
+	}
+
+	if len(viper.GetString("bridge.id")) < 1 {
+		bridgeID := uuid.New().String()
+
+		logger.Info("config missing bridge id, saving new bridge id",
+			zap.String("bridge_id", bridgeID))
+
+		viper.Set("bridge.id", bridgeID)
+
+		err = viper.WriteConfig()
+		if err != nil {
+			logger.Fatal("unable to write new config", zap.Error(err))
+		}
 	}
 
 	plexURL := viper.GetString("plex.server_url")
