@@ -1,0 +1,8 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17002
+  refresh_interval: 300
+sensor:
+  ids: [1, 2]
+bluetooth:
+  adapter_id: "hci1"

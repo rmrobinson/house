@@ -91,19 +91,23 @@ func (cb *ChargerBridge) Refresh(ctx context.Context) error {
 }
 
 // Run begins the process of polling the charger API and reporting back the state.
-func (cb *ChargerBridge) Run() {
-	refreshTimer := time.NewTicker(time.Minute * 5)
+func (cb *ChargerBridge) Run(ctx context.Context) {
+	cb.Refresh(ctx)
+
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	cb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
-			chargerState, err := cb.charger.State()
-			if err != nil {
-				cb.logger.Error("unable to get charger state",
+			if err := cb.Refresh(ctx); err != nil {
+				cb.logger.Error("unable to refresh charger",
 					zap.Error(err))
 				continue
 			}
-
-			cb.svc.UpdateDevice(chargerState.toDevice())
+			cb.logger.Debug("refreshed")
+		case <-ctx.Done():
+			cb.logger.Info("run context cancelled")
+			return
 		}
 	}
 }

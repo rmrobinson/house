@@ -54,6 +54,7 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 	}
 }
 
+// APCUPSBridge is a bridge to an APC UPS status daemon
 type APCUPSBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
@@ -62,6 +63,7 @@ type APCUPSBridge struct {
 	client *apcupsd.Client
 }
 
+// NewAPCUPSBridge creates a new bridge to the specified APC UPS daemon
 func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client *apcupsd.Client, upsIPAddr string, upsPort int) *APCUPSBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
@@ -82,25 +84,28 @@ func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client *apcupsd.Cl
 			IsPaired: true,
 		},
 	}
-	return &APCUPSBridge{
+
+	aub := &APCUPSBridge{
 		logger: logger,
 		svc:    svc,
 		b:      b,
 		client: client,
 	}
+
+	return aub
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
 // We only worry about processing valid commands for the given device traits.
-func (ab *APCUPSBridge) ProcessCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
-	ab.logger.Error("received unsupported command - shouldn't happen")
+func (aub *APCUPSBridge) ProcessCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+	aub.logger.Error("received unsupported command - shouldn't happen")
 	return nil, bridge.ErrUnsupportedCommand
 }
 
 // SetBridgeConfig takes the supplied config params and saves them for future reference.
-func (ab *APCUPSBridge) SetBridgeConfig(ctx context.Context, config bridge.Config) error {
-	ab.b.Config.Name = config.Name
-	ab.b.Config.Description = config.Description
+func (aub *APCUPSBridge) SetBridgeConfig(ctx context.Context, config bridge.Config) error {
+	aub.b.Config.Name = config.Name
+	aub.b.Config.Description = config.Description
 
 	viper.Set("bridge.name", config.Name)
 	viper.Set("bridge.description", config.Description)
@@ -111,32 +116,36 @@ func (ab *APCUPSBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
 // the UPS API and returns the current state of the UPS.
-func (ab *APCUPSBridge) Refresh(ctx context.Context) error {
-	s, err := ab.client.Status()
+func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
+	s, err := aub.client.Status()
 	if err != nil {
-		ab.logger.Error("unable to get status from ups",
+		aub.logger.Error("unable to get status from ups",
 			zap.Error(err))
 		return status.Error(codes.Internal, "unable to get status from ups")
 	}
 
-	ab.svc.UpdateDevice(statusToDevice(s))
+	aub.svc.UpdateDevice(statusToDevice(s))
 	return nil
 }
 
 // Run begins the process of polling the sensor and reporting back the state.
-func (ab *APCUPSBridge) Run() {
-	refreshTimer := time.NewTicker(time.Minute * 5)
+func (aub *APCUPSBridge) Run(ctx context.Context) {
+	aub.Refresh(ctx)
+
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	aub.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
-			status, err := ab.client.Status()
-			if err != nil {
-				ab.logger.Error("unable to get status from ups",
+			if err := aub.Refresh(ctx); err != nil {
+				aub.logger.Error("unable to refresh sensors",
 					zap.Error(err))
 				continue
 			}
-
-			ab.svc.UpdateDevice(statusToDevice(status))
+			aub.logger.Debug("refreshed")
+		case <-ctx.Done():
+			aub.logger.Info("run context cancelled")
+			return
 		}
 	}
 }

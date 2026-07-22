@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/picatz/roku"
@@ -94,7 +95,8 @@ type RokuBridge struct {
 	svc    *bridge.Service
 	b      *api2.Bridge
 
-	endpoints map[string]*roku.Endpoint
+	endpoints   map[string]*roku.Endpoint
+	refreshLock sync.Mutex
 }
 
 // NewRokuBridge creates a new Roku bridge
@@ -141,6 +143,9 @@ func (rb *RokuBridge) SetBridgeConfig(ctx context.Context, config bridge.Config)
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it
 // finds all the available devices and reports them.
 func (rb *RokuBridge) Refresh(ctx context.Context) error {
+	rb.refreshLock.Lock()
+	defer rb.refreshLock.Unlock()
+
 	endpoints, err := roku.Find(roku.DefaultWaitTime)
 	if err != nil {
 		rb.logger.Error("unable to refresh roku endpoints",
@@ -187,15 +192,19 @@ func (rb *RokuBridge) Refresh(ctx context.Context) error {
 
 // Run begins the process of rerunning the Roku discovery process on an interval and updating the device cache.
 func (rb *RokuBridge) Run(ctx context.Context) {
-	refreshTimer := time.NewTicker(time.Minute * 5)
+	rb.Refresh(ctx)
+
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	rb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
 			if err := rb.Refresh(ctx); err != nil {
-				rb.logger.Error("unable to refresh roku state",
+				rb.logger.Error("unable to refresh roku",
 					zap.Error(err))
 				continue
 			}
+			rb.logger.Debug("refreshed")
 		case <-ctx.Done():
 			rb.logger.Info("run context cancelled")
 			return

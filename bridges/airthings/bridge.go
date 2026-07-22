@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"tinygo.org/x/bluetooth"
 
 	"github.com/spf13/viper"
 
@@ -58,7 +57,7 @@ func sensorToDevice(s *airthings.Sensor) *device.Device {
 	}
 }
 
-// AirthingsBridge acts as the handler for Bridge requests for the Airthings sensor.
+// AirthingsBridge acts as the handler for Bridge requests for the Airthings sensors registered.
 type AirthingsBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
@@ -69,8 +68,13 @@ type AirthingsBridge struct {
 	ids         []int
 }
 
-// NewAirthingsBridge creates a new bridge to an Airthings sensor
-func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, scanner *airthings.Scanner, sensorIDs []int) *AirthingsBridge {
+// NewAirthingsBridge creates a new bridge to a collection Airthings sensors
+func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, btAdapter *bluetooth.Adapter, sensorIDs []int) *AirthingsBridge {
+	btMac, err := btAdapter.Address()
+	if err != nil {
+		logger.Fatal("unable to get address from bluetooth adapter", zap.Error(err))
+	}
+
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -79,21 +83,26 @@ func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, scanner *airthi
 		Config: &api2.Bridge_Config{
 			Name:        viper.GetString("bridge.name"),
 			Description: viper.GetString("bridge.description"),
+			Address: &api2.Address{
+				Bluetooth: &api2.Address_Bluetooth{
+					Address: btMac.MAC.String(),
+				},
+			},
 		},
 		State: &api2.Bridge_State{
 			IsPaired: true,
 		},
 	}
 
-	cb := &AirthingsBridge{
+	ab := &AirthingsBridge{
 		logger:  logger,
 		svc:     svc,
-		scanner: scanner,
+		scanner: airthings.NewScanner(btAdapter),
 		ids:     sensorIDs,
 		b:       b,
 	}
 
-	return cb
+	return ab
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
@@ -127,12 +136,12 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 		if err != nil {
 			ab.logger.Error("unable to find sensor",
 				zap.Error(err))
-			return status.Error(codes.Internal, "unable to find sensor")
+			continue
 		}
 		if err = sensor.Refresh(); err != nil {
 			ab.logger.Error("unable to refresh sensor",
 				zap.Error(err))
-			return status.Error(codes.Internal, "unable to refresh sensor")
+			continue
 		}
 		sensor.Disconnect()
 
@@ -145,18 +154,17 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 func (ab *AirthingsBridge) Run(ctx context.Context) {
 	ab.Refresh(ctx)
 
-	refreshTimer := time.NewTicker(time.Minute * 5)
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	ab.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
-			err := ab.Refresh(ctx)
-			if err != nil {
+			if err := ab.Refresh(ctx); err != nil {
 				ab.logger.Error("unable to refresh sensors",
 					zap.Error(err))
 				continue
-			} else {
-				ab.logger.Debug("refreshed")
 			}
+			ab.logger.Debug("refreshed")
 		case <-ctx.Done():
 			ab.logger.Info("run context cancelled")
 			return

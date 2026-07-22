@@ -19,8 +19,12 @@ func main() {
 
 	viper.SetConfigName("roku")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("bridge.refresh_interval", 300)
+	viper.SetDefault("bridge.listen_port", 17005)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
@@ -43,19 +47,16 @@ func main() {
 	svc := bridge.NewService(logger)
 
 	rb := NewRokuBridge(logger, svc)
-	if err := rb.Refresh(context.Background()); err != nil {
-		logger.Fatal("unable to refresh bridge", zap.Error(err))
-	}
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(rb, rb.b)
 
 	// Check for updates periodically
-	runCtx, runCtxCancel := context.WithCancel(context.Background())
-	defer runCtxCancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	go rb.Run(runCtx)
+	go rb.Run(ctx)
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

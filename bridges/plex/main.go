@@ -21,8 +21,12 @@ func main() {
 
 	viper.SetConfigName("plex")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("bridge.refresh_interval", 1800)
+	viper.SetDefault("bridge.listen_port", 17006)
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
@@ -41,13 +45,13 @@ func main() {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	svc := bridge.NewService(logger)
-
-	plexURL := viper.GetString("plex.serverURL")
-	plexAPIKey := viper.GetString("plex.apiKey")
+	plexURL := viper.GetString("plex.server_url")
+	plexAPIKey := viper.GetString("plex.api_key")
 	if len(plexAPIKey) < 1 {
 		logger.Fatal("no plex API key specified")
 	}
+
+	svc := bridge.NewService(logger)
 
 	p := NewPlex(logger, svc, plexURL, plexAPIKey)
 
@@ -57,7 +61,7 @@ func main() {
 
 	go func() {
 		for {
-			time.Sleep(time.Minute * 30)
+			time.Sleep(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
 			if err := p.Refresh(context.Background()); err != nil {
 				logger.Error("unable to refresh plex state", zap.Error(err))
 			}
@@ -68,7 +72,7 @@ func main() {
 
 	svc.RegisterHandler(pb, pb.b)
 
-	plexCallbackPort := viper.GetInt("plex.callbackPort")
+	plexCallbackPort := viper.GetInt("plex.callback_port")
 	if plexCallbackPort > 0 {
 		http.HandleFunc("/", p.handleWebhook)
 
@@ -77,5 +81,5 @@ func main() {
 	}
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

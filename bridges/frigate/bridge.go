@@ -187,23 +187,22 @@ func (fb *FrigateBridge) Refresh(ctx context.Context) error {
 
 // Run begins the process of polling the sensor and reporting back the state.
 func (fb *FrigateBridge) Run(ctx context.Context) {
-	err := fb.Refresh(ctx)
-	if err != nil {
-		fb.logger.Error("unable to refresh bridges", zap.Error(err))
-		return
-	}
+	fb.Refresh(ctx)
 
-	refreshTimer := time.NewTicker(time.Minute * 1)
+	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
+	fb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))
 	for {
 		select {
 		case <-refreshTimer.C:
-			err := fb.Refresh(ctx)
-			if err != nil {
+			if err := fb.Refresh(ctx); err != nil {
 				fb.logger.Error("unable to get cameras from frigate",
 					zap.Error(err))
-			} else {
-				fb.logger.Debug("refreshed")
+				continue
 			}
+			fb.logger.Debug("refreshed")
+		case <-ctx.Done():
+			fb.logger.Info("run context cancelled")
+			return
 		}
 	}
 }

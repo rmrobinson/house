@@ -62,14 +62,14 @@ func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex) *PlexB
 		},
 	}
 
-	cb := &PlexBridge{
+	pb := &PlexBridge{
 		logger: logger,
 		svc:    svc,
 		client: client,
 		b:      b,
 	}
 
-	return cb
+	return pb
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
@@ -93,4 +93,7 @@ func (pb *PlexBridge) SetBridgeConfig(ctx context.Context, config bridge.Config)
 // the Plex API is refreshed.
 func (pb *PlexBridge) Refresh(ctx context.Context) error {
 	return pb.client.Refresh(ctx)
+}
+
+func (pb *PlexBridge) Run(ctx context.Context) {
 }

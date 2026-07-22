@@ -7,8 +7,8 @@ go_library(
         "main.go",
     ],
     importpath = "github.com/rmrobinson/house/bridges/airthings",
-    visibility = ["//visibility:private"],
     target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:private"],
     deps = [
         "//api",
         "//api/command",
@@ -18,8 +18,6 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_rmrobinson_airthings_btle//:airthings-btle",
         "@com_github_spf13_viper//:viper",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//types/known/timestamppb",
         "@org_tinygo_x_bluetooth//:bluetooth",
         "@org_uber_go_zap//:zap",

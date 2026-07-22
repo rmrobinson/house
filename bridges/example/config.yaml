@@ -1,0 +1,3 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17001

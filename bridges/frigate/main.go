@@ -22,8 +22,12 @@ func main() {
 
 	viper.SetConfigName("frigate")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("bridge.refresh_interval", 60)
+	viper.SetDefault("bridge.listen_port", 17008)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
@@ -42,8 +46,6 @@ func main() {
 			logger.Fatal("unable to write new config", zap.Error(err))
 		}
 	}
-
-	svc := bridge.NewService(logger)
 
 	ipAddr := viper.GetString("frigate.ip")
 	port := viper.GetInt("frigate.port")
@@ -66,10 +68,9 @@ func main() {
 
 	frigateClient := frigate.NewClient(logger, &http.Client{}, frigateAPIEndpoint)
 
-	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr)
+	svc := bridge.NewService(logger)
 
-	// Once we've successfully gotten the device state, register the handler and device with the service
-	svc.RegisterHandler(fb, fb.b)
+	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr)
 
 	var cameraConfigs []CameraConfig
 	if err := viper.UnmarshalKey("frigate.cameras", &cameraConfigs); err != nil {
@@ -78,9 +79,12 @@ func main() {
 
 	fb.Setup(context.Background(), cameraConfigs)
 
+	// Once we've successfully gotten the device state, register the handler and device with the service
+	svc.RegisterHandler(fb, fb.b)
+
 	// Check for updates periodically
 	go fb.Run(context.Background())
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

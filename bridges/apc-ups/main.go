@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"go.uber.org/zap"
@@ -20,8 +21,12 @@ func main() {
 
 	viper.SetConfigName("apc-ups")
 	viper.SetConfigType("yaml")
+	viper.AddConfigPath("/etc/house")
 	viper.AddConfigPath("$HOME/.config/house")
 	viper.AddConfigPath(".")
+
+	viper.SetDefault("bridge.refresh_interval", 60)
+	viper.SetDefault("bridge.listen_port", 17003)
 
 	if err := viper.ReadInConfig(); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
@@ -41,13 +46,14 @@ func main() {
 		}
 	}
 
-	svc := bridge.NewService(logger)
-
 	ipAddr := viper.GetString("ups.ip")
 	port := viper.GetInt("ups.port")
 	proto := viper.GetString("ups.proto")
 	if len(ipAddr) < 1 {
 		logger.Fatal("ups.ip must be set in the config")
+	}
+	if !viper.IsSet("ups.port") {
+		logger.Fatal("ups.port must be set in the config")
 	}
 	if len(proto) < 1 {
 		proto = "tcp"
@@ -58,20 +64,19 @@ func main() {
 		logger.Fatal("unable to connect to ups", zap.Error(err))
 	}
 
-	upsb := NewAPCUPSBridge(logger, svc, apcUPSClient, ipAddr, port)
+	svc := bridge.NewService(logger)
 
-	status, err := apcUPSClient.Status()
-	if err != nil {
-		logger.Fatal("unable to get status from UPS", zap.Error(err))
-	}
+	upsb := NewAPCUPSBridge(logger, svc, apcUPSClient, ipAddr, port)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(upsb, upsb.b)
-	svc.UpdateDevice(statusToDevice(status))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// Check for updates periodically
-	go upsb.Run()
+	go upsb.Run(ctx)
 
 	s := bridge.NewServer(logger, svc)
-	s.Serve()
+	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }
