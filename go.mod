@@ -1,6 +1,6 @@
 module github.com/rmrobinson/house
 
-go 1.25.7
+go 1.26.1
 
 require (
 	github.com/LukeHagar/plexgo v0.17.0
