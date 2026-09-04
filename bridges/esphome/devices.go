@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"math"
+	"slices"
+	"sort"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -36,8 +39,10 @@ type deviceBuilder interface {
 // deviceBuilders is the registry of device types this bridge knows how to build. Config `type:`
 // values that aren't in this map are rejected at connect time with a logged error.
 var deviceBuilders = map[string]deviceBuilder{
-	"clock": clockBuilder{},
-	"light": lightBuilder{},
+	"clock":         clockBuilder{},
+	"light":         lightBuilder{},
+	"fan":           fanBuilder{},
+	"standing_desk": standingDeskBuilder{},
 }
 
 // --- Light ---
@@ -229,6 +234,375 @@ func (clockBuilder) applyCommand(client *esphome.Client, roleKeys map[string]uin
 	}
 
 	return nil
+}
+
+// --- Fan ---
+
+// fanToggleRoles are the Toggle-trait role names fanBuilder recognizes. A configured fan only
+// needs to supply roles/entities for the toggles it actually has; Toggle.Attributes reflects
+// exactly the subset present in config, not this full list.
+var fanToggleRoles = []string{"oscillation", "beep", "display"}
+
+// fanTimerLabels pairs each of the fan's fixed Tuya timer select options with its index; the
+// duration in seconds is the index times one hour ("Cancel" = 0h = 0s, up to "12h" = 43200s).
+// This is a fixed 13-value set specific to this device's enum-datapoint timer, not something a
+// generic trait.Timer consumer should need to know about — kept local to fanBuilder.
+var fanTimerLabels = []string{
+	"Cancel", "1h", "2h", "3h", "4h", "5h", "6h", "7h", "8h", "9h", "10h", "11h", "12h",
+}
+
+func fanTimerDurations() []int32 {
+	durations := make([]int32, len(fanTimerLabels))
+	for i := range fanTimerLabels {
+		durations[i] = int32(i) * 3600
+	}
+	return durations
+}
+
+// durationToTimerLabel converts a commanded duration in seconds to the select option that
+// represents it. Returns false for any value not in the fixed set rather than rounding.
+func durationToTimerLabel(seconds int32) (string, bool) {
+	if seconds < 0 || seconds%3600 != 0 {
+		return "", false
+	}
+	idx := seconds / 3600
+	if int(idx) >= len(fanTimerLabels) {
+		return "", false
+	}
+	return fanTimerLabels[idx], true
+}
+
+// timerLabelToDuration converts the timer select's current state string to seconds. An
+// unrecognized label (including the entity's not-yet-received zero value) is treated as no
+// timer running, matching remaining_seconds' documented "0 means not running" convention.
+func timerLabelToDuration(label string) int32 {
+	for i, l := range fanTimerLabels {
+		if l == label {
+			return int32(i) * 3600
+		}
+	}
+	return 0
+}
+
+// fanBuilder builds a house Fan device from a native ESPHome fan entity (on/off + speed), a
+// mode select, a fixed-option timer select, and a set of independently-configurable switches
+// exposed via the Toggle trait (oscillation/beep/display), plus an optional temperature sensor.
+type fanBuilder struct{}
+
+func (fanBuilder) build(cfg deviceConfig, entities map[string]esphome.Entity) (*device.Device, error) {
+	fe, ok := entities["fan"].(*esphome.FanEntity)
+	if !ok {
+		return nil, fmt.Errorf("missing required role %q", "fan")
+	}
+	modeEnt, ok := entities["mode"].(*esphome.SelectEntity)
+	if !ok {
+		return nil, fmt.Errorf("missing required role %q", "mode")
+	}
+	timerEnt, ok := entities["timer"].(*esphome.SelectEntity)
+	if !ok {
+		return nil, fmt.Errorf("missing required role %q", "timer")
+	}
+
+	maxSpeed := fe.SupportedSpeedCount
+	if maxSpeed < 1 {
+		maxSpeed = 1
+	}
+
+	fan := &device.Fan{
+		OnOff: &trait.OnOff{
+			Attributes: &trait.OnOff_Attributes{CanControl: true},
+			State:      &trait.OnOff_State{IsOn: fe.State},
+		},
+		Speed: &trait.Speed{
+			Attributes: &trait.Speed_Attributes{CanControl: true, MinimumSpeed: 1, MaximumSpeed: maxSpeed, SpeedIncrement: 1},
+			State:      &trait.Speed_State{CurrentSpeed: fe.SpeedLevel},
+		},
+		Mode: &trait.Mode{
+			Attributes: &trait.Mode_Attributes{CanControl: true, AvailableModes: modeEnt.Options},
+			State:      &trait.Mode_State{CurrentMode: modeEnt.State},
+		},
+		Timer: &trait.Timer{
+			Attributes: &trait.Timer_Attributes{CanControl: true, AvailableDurations: fanTimerDurations()},
+			State:      &trait.Timer_State{RemainingSeconds: timerLabelToDuration(timerEnt.State)},
+		},
+	}
+
+	var toggles []string
+	settings := make(map[string]bool)
+	for _, role := range fanToggleRoles {
+		se, ok := entities[role].(*esphome.SwitchEntity)
+		if !ok {
+			continue
+		}
+		toggles = append(toggles, role)
+		settings[role] = se.State
+	}
+	fan.Toggles = &trait.Toggle{
+		Attributes: &trait.Toggle_Attributes{AvailableToggles: toggles},
+		State:      &trait.Toggle_State{Settings: settings},
+	}
+
+	if te, ok := entities["temperature"].(*esphome.SensorEntity); ok {
+		fan.Temperature = &trait.Temperature{
+			Attributes: &trait.Temperature_Attributes{Unit: "celsius"},
+			State:      &trait.Temperature_State{Value: te.State},
+		}
+	}
+
+	return &device.Device{
+		Manufacturer: "ESPHome",
+		Details:      &device.Device_Fan{Fan: fan},
+	}, nil
+}
+
+func (fanBuilder) applyState(d *device.Device, role string, msg proto.Message) {
+	f := d.GetFan()
+
+	switch role {
+	case "fan":
+		m, ok := msg.(*pb.FanStateResponse)
+		if !ok {
+			return
+		}
+		f.OnOff.State.IsOn = m.State
+		f.Speed.State.CurrentSpeed = m.SpeedLevel
+
+	case "mode":
+		m, ok := msg.(*pb.SelectStateResponse)
+		if !ok {
+			return
+		}
+		f.Mode.State.CurrentMode = m.State
+
+	case "timer":
+		m, ok := msg.(*pb.SelectStateResponse)
+		if !ok {
+			return
+		}
+		f.Timer.State.RemainingSeconds = timerLabelToDuration(m.State)
+
+	case "oscillation", "beep", "display":
+		m, ok := msg.(*pb.SwitchStateResponse)
+		if !ok {
+			return
+		}
+		f.Toggles.State.Settings[role] = m.State
+
+	case "temperature":
+		m, ok := msg.(*pb.SensorStateResponse)
+		if !ok || f.Temperature == nil {
+			return
+		}
+		f.Temperature.State.Value = m.State
+	}
+}
+
+func (fanBuilder) applyCommand(client *esphome.Client, roleKeys map[string]uint32, d *device.Device, cmd *command.Command) error {
+	f := d.GetFan()
+
+	switch {
+	case cmd.GetOnOff() != nil:
+		key, ok := roleKeys["fan"]
+		if !ok {
+			return bridge.ErrUnsupportedCommand
+		}
+		on := cmd.GetOnOff().On
+		if err := client.SetFan(key, esphome.FanCommandOpts{HasState: true, State: on}); err != nil {
+			return err
+		}
+		f.OnOff.State.IsOn = on
+
+	case cmd.GetSpeed() != nil:
+		key, ok := roleKeys["fan"]
+		if !ok {
+			return bridge.ErrUnsupportedCommand
+		}
+		level := clampSpeed(cmd.GetSpeed().Value, f.Speed.Attributes.MinimumSpeed, f.Speed.Attributes.MaximumSpeed)
+		if err := client.SetFan(key, esphome.FanCommandOpts{HasSpeedLevel: true, SpeedLevel: level}); err != nil {
+			return err
+		}
+		f.Speed.State.CurrentSpeed = level
+
+	case cmd.GetMode() != nil:
+		key, ok := roleKeys["mode"]
+		value := cmd.GetMode().Value
+		if !ok || !slices.Contains(f.Mode.Attributes.AvailableModes, value) {
+			return bridge.ErrUnsupportedCommand
+		}
+		if err := client.SetSelect(key, value); err != nil {
+			return err
+		}
+		f.Mode.State.CurrentMode = value
+
+	case cmd.GetTimer() != nil:
+		key, ok := roleKeys["timer"]
+		if !ok {
+			return bridge.ErrUnsupportedCommand
+		}
+		label, ok := durationToTimerLabel(cmd.GetTimer().DurationSeconds)
+		if !ok {
+			return bridge.ErrUnsupportedCommand
+		}
+		if err := client.SetSelect(key, label); err != nil {
+			return err
+		}
+		f.Timer.State.RemainingSeconds = cmd.GetTimer().DurationSeconds
+
+	case cmd.GetToggle() != nil:
+		for name, val := range cmd.GetToggle().Settings {
+			key, ok := roleKeys[name]
+			if !ok {
+				return bridge.ErrUnsupportedCommand
+			}
+			if err := client.SetSwitch(key, val); err != nil {
+				return err
+			}
+			f.Toggles.State.Settings[name] = val
+		}
+
+	default:
+		return bridge.ErrUnsupportedCommand
+	}
+
+	return nil
+}
+
+func clampSpeed(v, min, max int32) int32 {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+// --- Standing Desk ---
+
+// standingDeskFixedRoles are the roles standingDeskBuilder claims independent of the presets a
+// given desk is configured with. Any other configured role is treated as a preset: its name
+// becomes an entry in Mode.Attributes.available_modes, and its value is the object_id of the
+// button that triggers it — the same role-name-doubles-as-key pattern fanBuilder uses for Toggle.
+var standingDeskFixedRoles = map[string]bool{"height": true, "move_up": true, "move_down": true}
+
+// standingDeskBuilder builds a house StandingDesk device from a height sensor, two move
+// switches, and a set of preset buttons. Movement is deliberately left unwired: the desk this
+// was built against has a known crash bug when driven via its Move Up/Down switches, so this
+// builder only exposes read-only Position telemetry and preset Mode commands until that's
+// resolved — see the ApplyCommand Movement case and StandingDesk's proto doc comment.
+type standingDeskBuilder struct{}
+
+func (standingDeskBuilder) build(cfg deviceConfig, entities map[string]esphome.Entity) (*device.Device, error) {
+	se, ok := entities["height"].(*esphome.SensorEntity)
+	if !ok {
+		return nil, fmt.Errorf("missing required role %q", "height")
+	}
+	if _, ok := entities["move_up"].(*esphome.SwitchEntity); !ok {
+		return nil, fmt.Errorf("missing required role %q", "move_up")
+	}
+	if _, ok := entities["move_down"].(*esphome.SwitchEntity); !ok {
+		return nil, fmt.Errorf("missing required role %q", "move_down")
+	}
+	if cfg.PositionMin == nil || cfg.PositionMax == nil {
+		return nil, fmt.Errorf("standing_desk device %q requires position_min and position_max", cfg.ID)
+	}
+	min, max := *cfg.PositionMin, *cfg.PositionMax
+
+	var presets []string
+	for role, ent := range entities {
+		if standingDeskFixedRoles[role] {
+			continue
+		}
+		if _, ok := ent.(*esphome.ButtonEntity); !ok {
+			return nil, fmt.Errorf("preset role %q must be a button entity, got %T", role, ent)
+		}
+		presets = append(presets, role)
+	}
+	sort.Strings(presets)
+
+	return &device.Device{
+		Manufacturer: "ESPHome",
+		Details: &device.Device_StandingDesk{
+			StandingDesk: &device.StandingDesk{
+				Position: &trait.Position{
+					Attributes: &trait.Position_Attributes{Unit: "cm", MinValue: min, MaxValue: max, SupportsSet: false},
+					State:      &trait.Position_State{Value: se.State, Percent: positionPercent(se.State, min, max)},
+				},
+				Mode: &trait.Mode{
+					Attributes: &trait.Mode_Attributes{CanControl: true, AvailableModes: presets},
+					State:      &trait.Mode_State{},
+				},
+			},
+		},
+	}, nil
+}
+
+func (standingDeskBuilder) applyState(d *device.Device, role string, msg proto.Message) {
+	if role != "height" {
+		return
+	}
+	m, ok := msg.(*pb.SensorStateResponse)
+	if !ok {
+		return
+	}
+	p := d.GetStandingDesk().Position
+	p.State.Value = m.State
+	p.State.Percent = positionPercent(m.State, p.Attributes.MinValue, p.Attributes.MaxValue)
+}
+
+func (standingDeskBuilder) applyCommand(client *esphome.Client, roleKeys map[string]uint32, d *device.Device, cmd *command.Command) error {
+	sd := d.GetStandingDesk()
+
+	switch {
+	case cmd.GetMode() != nil:
+		value := cmd.GetMode().Value
+		key, ok := roleKeys[value]
+		if !ok {
+			return bridge.ErrUnsupportedCommand
+		}
+		if err := client.PressButton(key); err != nil {
+			return err
+		}
+		sd.Mode.State.CurrentMode = value
+
+	case cmd.GetPosition() != nil:
+		// supports_set is always false for this desk: the only way to change height is via
+		// Movement, which isn't wired yet (see the case below and the StandingDesk proto doc).
+		return bridge.ErrUnsupportedCommand
+
+	case cmd.GetMovement() != nil:
+		// TODO: wire this up once the desk's movement-command crash bug is resolved (see
+		// esphome-device-profiles-extension-plan.md). Desk Move Up/Down are switch entities with
+		// on-device repeat-send/auto-cutoff safety timeouts, so ApplyCommand would be a thin
+		// pass-through (DIRECTION_POSITIVE/NEGATIVE -> SetSwitch(move_up/move_down key, true),
+		// DIRECTION_STOPPED -> SetSwitch(false) on whichever is on) once that's safe to exercise
+		// against real hardware.
+		return bridge.ErrUnsupportedCommand
+
+	default:
+		return bridge.ErrUnsupportedCommand
+	}
+
+	return nil
+}
+
+// positionPercent normalizes value into Position.State.percent's documented 0-100 range. A NaN
+// value - which a not-yet-reported ESPHome sensor can produce (confirmed live: the standing
+// desk's height sensor stays NaN until its control box starts actively streaming status frames,
+// which nothing in this device profile currently triggers) would otherwise slip past the
+// range checks below unclamped, since every comparison against NaN is false in IEEE 754.
+func positionPercent(value, min, max float32) float32 {
+	if max <= min || math.IsNaN(float64(value)) {
+		return 0
+	}
+	pct := (value - min) / (max - min) * 100
+	if pct < 0 {
+		return 0
+	}
+	if pct > 100 {
+		return 100
+	}
+	return pct
 }
 
 // --- shared helpers ---

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Toggle describes a set of independently-addressable named boolean features on a device that
+// don't warrant their own trait each (e.g. a fan's oscillation, beep, and display-on-off).
+message Toggle {
+  message Attributes {
+    // The names of the toggles this device exposes, e.g. ["oscillation", "beep", "display"].
+    repeated string available_toggles = 1;
+  }
+  message State {
+    // Current value of each toggle, keyed by name.
+    map<string, bool> settings = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

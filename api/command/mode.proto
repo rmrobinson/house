@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Mode commands a device with the Mode trait to switch to the named value.
+message Mode {
+  string value = 1;
+}

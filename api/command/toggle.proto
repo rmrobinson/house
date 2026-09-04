@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Toggle commands a device with the Toggle trait to change one or more named settings. This is a
+// partial update: only the keys present are changed, any toggle left out is untouched.
+message Toggle {
+  map<string, bool> settings = 1;
+}

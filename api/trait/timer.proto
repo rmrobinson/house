@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Timer describes a device's countdown-to-off (or countdown-to-action) capability.
+message Timer {
+  message Attributes {
+    // If true, control of the timer is possible.
+    bool can_control = 1;
+    // The durations, in seconds, that command.Timer.duration_seconds may be set to. Empty means
+    // any value is accepted. A device that only supports a fixed set of durations (rather than
+    // an arbitrary countdown) rejects any commanded value not in this list.
+    repeated int32 available_durations = 2;
+  }
+  message State {
+    // Seconds remaining on the timer. 0 means no timer is currently running.
+    int32 remaining_seconds = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

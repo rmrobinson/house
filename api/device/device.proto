@@ -11,10 +11,12 @@ import "api/device/camera.proto";
 import "api/device/clock.proto";
 import "api/device/connected_device.proto";
 import "api/device/ev_charger.proto";
+import "api/device/fan.proto";
 import "api/device/generic.proto";
 import "api/device/light.proto";
 import "api/device/media_player.proto";
 import "api/device/sensor.proto";
+import "api/device/standing_desk.proto";
 import "api/device/television.proto";
 import "api/device/thermostat.proto";
 import "api/device/ups.proto";
@@ -91,5 +93,7 @@ message Device {
     faltung.house.api.device.Television television = 109;
     faltung.house.api.device.ConnectedDevice connected_device = 110;
     faltung.house.api.device.Camera camera = 111;
+    faltung.house.api.device.Fan fan = 112;
+    faltung.house.api.device.StandingDesk standing_desk = 113;
   }
 }

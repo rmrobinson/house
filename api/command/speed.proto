@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Speed commands a device with the Speed trait to an absolute speed level, in the device's own
+// units (see trait.Speed.Attributes.minimum_speed/maximum_speed).
+message Speed {
+  int32 value = 1;
+}

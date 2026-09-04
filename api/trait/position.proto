@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Position describes the part of a device which reports where a linear or rotary actuator
+// currently sits along its range of travel (e.g. desk height, blind openness).
+message Position {
+  message Attributes {
+    // The unit the value is measured in, e.g. "cm" for a standing desk, "percent" for blinds.
+    string unit = 1;
+    // The lowest value the device can report/accept.
+    float min_value = 2;
+    // The highest value the device can report/accept.
+    float max_value = 3;
+    // If true, command.Position may be sent to jump directly to a target value.
+    // If false, the only way to change position is via the Movement trait.
+    bool supports_set = 4;
+  }
+  message State {
+    // The current position, in Attributes.unit.
+    float value = 1;
+    // The current position, normalized to 0-100: (value - min_value) / (max_value - min_value).
+    float percent = 2;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

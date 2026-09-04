@@ -30,6 +30,12 @@ type deviceConfig struct {
 	Roles      map[string]string `mapstructure:"roles"`
 	Timezone   string            `mapstructure:"timezone"`
 	TimeFormat string            `mapstructure:"time_format"`
+
+	// PositionMin and PositionMax describe a standing_desk device's physical travel range, in
+	// the same unit as its height sensor (cm). ESPHome has no metadata for this on a template
+	// sensor, so it has to come from config, same as Timezone/TimeFormat above.
+	PositionMin *float32 `mapstructure:"position_min"`
+	PositionMax *float32 `mapstructure:"position_max"`
 }
 
 // EsphomeBridge is the bridge.Handler implementation for ESPHome nodes.

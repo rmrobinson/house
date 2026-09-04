@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/mode.proto";
+import "api/trait/onoff.proto";
+import "api/trait/speed.proto";
+import "api/trait/temperature.proto";
+import "api/trait/timer.proto";
+import "api/trait/toggle.proto";
+
+// Fan is a device which represents a standalone fan in a house.
+message Fan {
+  faltung.house.api.trait.OnOff on_off = 1;
+  faltung.house.api.trait.Speed speed = 2;
+  faltung.house.api.trait.Mode mode = 3;
+  faltung.house.api.trait.Timer timer = 4;
+  faltung.house.api.trait.Toggle toggles = 5;
+  optional faltung.house.api.trait.Temperature temperature = 6;
+}

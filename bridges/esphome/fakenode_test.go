@@ -10,11 +10,31 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// fakeEntity describes a single light entity a fakeESPHomeServer reports via ListEntities.
+// fakeEntityDomain identifies which ESPHome entity domain a fakeEntity represents. The zero
+// value is fakeDomainLight so every existing fakeEntity{...} literal (all pre-dating this type)
+// keeps behaving exactly as before without being touched.
+type fakeEntityDomain int
+
+const (
+	fakeDomainLight fakeEntityDomain = iota
+	fakeDomainSwitch
+	fakeDomainSelect
+	fakeDomainSensor
+	fakeDomainFan
+	fakeDomainButton
+)
+
+// fakeEntity describes a single entity a fakeESPHomeServer reports via ListEntities.
 type fakeEntity struct {
 	objectID string
 	name     string
 	key      uint32
+	domain   fakeEntityDomain
+
+	// selectOptions is only used when domain == fakeDomainSelect.
+	selectOptions []string
+	// fanSupportedSpeedCount is only used when domain == fakeDomainFan.
+	fanSupportedSpeedCount int32
 }
 
 // fakeESPHomeServer is a minimal, plaintext-only stand-in for a real ESPHome node's native API
@@ -32,10 +52,14 @@ type fakeESPHomeServer struct {
 	t        *testing.T
 	listener net.Listener
 
-	mu         sync.Mutex
-	entities   []fakeEntity
-	commands   []*pb.LightCommandRequest
-	activeConn net.Conn
+	mu             sync.Mutex
+	entities       []fakeEntity
+	commands       []*pb.LightCommandRequest
+	switchCommands []*pb.SwitchCommandRequest
+	selectCommands []*pb.SelectCommandRequest
+	fanCommands    []*pb.FanCommandRequest
+	buttonCommands []*pb.ButtonCommandRequest
+	activeConn     net.Conn
 }
 
 func newFakeESPHomeServer(t *testing.T, entities []fakeEntity) *fakeESPHomeServer {
@@ -87,6 +111,42 @@ func (s *fakeESPHomeServer) Commands() []*pb.LightCommandRequest {
 	defer s.mu.Unlock()
 	out := make([]*pb.LightCommandRequest, len(s.commands))
 	copy(out, s.commands)
+	return out
+}
+
+// SwitchCommands returns every SwitchCommandRequest received so far, across all connections.
+func (s *fakeESPHomeServer) SwitchCommands() []*pb.SwitchCommandRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pb.SwitchCommandRequest, len(s.switchCommands))
+	copy(out, s.switchCommands)
+	return out
+}
+
+// SelectCommands returns every SelectCommandRequest received so far, across all connections.
+func (s *fakeESPHomeServer) SelectCommands() []*pb.SelectCommandRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pb.SelectCommandRequest, len(s.selectCommands))
+	copy(out, s.selectCommands)
+	return out
+}
+
+// FanCommands returns every FanCommandRequest received so far, across all connections.
+func (s *fakeESPHomeServer) FanCommands() []*pb.FanCommandRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pb.FanCommandRequest, len(s.fanCommands))
+	copy(out, s.fanCommands)
+	return out
+}
+
+// ButtonCommands returns every ButtonCommandRequest received so far, across all connections.
+func (s *fakeESPHomeServer) ButtonCommands() []*pb.ButtonCommandRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*pb.ButtonCommandRequest, len(s.buttonCommands))
+	copy(out, s.buttonCommands)
 	return out
 }
 
@@ -152,11 +212,46 @@ func (s *fakeESPHomeServer) handleConn(conn net.Conn) {
 			s.mu.Unlock()
 
 			for _, e := range entities {
-				resp := &pb.ListEntitiesLightResponse{Key: e.key, Name: e.name}
-				if clientAPIMinor < 14 {
-					resp.ObjectId = e.objectID
+				includeObjectID := clientAPIMinor < 14
+
+				switch e.domain {
+				case fakeDomainSwitch:
+					resp := &pb.ListEntitiesSwitchResponse{Key: e.key, Name: e.name}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 17, resp)
+				case fakeDomainSelect:
+					resp := &pb.ListEntitiesSelectResponse{Key: e.key, Name: e.name, Options: e.selectOptions}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 52, resp)
+				case fakeDomainSensor:
+					resp := &pb.ListEntitiesSensorResponse{Key: e.key, Name: e.name}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 16, resp)
+				case fakeDomainFan:
+					resp := &pb.ListEntitiesFanResponse{Key: e.key, Name: e.name, SupportedSpeedCount: e.fanSupportedSpeedCount}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 14, resp)
+				case fakeDomainButton:
+					resp := &pb.ListEntitiesButtonResponse{Key: e.key, Name: e.name}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 61, resp)
+				default: // fakeDomainLight
+					resp := &pb.ListEntitiesLightResponse{Key: e.key, Name: e.name}
+					if includeObjectID {
+						resp.ObjectId = e.objectID
+					}
+					s.send(framer, 15, resp)
 				}
-				s.send(framer, 15, resp)
 			}
 			s.send(framer, 19, &pb.ListEntitiesDoneResponse{})
 
@@ -173,6 +268,40 @@ func (s *fakeESPHomeServer) handleConn(conn net.Conn) {
 				resp.Brightness = m.Brightness
 			}
 			s.send(framer, 24, resp)
+
+		case *pb.SwitchCommandRequest:
+			s.mu.Lock()
+			s.switchCommands = append(s.switchCommands, m)
+			s.mu.Unlock()
+
+			s.send(framer, 26, &pb.SwitchStateResponse{Key: m.Key, State: m.State})
+
+		case *pb.SelectCommandRequest:
+			s.mu.Lock()
+			s.selectCommands = append(s.selectCommands, m)
+			s.mu.Unlock()
+
+			s.send(framer, 53, &pb.SelectStateResponse{Key: m.Key, State: m.State})
+
+		case *pb.FanCommandRequest:
+			s.mu.Lock()
+			s.fanCommands = append(s.fanCommands, m)
+			s.mu.Unlock()
+
+			resp := &pb.FanStateResponse{Key: m.Key}
+			if m.HasState {
+				resp.State = m.State
+			}
+			if m.HasSpeedLevel {
+				resp.SpeedLevel = m.SpeedLevel
+			}
+			s.send(framer, 23, resp)
+
+		case *pb.ButtonCommandRequest:
+			s.mu.Lock()
+			s.buttonCommands = append(s.buttonCommands, m)
+			s.mu.Unlock()
+			// Buttons have no state response - presses are fire-and-forget.
 
 		case *pb.PingRequest:
 			s.send(framer, 8, &pb.PingResponse{})

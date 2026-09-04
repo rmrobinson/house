@@ -389,3 +389,473 @@ func TestClockBuilder_ApplyCommand_SendsToNode(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// --- fanBuilder ---
+
+const (
+	fakeFanKey     uint32 = 200001
+	fakeModeKey    uint32 = 200002
+	fakeTimerKey   uint32 = 200003
+	fakeOscKey     uint32 = 200004
+	fakeBeepKey    uint32 = 200005
+	fakeDisplayKey uint32 = 200006
+)
+
+func fanEntities() map[string]esphome.Entity {
+	return map[string]esphome.Entity{
+		"fan":         &esphome.FanEntity{Key: fakeFanKey, State: false, SpeedLevel: 2, SupportedSpeedCount: 5},
+		"mode":        &esphome.SelectEntity{Key: fakeModeKey, Options: []string{"Normal", "Natural", "Sleep"}, State: "Normal"},
+		"timer":       &esphome.SelectEntity{Key: fakeTimerKey, Options: fanTimerLabels, State: "Cancel"},
+		"oscillation": &esphome.SwitchEntity{Key: fakeOscKey, State: true},
+		"beep":        &esphome.SwitchEntity{Key: fakeBeepKey, State: false},
+	}
+}
+
+func TestFanBuilder_Build(t *testing.T) {
+	t.Run("missing fan role errors", func(t *testing.T) {
+		entities := fanEntities()
+		delete(entities, "fan")
+		_, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing mode role errors", func(t *testing.T) {
+		entities := fanEntities()
+		delete(entities, "mode")
+		_, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing timer role errors", func(t *testing.T) {
+		entities := fanEntities()
+		delete(entities, "timer")
+		_, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("populates every trait from the matched entities", func(t *testing.T) {
+		d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, fanEntities())
+		require.NoError(t, err)
+
+		f := d.GetFan()
+		require.NotNil(t, f)
+		assert.Equal(t, "ESPHome", d.Manufacturer)
+
+		assert.True(t, f.GetOnOff().GetAttributes().GetCanControl())
+		assert.False(t, f.GetOnOff().GetState().GetIsOn())
+
+		assert.EqualValues(t, 1, f.GetSpeed().GetAttributes().GetMinimumSpeed())
+		assert.EqualValues(t, 5, f.GetSpeed().GetAttributes().GetMaximumSpeed())
+		assert.EqualValues(t, 2, f.GetSpeed().GetState().GetCurrentSpeed())
+
+		assert.Equal(t, []string{"Normal", "Natural", "Sleep"}, f.GetMode().GetAttributes().GetAvailableModes())
+		assert.Equal(t, "Normal", f.GetMode().GetState().GetCurrentMode())
+
+		assert.Equal(t, fanTimerDurations(), f.GetTimer().GetAttributes().GetAvailableDurations())
+		assert.EqualValues(t, 0, f.GetTimer().GetState().GetRemainingSeconds())
+
+		assert.ElementsMatch(t, []string{"oscillation", "beep"}, f.GetToggles().GetAttributes().GetAvailableToggles())
+		assert.Equal(t, map[string]bool{"oscillation": true, "beep": false}, f.GetToggles().GetState().GetSettings())
+
+		assert.Nil(t, f.Temperature, "temperature role wasn't configured")
+	})
+
+	t.Run("populates Temperature when the role is present", func(t *testing.T) {
+		entities := fanEntities()
+		entities["temperature"] = &esphome.SensorEntity{Key: 200007, State: 21.5}
+		d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, entities)
+		require.NoError(t, err)
+
+		require.NotNil(t, d.GetFan().GetTemperature())
+		assert.Equal(t, "celsius", d.GetFan().GetTemperature().GetAttributes().GetUnit())
+		assert.InDelta(t, 21.5, d.GetFan().GetTemperature().GetState().GetValue(), 0.001)
+	})
+
+	t.Run("timer state reflects the select entity's current label", func(t *testing.T) {
+		entities := fanEntities()
+		entities["timer"] = &esphome.SelectEntity{Key: fakeTimerKey, Options: fanTimerLabels, State: "3h"}
+		d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, entities)
+		require.NoError(t, err)
+		assert.EqualValues(t, 10800, d.GetFan().GetTimer().GetState().GetRemainingSeconds())
+	})
+}
+
+func TestFanBuilder_ApplyState(t *testing.T) {
+	newDevice := func() *device.Device {
+		d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, fanEntities())
+		require.NoError(t, err)
+		return d
+	}
+
+	t.Run("fan role updates OnOff and Speed", func(t *testing.T) {
+		d := newDevice()
+		fanBuilder{}.applyState(d, "fan", &pb.FanStateResponse{Key: fakeFanKey, State: true, SpeedLevel: 4})
+		assert.True(t, d.GetFan().GetOnOff().GetState().GetIsOn())
+		assert.EqualValues(t, 4, d.GetFan().GetSpeed().GetState().GetCurrentSpeed())
+	})
+
+	t.Run("mode role updates Mode", func(t *testing.T) {
+		d := newDevice()
+		fanBuilder{}.applyState(d, "mode", &pb.SelectStateResponse{Key: fakeModeKey, State: "Sleep"})
+		assert.Equal(t, "Sleep", d.GetFan().GetMode().GetState().GetCurrentMode())
+	})
+
+	t.Run("timer role updates Timer via label parsing", func(t *testing.T) {
+		d := newDevice()
+		fanBuilder{}.applyState(d, "timer", &pb.SelectStateResponse{Key: fakeTimerKey, State: "2h"})
+		assert.EqualValues(t, 7200, d.GetFan().GetTimer().GetState().GetRemainingSeconds())
+	})
+
+	t.Run("toggle roles update Toggles.State.Settings", func(t *testing.T) {
+		d := newDevice()
+		fanBuilder{}.applyState(d, "oscillation", &pb.SwitchStateResponse{Key: fakeOscKey, State: false})
+		assert.False(t, d.GetFan().GetToggles().GetState().GetSettings()["oscillation"])
+	})
+
+	t.Run("temperature role ignored when trait wasn't built", func(t *testing.T) {
+		d := newDevice()
+		require.NotPanics(t, func() {
+			fanBuilder{}.applyState(d, "temperature", &pb.SensorStateResponse{Key: 1, State: 20})
+		})
+	})
+
+	t.Run("ignores a message of the wrong type", func(t *testing.T) {
+		d := newDevice()
+		fanBuilder{}.applyState(d, "fan", &pb.SwitchStateResponse{Key: fakeFanKey, State: true})
+		assert.False(t, d.GetFan().GetOnOff().GetState().GetIsOn())
+	})
+}
+
+func TestFanBuilder_ApplyCommand_ErrorsWithoutTouchingClient(t *testing.T) {
+	newDeviceAndKeys := func() (*device.Device, map[string]uint32) {
+		d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, fanEntities())
+		require.NoError(t, err)
+		return d, map[string]uint32{
+			"fan": fakeFanKey, "mode": fakeModeKey, "timer": fakeTimerKey,
+			"oscillation": fakeOscKey, "beep": fakeBeepKey,
+		}
+	}
+
+	t.Run("unsupported command type", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := fanBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{DeviceId: "f1"})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("mode value not in available_modes", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := fanBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Mode{Mode: &command.Mode{Value: "Turbo"}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("timer duration not in the fixed set", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := fanBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Timer{Timer: &command.Timer{DurationSeconds: 1800}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("unknown toggle name", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := fanBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Toggle{Toggle: &command.Toggle{Settings: map[string]bool{"display": true}}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("missing role key for OnOff", func(t *testing.T) {
+		d, _ := newDeviceAndKeys()
+		err := fanBuilder{}.applyCommand(nil, map[string]uint32{}, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: true}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+}
+
+func TestFanBuilder_ApplyCommand_SendsToNode(t *testing.T) {
+	server := newFakeESPHomeServer(t, nil)
+	client := dialFakeServerClient(t, server)
+
+	d, err := fanBuilder{}.build(deviceConfig{ID: "f1", Type: "fan"}, fanEntities())
+	require.NoError(t, err)
+	roleKeys := map[string]uint32{
+		"fan": fakeFanKey, "mode": fakeModeKey, "timer": fakeTimerKey,
+		"oscillation": fakeOscKey, "beep": fakeBeepKey,
+	}
+
+	t.Run("on/off and speed go to the fan entity", func(t *testing.T) {
+		err := fanBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: true}},
+		})
+		require.NoError(t, err)
+		assert.True(t, d.GetFan().GetOnOff().GetState().GetIsOn())
+
+		err = fanBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Speed{Speed: &command.Speed{Value: 100}},
+		})
+		require.NoError(t, err)
+		assert.EqualValues(t, 5, d.GetFan().GetSpeed().GetState().GetCurrentSpeed(), "clamped to maximum_speed")
+
+		require.Eventually(t, func() bool { return len(server.FanCommands()) == 2 }, time.Second, 10*time.Millisecond)
+		cmds := server.FanCommands()
+		assert.True(t, cmds[0].HasState)
+		assert.True(t, cmds[0].State)
+		assert.True(t, cmds[1].HasSpeedLevel)
+		assert.EqualValues(t, 5, cmds[1].SpeedLevel)
+	})
+
+	t.Run("mode goes to the select entity", func(t *testing.T) {
+		err := fanBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Mode{Mode: &command.Mode{Value: "Sleep"}},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "Sleep", d.GetFan().GetMode().GetState().GetCurrentMode())
+
+		require.Eventually(t, func() bool { return len(server.SelectCommands()) >= 1 }, time.Second, 10*time.Millisecond)
+		assert.Equal(t, "Sleep", server.SelectCommands()[0].State)
+	})
+
+	t.Run("timer converts duration to its select label", func(t *testing.T) {
+		err := fanBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Timer{Timer: &command.Timer{DurationSeconds: 7200}},
+		})
+		require.NoError(t, err)
+		assert.EqualValues(t, 7200, d.GetFan().GetTimer().GetState().GetRemainingSeconds())
+
+		require.Eventually(t, func() bool { return len(server.SelectCommands()) >= 2 }, time.Second, 10*time.Millisecond)
+		assert.Equal(t, "2h", server.SelectCommands()[len(server.SelectCommands())-1].State)
+	})
+
+	t.Run("toggle goes to the named switch entity", func(t *testing.T) {
+		err := fanBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+			DeviceId: "f1",
+			Details:  &command.Command_Toggle{Toggle: &command.Toggle{Settings: map[string]bool{"oscillation": false}}},
+		})
+		require.NoError(t, err)
+		assert.False(t, d.GetFan().GetToggles().GetState().GetSettings()["oscillation"])
+
+		require.Eventually(t, func() bool { return len(server.SwitchCommands()) == 1 }, time.Second, 10*time.Millisecond)
+		cmd := server.SwitchCommands()[0]
+		assert.Equal(t, fakeOscKey, cmd.Key)
+		assert.False(t, cmd.State)
+	})
+}
+
+func TestDurationToTimerLabel(t *testing.T) {
+	label, ok := durationToTimerLabel(0)
+	require.True(t, ok)
+	assert.Equal(t, "Cancel", label)
+
+	label, ok = durationToTimerLabel(43200)
+	require.True(t, ok)
+	assert.Equal(t, "12h", label)
+
+	_, ok = durationToTimerLabel(1800)
+	assert.False(t, ok, "not in the fixed 1h-increment set")
+
+	_, ok = durationToTimerLabel(46800)
+	assert.False(t, ok, "beyond the fixed 12h maximum")
+}
+
+func TestTimerLabelToDuration(t *testing.T) {
+	assert.EqualValues(t, 0, timerLabelToDuration("Cancel"))
+	assert.EqualValues(t, 3600, timerLabelToDuration("1h"))
+	assert.EqualValues(t, 43200, timerLabelToDuration("12h"))
+	assert.EqualValues(t, 0, timerLabelToDuration("not-a-label"), "unrecognized label treated as not running")
+}
+
+func TestClampSpeed(t *testing.T) {
+	assert.EqualValues(t, 1, clampSpeed(0, 1, 5))
+	assert.EqualValues(t, 5, clampSpeed(9, 1, 5))
+	assert.EqualValues(t, 3, clampSpeed(3, 1, 5))
+}
+
+// --- standingDeskBuilder ---
+
+const (
+	fakeHeightKey   uint32 = 300001
+	fakeMoveUpKey   uint32 = 300002
+	fakeMoveDownKey uint32 = 300003
+	fakePresetKey   uint32 = 300004
+)
+
+func standingDeskEntities() map[string]esphome.Entity {
+	return map[string]esphome.Entity{
+		"height":         &esphome.SensorEntity{Key: fakeHeightKey, State: 90},
+		"move_up":        &esphome.SwitchEntity{Key: fakeMoveUpKey},
+		"move_down":      &esphome.SwitchEntity{Key: fakeMoveDownKey},
+		"preset_3_stand": &esphome.ButtonEntity{Key: fakePresetKey},
+	}
+}
+
+func standingDeskConfig() deviceConfig {
+	min, max := float32(65), float32(130)
+	return deviceConfig{ID: "d1", Type: "standing_desk", PositionMin: &min, PositionMax: &max}
+}
+
+func TestStandingDeskBuilder_Build(t *testing.T) {
+	t.Run("missing height role errors", func(t *testing.T) {
+		entities := standingDeskEntities()
+		delete(entities, "height")
+		_, err := standingDeskBuilder{}.build(standingDeskConfig(), entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing move_up role errors", func(t *testing.T) {
+		entities := standingDeskEntities()
+		delete(entities, "move_up")
+		_, err := standingDeskBuilder{}.build(standingDeskConfig(), entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing move_down role errors", func(t *testing.T) {
+		entities := standingDeskEntities()
+		delete(entities, "move_down")
+		_, err := standingDeskBuilder{}.build(standingDeskConfig(), entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("missing position_min/position_max errors", func(t *testing.T) {
+		_, err := standingDeskBuilder{}.build(deviceConfig{ID: "d1", Type: "standing_desk"}, standingDeskEntities())
+		assert.Error(t, err)
+	})
+
+	t.Run("a preset role that isn't a button entity errors", func(t *testing.T) {
+		entities := standingDeskEntities()
+		entities["preset_3_stand"] = &esphome.SwitchEntity{Key: fakePresetKey}
+		_, err := standingDeskBuilder{}.build(standingDeskConfig(), entities)
+		assert.Error(t, err)
+	})
+
+	t.Run("populates Position and Mode, leaves Movement unset", func(t *testing.T) {
+		d, err := standingDeskBuilder{}.build(standingDeskConfig(), standingDeskEntities())
+		require.NoError(t, err)
+
+		sd := d.GetStandingDesk()
+		require.NotNil(t, sd)
+		assert.Equal(t, "ESPHome", d.Manufacturer)
+
+		assert.Equal(t, "cm", sd.GetPosition().GetAttributes().GetUnit())
+		assert.EqualValues(t, 65, sd.GetPosition().GetAttributes().GetMinValue())
+		assert.EqualValues(t, 130, sd.GetPosition().GetAttributes().GetMaxValue())
+		assert.False(t, sd.GetPosition().GetAttributes().GetSupportsSet())
+		assert.EqualValues(t, 90, sd.GetPosition().GetState().GetValue())
+		assert.InDelta(t, 38.46, sd.GetPosition().GetState().GetPercent(), 0.01)
+
+		assert.True(t, sd.GetMode().GetAttributes().GetCanControl())
+		assert.Equal(t, []string{"preset_3_stand"}, sd.GetMode().GetAttributes().GetAvailableModes())
+
+		assert.Nil(t, sd.Movement)
+	})
+}
+
+func TestStandingDeskBuilder_ApplyState(t *testing.T) {
+	newDevice := func() *device.Device {
+		d, err := standingDeskBuilder{}.build(standingDeskConfig(), standingDeskEntities())
+		require.NoError(t, err)
+		return d
+	}
+
+	t.Run("height role updates Position", func(t *testing.T) {
+		d := newDevice()
+		standingDeskBuilder{}.applyState(d, "height", &pb.SensorStateResponse{Key: fakeHeightKey, State: 110})
+		assert.EqualValues(t, 110, d.GetStandingDesk().GetPosition().GetState().GetValue())
+		assert.InDelta(t, 69.23, d.GetStandingDesk().GetPosition().GetState().GetPercent(), 0.01)
+	})
+
+	t.Run("ignores a role that isn't height", func(t *testing.T) {
+		d := newDevice()
+		standingDeskBuilder{}.applyState(d, "move_up", &pb.SensorStateResponse{Key: fakeHeightKey, State: 110})
+		assert.EqualValues(t, 90, d.GetStandingDesk().GetPosition().GetState().GetValue())
+	})
+
+	t.Run("ignores a message of the wrong type", func(t *testing.T) {
+		d := newDevice()
+		standingDeskBuilder{}.applyState(d, "height", &pb.SwitchStateResponse{Key: fakeHeightKey, State: true})
+		assert.EqualValues(t, 90, d.GetStandingDesk().GetPosition().GetState().GetValue())
+	})
+}
+
+func TestStandingDeskBuilder_ApplyCommand_ErrorsWithoutTouchingClient(t *testing.T) {
+	newDeviceAndKeys := func() (*device.Device, map[string]uint32) {
+		d, err := standingDeskBuilder{}.build(standingDeskConfig(), standingDeskEntities())
+		require.NoError(t, err)
+		return d, map[string]uint32{
+			"height": fakeHeightKey, "move_up": fakeMoveUpKey, "move_down": fakeMoveDownKey,
+			"preset_3_stand": fakePresetKey,
+		}
+	}
+
+	t.Run("unknown preset value", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := standingDeskBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "d1",
+			Details:  &command.Command_Mode{Mode: &command.Mode{Value: "preset_1"}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("Position command is always unsupported", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := standingDeskBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "d1",
+			Details:  &command.Command_Position{Position: &command.Position{Target: &command.Position_Value{Value: 100}}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("Movement command is unsupported until the crash bug is resolved", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := standingDeskBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{
+			DeviceId: "d1",
+			Details:  &command.Command_Movement{Movement: &command.Movement{Direction: trait.Movement_DIRECTION_POSITIVE}},
+		})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+
+	t.Run("unsupported command type", func(t *testing.T) {
+		d, roleKeys := newDeviceAndKeys()
+		err := standingDeskBuilder{}.applyCommand(nil, roleKeys, d, &command.Command{DeviceId: "d1"})
+		assert.ErrorIs(t, err, bridge.ErrUnsupportedCommand)
+	})
+}
+
+func TestStandingDeskBuilder_ApplyCommand_SendsToNode(t *testing.T) {
+	server := newFakeESPHomeServer(t, nil)
+	client := dialFakeServerClient(t, server)
+
+	d, err := standingDeskBuilder{}.build(standingDeskConfig(), standingDeskEntities())
+	require.NoError(t, err)
+	roleKeys := map[string]uint32{
+		"height": fakeHeightKey, "move_up": fakeMoveUpKey, "move_down": fakeMoveDownKey,
+		"preset_3_stand": fakePresetKey,
+	}
+
+	err = standingDeskBuilder{}.applyCommand(client, roleKeys, d, &command.Command{
+		DeviceId: "d1",
+		Details:  &command.Command_Mode{Mode: &command.Mode{Value: "preset_3_stand"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "preset_3_stand", d.GetStandingDesk().GetMode().GetState().GetCurrentMode())
+
+	require.Eventually(t, func() bool { return len(server.ButtonCommands()) == 1 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, fakePresetKey, server.ButtonCommands()[0].Key)
+}
+
+func TestPositionPercent(t *testing.T) {
+	assert.InDelta(t, 0, positionPercent(65, 65, 130), 0.001)
+	assert.InDelta(t, 100, positionPercent(130, 65, 130), 0.001)
+	assert.InDelta(t, 50, positionPercent(97.5, 65, 130), 0.001)
+	assert.EqualValues(t, 0, positionPercent(50, 65, 65), "degenerate range doesn't divide by zero")
+}
