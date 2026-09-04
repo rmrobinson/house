@@ -1,0 +1,20 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17010
+
+esphome:
+  nodes:
+    - mac: "AA:BB:CC:DD:EE:FF"
+      address: "192.168.1.50:6053" # or a DHCP-reservation hostname / <name>.local
+      noise_psk: "base64-32-byte-psk-here" # omit for plaintext (unencrypted) API access
+      devices:
+        - id: office-clock
+          type: clock
+          timezone: "America/Toronto"
+          time_format: "24h" # or "12h"
+          roles:
+            light: office_clock_display # object_id of the ESPHome light entity backing on/off + brightness
+        - id: office-lamp
+          type: light
+          roles:
+            light: office_lamp
