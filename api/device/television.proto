@@ -5,6 +5,7 @@ package faltung.house.api.device;
 option go_package = "github.com/rmrobinson/house/api/device";
 
 import "api/trait/app.proto";
+import "api/trait/channel.proto";
 import "api/trait/input.proto";
 import "api/trait/media.proto";
 import "api/trait/onoff.proto";
@@ -21,4 +22,5 @@ message Television {
   optional faltung.house.api.trait.Input input = 3;
   optional faltung.house.api.trait.App app = 4;
   optional faltung.house.api.trait.Media media = 5;
+  optional faltung.house.api.trait.Channel channel = 6;
 }

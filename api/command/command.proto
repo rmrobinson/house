@@ -6,6 +6,7 @@ option go_package = "github.com/rmrobinson/house/api/command";
 
 import "api/command/app.proto";
 import "api/command/brightness.proto";
+import "api/command/channel.proto";
 import "api/command/media.proto";
 import "api/command/mode.proto";
 import "api/command/movement.proto";
@@ -53,5 +54,8 @@ message Command {
     faltung.house.api.command.VolumeRelative volume_relative = 114;
     faltung.house.api.command.Mute mute = 115;
     faltung.house.api.command.AppLaunch app_launch = 116;
+    faltung.house.api.command.AppClose app_close = 117;
+    faltung.house.api.command.ChannelAbsolute channel_absolute = 118;
+    faltung.house.api.command.ChannelRelative channel_relative = 119;
   }
 }

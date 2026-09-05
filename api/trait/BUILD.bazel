@@ -13,6 +13,7 @@ proto_library(
         "audio_output.proto",
         "battery.proto",
         "brightness.proto",
+        "channel.proto",
         "charging_session.proto",
         "colour.proto",
         "input.proto",

@@ -150,7 +150,7 @@ func TestDispatchCommand_AppLaunch(t *testing.T) {
 	f := &fakeSession{}
 	cd := &castDevice{session: f}
 	err := dispatchCommand(context.Background(), cd, &command.Command{
-		Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{AppId: "233637DE"}},
+		Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "233637DE"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"233637DE"}, f.launchCalls)

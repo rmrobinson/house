@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Channel describes the part of a device which tunes a broadcast channel, such as a TV's
+// cable/antenna tuner.
+message Channel {
+  // ChannelDetails stores a channel and its associated metadata (such as name).
+  message ChannelDetails {
+    // ID of the channel, in whatever form the device itself uses. Unique and immutable for a
+    // given device.
+    string id = 1;
+    // The human-presentable channel number, e.g. "4-1".
+    string number = 2;
+    // The human-presentable channel name, e.g. "CBC HD".
+    string name = 3;
+  }
+
+  message Attributes {
+    // If true, control of the device channel property is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // If false, the device has no tuner input configured (e.g. an HDMI/ARC-only setup) and
+    // this trait should not be populated at all.
+    bool has_tuner = 2;
+  }
+  message State {
+    // The currently tuned channel.
+    ChannelDetails current_channel = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}
