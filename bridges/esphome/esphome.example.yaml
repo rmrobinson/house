@@ -18,3 +18,37 @@ esphome:
           type: light
           roles:
             light: office_lamp
+    - mac: "11:22:33:44:55:66"
+      address: "192.168.1.51:6053"
+      noise_psk: "base64-32-byte-psk-here"
+      devices:
+        - id: office-desk
+          type: standing_desk
+          # Physical travel range in cm, in the same unit as the height sensor. ESPHome doesn't
+          # report this itself (it's a plain template sensor), so it has to be measured and set
+          # here. Movement (Move Up/Down) isn't wired up yet - see bridges/esphome/README.md.
+          position_min: 65
+          position_max: 130
+          roles:
+            height: desk_height           # sensor
+            move_up: desk_move_up         # switch, unused until Movement is wired up
+            move_down: desk_move_down     # switch, unused until Movement is wired up
+            # Every other role name is treated as a preset button and becomes a value accepted
+            # by a Mode command, e.g. command.Mode{value: "preset_3_stand"}.
+            preset_1: desk_preset_1
+            preset_2: desk_preset_2
+            preset_3_stand: desk_preset_3_stand
+            preset_4: desk_preset_4
+        - id: office-fan
+          type: fan
+          roles:
+            fan: fan                # native ESPHome fan entity: on/off + speed
+            mode: mode               # select entity
+            timer: timer              # select entity, fixed Cancel/1h..12h options
+            oscillation: oscillation  # switch entity
+            beep: beep                # switch entity
+            display: display          # switch entity
+            temperature: temperature  # optional sensor entity
+          # object_ids above are best guesses from the node's entity names, per ESPHome's default
+          # slugification - confirm against a live ListEntitiesResponse before relying on them
+          # (see "Find the node's object_ids" below).

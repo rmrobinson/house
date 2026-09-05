@@ -330,8 +330,9 @@ func (nc *nodeConn) applyCommand(cmd *command.Command) (*device.Device, error) {
 
 // buildEntityIndex builds a single object_id -> Entity index directly from one ListEntities
 // call's response messages. Only entity domains a registered deviceBuilder actually matches
-// roles against are indexed here (today, just Light — see deviceBuilders); add a case as new
-// builders start consuming other domains rather than pre-populating ones nothing reads yet.
+// roles against are indexed here (Light, Switch, Select, Sensor, Fan, Button — see
+// deviceBuilders); add a case as new builders start consuming other domains rather than
+// pre-populating ones nothing reads yet.
 //
 // object_id is derived from the entity name via deriveObjectID rather than trusting the wire
 // value: ESPHome only sends object_id at all for API-1.10-and-earlier clients (see
@@ -358,6 +359,25 @@ func buildEntityIndex(listed []proto.Message) map[string]esphome.Entity {
 		case *pb.ListEntitiesLightResponse:
 			id := objectID(m.ObjectId, m.Name)
 			index[id] = &esphome.LightEntity{Key: m.Key, ObjectID: id, Name: m.Name}
+		case *pb.ListEntitiesSwitchResponse:
+			id := objectID(m.ObjectId, m.Name)
+			index[id] = &esphome.SwitchEntity{Key: m.Key, ObjectID: id, Name: m.Name}
+		case *pb.ListEntitiesSelectResponse:
+			id := objectID(m.ObjectId, m.Name)
+			index[id] = &esphome.SelectEntity{Key: m.Key, ObjectID: id, Name: m.Name, Options: m.Options}
+		case *pb.ListEntitiesSensorResponse:
+			id := objectID(m.ObjectId, m.Name)
+			index[id] = &esphome.SensorEntity{Key: m.Key, ObjectID: id, Name: m.Name, UnitOfMeasurement: m.UnitOfMeasurement}
+		case *pb.ListEntitiesFanResponse:
+			id := objectID(m.ObjectId, m.Name)
+			index[id] = &esphome.FanEntity{
+				Key: m.Key, ObjectID: id, Name: m.Name,
+				SupportsOscillation: m.SupportsOscillation, SupportsSpeed: m.SupportsSpeed,
+				SupportsDirection: m.SupportsDirection, SupportedSpeedCount: m.SupportedSpeedCount,
+			}
+		case *pb.ListEntitiesButtonResponse:
+			id := objectID(m.ObjectId, m.Name)
+			index[id] = &esphome.ButtonEntity{Key: m.Key, ObjectID: id, Name: m.Name}
 		}
 	}
 
@@ -389,6 +409,14 @@ func deriveObjectID(name string) string {
 func stateMessageKey(msg proto.Message) (uint32, bool) {
 	switch m := msg.(type) {
 	case *pb.LightStateResponse:
+		return m.Key, true
+	case *pb.SwitchStateResponse:
+		return m.Key, true
+	case *pb.SelectStateResponse:
+		return m.Key, true
+	case *pb.SensorStateResponse:
+		return m.Key, true
+	case *pb.FanStateResponse:
 		return m.Key, true
 	default:
 		return 0, false

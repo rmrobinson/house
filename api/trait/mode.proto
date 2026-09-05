@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Mode describes a device property set to one of a fixed list of named values, e.g. a fan mode
+// select or a standing desk height preset.
+message Mode {
+  message Attributes {
+    // If true, control of the mode is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+    // The values current_mode/command.Mode.value may be set to.
+    repeated string available_modes = 2;
+  }
+  message State {
+    // The currently active mode. For devices where the underlying action is momentary (e.g. a
+    // preset button press) rather than a persistent setting, this reflects the last-commanded
+    // value rather than confirmed device state.
+    string current_mode = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

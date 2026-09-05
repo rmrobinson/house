@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Temperature describes a device which measures ambient temperature.
+message Temperature {
+  message Attributes {
+    // can_control is not present since this is a pure measurement.
+    // The unit the measurement is reported in, e.g. "celsius".
+    string unit = 1;
+  }
+  message State {
+    float value = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+import "api/trait/movement.proto";
+
+// Movement commands a device with the Movement trait to start, stop, or reverse motion.
+message Movement {
+  faltung.house.api.trait.Movement.Direction direction = 1;
+}

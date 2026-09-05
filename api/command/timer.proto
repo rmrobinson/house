@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Timer commands a device with the Timer trait to start a countdown of the given length, or
+// cancel an active one.
+message Timer {
+  // Duration in seconds. 0 cancels any active timer.
+  int32 duration_seconds = 1;
+}

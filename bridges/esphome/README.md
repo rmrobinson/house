@@ -21,6 +21,16 @@ that yet.
   bridge what time it is (`GetTimeRequest`), which this bridge answers using the current UTC
   time and the clock device's configured timezone.
 - `light` — on/off + brightness from a single ESPHome light entity.
+- `fan` — on/off + speed from a native ESPHome `fan` entity, a mode select, a fixed-option timer
+  select (rejects any commanded duration outside its 13 fixed values rather than rounding to the
+  nearest one), an optional temperature sensor, and any of `oscillation`/`beep`/`display` (each a
+  separate switch entity, exposed together as one `Toggle` trait keyed by role name).
+- `standing_desk` — read-only height (`Position`, `supports_set: false`) plus preset buttons
+  (`Mode`, one role per preset). `Movement` (drive-by-switch Move Up/Down) is in the schema but
+  intentionally not wired up by this builder yet — the desk it was built against has a known
+  crash bug when driven via movement commands; that needs to be resolved before it's safe to
+  exercise end-to-end. `position_min`/`position_max` (the desk's physical travel range, in the
+  same unit as its height sensor) aren't reported by ESPHome and must be set in config.
 
 Additional device types can be added by implementing the `deviceBuilder` interface in
 `devices.go` and registering it in `deviceBuilders`.

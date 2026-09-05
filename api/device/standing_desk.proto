@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/mode.proto";
+import "api/trait/movement.proto";
+import "api/trait/position.proto";
+
+// StandingDesk is a device which represents a height-adjustable desk in a house.
+message StandingDesk {
+  faltung.house.api.trait.Position position = 1;
+  faltung.house.api.trait.Mode mode = 2;
+  // Present in the schema so the wire shape doesn't need to change again later, but left unset
+  // by every bridge builder today: no configured device currently exercises Movement end-to-end
+  // (the standing desk it was designed for has a known movement-command crash bug that needs to
+  // be resolved in hardware/firmware before this is wired up).
+  optional faltung.house.api.trait.Movement movement = 3;
+}

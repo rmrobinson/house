@@ -5,8 +5,14 @@ package faltung.house.api.command;
 option go_package = "github.com/rmrobinson/house/api/command";
 
 import "api/command/brightness.proto";
+import "api/command/mode.proto";
+import "api/command/movement.proto";
 import "api/command/onoff.proto";
+import "api/command/position.proto";
+import "api/command/speed.proto";
 import "api/command/time.proto";
+import "api/command/timer.proto";
+import "api/command/toggle.proto";
 
 // Command contains the information required to request an action be taken on a device.
 message Command {
@@ -21,5 +27,11 @@ message Command {
     faltung.house.api.command.BrightnessAbsolute brightness_absolute = 101;
     faltung.house.api.command.BrightnessRelative brightness_relative = 102;
     faltung.house.api.command.Time time = 103;
+    faltung.house.api.command.Position position = 104;
+    faltung.house.api.command.Movement movement = 105;
+    faltung.house.api.command.Toggle toggle = 106;
+    faltung.house.api.command.Mode mode = 107;
+    faltung.house.api.command.Timer timer = 108;
+    faltung.house.api.command.Speed speed = 109;
   }
 }

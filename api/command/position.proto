@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Position commands a device with the Position trait to move to an absolute target. Only valid
+// to send if trait.Position.Attributes.supports_set is true.
+message Position {
+  oneof target {
+    // Absolute target, in the device's own unit.
+    float value = 1;
+    // Absolute target, normalized to 0-100.
+    float percent = 2;
+  }
+}

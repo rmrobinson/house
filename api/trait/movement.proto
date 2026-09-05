@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Movement describes the part of a device which drives a paired Position trait's value when the
+// device can't jump straight to a target (e.g. a desk that only moves up/down, not to an
+// absolute height).
+message Movement {
+  enum Direction {
+    DIRECTION_UNSPECIFIED = 0;
+    DIRECTION_STOPPED = 1;
+    // Moves the paired Position trait's value toward its max_value.
+    DIRECTION_POSITIVE = 2;
+    // Moves the paired Position trait's value toward its min_value.
+    DIRECTION_NEGATIVE = 3;
+  }
+
+  message Attributes {
+    // If true, DIRECTION_STOPPED may be sent to halt movement mid-travel.
+    bool supports_stop = 1;
+  }
+  message State {
+    // The last-commanded direction. Not confirmed physical motion: most devices this trait
+    // applies to don't report "I am currently moving", so this reflects what the bridge most
+    // recently told the device (or observed via entity state, where available) rather than
+    // telemetry the device generates independently.
+    Direction direction = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}
