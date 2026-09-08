@@ -7,6 +7,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/golang-migrate/migrate/v4 v4.16.2
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/mdns v1.0.7
 	github.com/hekmon/plexwebhooks v1.2.0
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/mdlayher/apcupsd v0.0.0-20230802135538-48f5030bcd58

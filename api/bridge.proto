@@ -4,6 +4,8 @@ package faltung.house.api;
 
 option go_package = "github.com/rmrobinson/house/api";
 
+import "google/rpc/status.proto";
+
 import "api/command/command.proto";
 import "api/device/device.proto";
 
@@ -104,6 +106,23 @@ message InitialUpdate {
   repeated faltung.house.api.device.Device devices = 2;
 }
 
+// CommandUpdate reports the terminal outcome of an asynchronously executed
+// command.
+message CommandUpdate {
+  // Echoes Command.id.
+  string command_id = 1;
+  string bridge_id = 2;
+  string device_id = 3;
+
+  // The outcome. OK on success.
+  google.rpc.Status result = 10;
+  // Device.version after the command was applied. Empty on failure.
+  string resulting_version = 11;
+}
+
+message ExecuteCommandAsyncResponse {
+}
+
 message StreamUpdatesRequest {
 }
 message Update {
@@ -113,6 +132,7 @@ message Update {
     CHANGED = 2;
     ADDED = 3;
     REMOVED = 4;
+    EXECUTED = 5;
   }
 
   Action action = 1;
@@ -120,6 +140,7 @@ message Update {
     InitialUpdate initial_update = 2;
     BridgeUpdate bridge_update = 3;
     DeviceUpdate device_update = 4;
+    CommandUpdate command_update = 5;
   }
 }
 
@@ -130,6 +151,7 @@ service BridgeService {
   rpc GetDevice(GetDeviceRequest) returns (faltung.house.api.device.Device) {}
   rpc UpdateDeviceConfig(UpdateDeviceConfigRequest) returns (faltung.house.api.device.Device) {}
   rpc ExecuteCommand(faltung.house.api.command.Command) returns (faltung.house.api.device.Device) {}
+  rpc ExecuteCommandAsync(faltung.house.api.command.Command) returns (ExecuteCommandAsyncResponse) {}
 
   rpc StreamUpdates(StreamUpdatesRequest) returns (stream Update) {}
 }

@@ -115,6 +115,12 @@ func (eb *EsphomeBridge) ProcessCommand(ctx context.Context, cmd *command.Comman
 	return nc.applyCommand(cmd)
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (eb *EsphomeBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. ESPHome nodes push state changes
 // over their SubscribeStates stream, so there's no polling loop needed here.
 func (eb *EsphomeBridge) Refresh(ctx context.Context) error {

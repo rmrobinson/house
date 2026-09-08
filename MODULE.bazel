@@ -15,6 +15,15 @@ bazel_dep(name = "rules_proto_grpc", version = "5.8.0")
 bazel_dep(name = "rules_proto_grpc_go", version = "5.8.0")
 bazel_dep(name = "platforms", version = "1.0.0")
 
+# Provides google/rpc/status.proto, used by api/bridge.proto's CommandUpdate
+# to report asynchronous command outcomes. Only the proto_library side is used
+# here (@googleapis//google/rpc:status_proto) — the generated Go code links
+# against the google.golang.org/genproto/googleapis/rpc/status package already
+# pulled in transitively via go.mod/grpc (see use_repo below), since linking
+# both googleapis's own go_proto_library and the go.mod copy of the same
+# import path conflicts at link time.
+bazel_dep(name = "googleapis", version = "0.0.0-20260825-d10ac924")
+
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.26.1")
 
@@ -30,12 +39,12 @@ go_deps.gazelle_override(
     directives = ["gazelle:proto disable_global"],
     path = "github.com/richard87/esphome-apiclient",
 )
-
 use_repo(
     go_deps,
     "com_github_davecgh_go_spew",
     "com_github_golang_migrate_migrate_v4",
     "com_github_google_uuid",
+    "com_github_hashicorp_mdns",
     "com_github_hekmon_plexwebhooks",
     "com_github_lukehagar_plexgo",
     "com_github_mattn_go_sqlite3",
@@ -48,6 +57,7 @@ use_repo(
     "com_github_spf13_cobra",
     "com_github_spf13_viper",
     "com_github_stretchr_testify",
+    "org_golang_google_genproto_googleapis_rpc",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",
     "org_tinygo_x_bluetooth",

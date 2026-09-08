@@ -3,6 +3,8 @@ load("@rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 
 #gazelle:exclude empty.go
+# gazelle:resolve proto proto google/rpc/status.proto @googleapis//google/rpc:status_proto
+# gazelle:resolve proto go google/rpc/status.proto @org_golang_google_genproto_googleapis_rpc//status
 
 proto_library(
     name = "api_proto",
@@ -15,6 +17,7 @@ proto_library(
     deps = [
         "//api/command:command_proto",
         "//api/device:device_proto",
+        "@googleapis//google/rpc:status_proto",
         "@protobuf//:empty_proto",
     ],
 )
@@ -28,6 +31,7 @@ go_proto_library(
     deps = [
         "//api/command",
         "//api/device",
+        "@org_golang_google_genproto_googleapis_rpc//status",
     ],
 )
 

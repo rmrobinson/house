@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// AppLaunch requests the device start running the named application.
+message AppLaunch {
+  // Platform-specific identifier of the application to launch (e.g. a Cast
+  // receiver app ID).
+  string app_id = 1;
+}

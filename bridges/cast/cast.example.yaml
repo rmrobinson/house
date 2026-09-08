@@ -1,0 +1,35 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17011
+
+cast:
+  # devices is optional if discovery.mdns_enabled is true below — anything
+  # listed here is authoritative (name/kind aren't overridden by discovery),
+  # and discovery only adds UUIDs not listed here / refreshes their host.
+  # Useful for pinning a friendly name or kind, or for devices discovery
+  # can't see (a different VLAN, mDNS reflection disabled, etc).
+  devices:
+    - uuid: e393da5086494695baabe62713a0ee57
+      host: 192.168.1.40
+      name: "Kitchen Speaker"
+      kind: media_player # or "television"; defaults to media_player if omitted
+    - uuid: 0e0d6fa4b90349f9a3e83ac3d2e2c111
+      host: 192.168.1.41
+      name: "Living Room TV"
+      kind: television
+
+  discovery:
+    # If true, the bridge does a single mDNS browse for _googlecast._tcp at
+    # startup and merges what it finds into devices above (by UUID) — new
+    # devices are added using their mDNS friendly name/address, and devices
+    # already listed above just get their host address refreshed. Devices
+    # are never removed based on what a browse does or doesn't see. With
+    # this enabled and no devices listed above, the bridge runs against
+    # whatever's discovered with no manual config at all. Off by default.
+    mdns_enabled: false
+
+  # Optional: proxies album/show art so dashboard clients never fetch a
+  # remote CDN directly. Omit both to leave art URLs pointing at the
+  # original upstream (Google/app CDN) address instead.
+  art_base_url: "http://192.168.1.50:17012" # this bridge's own LAN address
+  art_listen_port: 17012

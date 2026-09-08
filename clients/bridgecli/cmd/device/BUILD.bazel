@@ -3,10 +3,13 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "device",
     srcs = [
+        "app.go",
         "brightness.go",
         "device.go",
+        "mute.go",
         "onoff.go",
         "time.go",
+        "volume.go",
     ],
     importpath = "github.com/rmrobinson/house/clients/bridgecli/cmd/device",
     visibility = ["//visibility:public"],

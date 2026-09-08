@@ -164,6 +164,12 @@ func (fb *FrigateBridge) newCamera(config CameraConfig) *Camera {
 	}
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (fb *FrigateBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
 // the Frigate API and returns the current state of the cameras.
 func (fb *FrigateBridge) Refresh(ctx context.Context) error {

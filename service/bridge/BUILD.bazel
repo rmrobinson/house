@@ -29,10 +29,21 @@ go_library(
 go_test(
     name = "bridge_test",
     size = "small",
-    srcs = ["source_test.go"],
+    srcs = [
+        "api_test.go",
+        "service_test.go",
+        "source_test.go",
+    ],
     embed = [":bridge"],
     deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_uber_go_zap//zaptest",
     ],

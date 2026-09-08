@@ -25,8 +25,16 @@ message App {
     repeated Instance applications = 2;
   }
   message State {
-    // The name of the active application. Can be unset or empty if no application is running.
+    // The ID of the active application. Can be unset or empty if no
+    // application is running.
     string application_id = 1;
+    // Human-readable name of the active application, where the device reports
+    // one. Devices that cannot enumerate their available applications will
+    // leave Attributes.applications empty and populate this instead.
+    optional string application_name = 2;
+    // Free-form status the application is reporting about itself, e.g.
+    // "Casting: <album>". Display only; format is not stable.
+    optional string application_status = 3;
   }
 
   Attributes attributes = 1;

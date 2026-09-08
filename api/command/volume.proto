@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// VolumeAbsolute sets the device volume to a specific level.
+message VolumeAbsolute {
+  // In the range [0, trait.Volume.Attributes.maximum_level].
+  int32 level = 1;
+}
+
+// VolumeRelative adjusts the device volume by a number of steps.
+message VolumeRelative {
+  // Positive increases, negative decreases. Result is clamped to
+  // [0, trait.Volume.Attributes.maximum_level].
+  int32 delta = 1;
+}
+
+// Mute silences or unsilences a device without changing its volume level.
+message Mute {
+  bool is_muted = 1;
+}

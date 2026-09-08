@@ -140,6 +140,12 @@ func (rb *RokuBridge) SetBridgeConfig(ctx context.Context, config bridge.Config)
 	return nil
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (rb *RokuBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it
 // finds all the available devices and reports them.
 func (rb *RokuBridge) Refresh(ctx context.Context) error {

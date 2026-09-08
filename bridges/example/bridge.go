@@ -156,6 +156,12 @@ func (b *ExampleBridge) ProcessCommand(ctx context.Context, cmd *command.Command
 	}
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (b *ExampleBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it does nothing
 // since there isn't 'remote' state which needs to be refreshed.
 func (b *ExampleBridge) Refresh(ctx context.Context) error {

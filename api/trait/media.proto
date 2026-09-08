@@ -4,6 +4,8 @@ package faltung.house.api.trait;
 
 option go_package = "github.com/rmrobinson/house/api/trait";
 
+import "google/protobuf/timestamp.proto";
+
 // Media describes the part of a device which manages the playback of media.
 message Media {
   // PlaybackState includes the possible states of the media controlled by a media player.
@@ -30,6 +32,7 @@ message Media {
     TYPE_SHOW = 1;
     TYPE_MOVIE = 2;
     TYPE_SONG = 3;
+    TYPE_GENERIC = 4;
   }
 
   message ShowDetails {
@@ -70,10 +73,26 @@ message Media {
     optional string playlist_art_url = 12;
   }
 
+  // GenericDetails covers media that does not decompose into a show, movie or
+  // song — podcasts, radio streams, and content from sources that report only
+  // minimal metadata.
+  message GenericDetails {
+    string id = 1;
+    string title = 2;
+    string subtitle = 3;
+    optional string art_url = 4;
+  }
+
   message Attributes {
-    // If true, control of the media playing is possible.
-    // If false, control is not allowed and the property is read-only.
+    // True if any control action is possible on this media player. Consumers
+    // read this first to decide whether to render controls at all, then read
+    // the specific can_* flags below to decide which controls to show.
     bool can_control = 1;
+
+    optional bool can_pause = 2;
+    optional bool can_seek = 3;
+    optional bool can_skip_forward = 4;
+    optional bool can_skip_backward = 5;
   }
   message State {
     // The current state of the media playing device.
@@ -86,11 +105,20 @@ message Media {
     optional ShowDetails show_details = 10;
     optional MovieDetails movie_details = 11;
     optional SongDetails song_details = 12;
+    optional GenericDetails generic_details = 13;
 
     // The length of the media being played, in seconds.
     double playback_length_s = 20;
     // The current position of the media, in seconds.
     double playback_position_s = 21;
+    // When playback_position_s was last sampled by the bridge.
+    //
+    // Media devices generally push state on change rather than continuously,
+    // so playback_position_s goes stale between pushes. Consumers displaying
+    // a progress bar should extrapolate from this timestamp against wall
+    // clock while playback_state is PS_PLAYING, rather than polling the
+    // bridge.
+    google.protobuf.Timestamp playback_position_updated_at = 22;
   }
 
   Attributes attributes = 1;

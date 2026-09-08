@@ -26,6 +26,20 @@ type Handler interface {
 
 	ProcessCommand(ctx context.Context, cmd *command.Command) (*device.Device, error)
 	Refresh(ctx context.Context) error
+
+	// ProcessCommandAsync dispatches a command without blocking for the device to
+	// confirm. The implementation must eventually call Service.CompleteCommand
+	// exactly once for every command accepted here, once the device confirms the
+	// write (or a timeout/disconnect makes the outcome definitive).
+	//
+	// ProcessCommandAsync may itself return an error for fast-fail conditions
+	// detectable before any write is sent (e.g. a stale Command.version, or no
+	// live connection to the device). The API layer turns such an error into an
+	// immediate terminal CommandUpdate rather than propagating it as an RPC
+	// error, since ExecuteCommandAsync's contract is that every accepted command
+	// produces exactly one terminal CommandUpdate and its RPC response is always
+	// empty.
+	ProcessCommandAsync(ctx context.Context, cmd *command.Command) error
 }
 
 // Service contains the relevant fields to allow management of devices on the bridge.
@@ -201,6 +215,46 @@ func (s *Service) getDevice(id string) *device.Device {
 		return proto.Clone(d).(*device.Device)
 	}
 	return nil
+}
+
+// CompleteCommand reports the terminal outcome of a command previously dispatched
+// via Handler.ProcessCommandAsync. Bridge implementations call this once the
+// device confirms the write, or once a timeout/disconnect makes the outcome
+// definitive.
+//
+// If resultErr is nil, resultingDevice must be the post-command device state;
+// it is applied via UpdateDevice (emitting CHANGED) before the CommandUpdate is
+// published, so a client consuming the stream in order sees the new state before
+// the command's completion. If resultErr is non-nil, resultingDevice is ignored
+// and no device update is emitted.
+func (s *Service) CompleteCommand(cmd *command.Command, resultErr error, resultingDevice *device.Device) {
+	var resultingVersion string
+	var grpcStatus *status.Status
+
+	if resultErr != nil {
+		var ok bool
+		grpcStatus, ok = status.FromError(resultErr)
+		if !ok {
+			grpcStatus = status.New(codes.Internal, resultErr.Error())
+		}
+	} else {
+		grpcStatus = status.New(codes.OK, "")
+		s.UpdateDevice(resultingDevice)
+		resultingVersion = resultingDevice.GetVersion()
+	}
+
+	s.updates.SendMessage(&api2.Update{
+		Action: api2.Update_EXECUTED,
+		Update: &api2.Update_CommandUpdate{
+			CommandUpdate: &api2.CommandUpdate{
+				CommandId:        cmd.GetId(),
+				BridgeId:         s.bridge.GetId(),
+				DeviceId:         cmd.GetDeviceId(),
+				Result:           grpcStatus.Proto(),
+				ResultingVersion: resultingVersion,
+			},
+		},
+	})
 }
 
 func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
