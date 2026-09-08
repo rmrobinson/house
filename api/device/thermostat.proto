@@ -7,7 +7,9 @@ option go_package = "github.com/rmrobinson/house/api/device";
 import "api/trait/air_properties.proto";
 import "api/trait/power.proto";
 import "api/trait/onoff.proto";
+import "api/trait/presence.proto";
 import "api/trait/thermostat.proto";
+import "api/trait/ventilation.proto";
 
 // Thermostat is a device which represents a thermostat in a house.
 message Thermostat {
@@ -15,4 +17,12 @@ message Thermostat {
   faltung.house.api.trait.Thermostat thermostat = 2;
   faltung.house.api.trait.AirProperties air_properties = 3;
   optional faltung.house.api.trait.Power power = 4;
+
+  // ERV/HRV control, for thermostats whose protocol exposes it. Most don't - see the ecobee
+  // bridge's README for why this is unwired there.
+  optional faltung.house.api.trait.Ventilation ventilation = 5;
+
+  // Occupancy/motion sensing built into the thermostat itself, as distinct from a separately
+  // paired remote sensor (which is its own device.Sensor). Absent on thermostats without this.
+  optional faltung.house.api.trait.Presence presence = 6;
 }

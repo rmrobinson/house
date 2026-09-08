@@ -13,9 +13,11 @@ import "api/command/movement.proto";
 import "api/command/onoff.proto";
 import "api/command/position.proto";
 import "api/command/speed.proto";
+import "api/command/thermostat.proto";
 import "api/command/time.proto";
 import "api/command/timer.proto";
 import "api/command/toggle.proto";
+import "api/command/ventilation.proto";
 import "api/command/volume.proto";
 
 // Command contains the information required to request an action be taken on a device.
@@ -57,5 +59,11 @@ message Command {
     faltung.house.api.command.AppClose app_close = 117;
     faltung.house.api.command.ChannelAbsolute channel_absolute = 118;
     faltung.house.api.command.ChannelRelative channel_relative = 119;
+    faltung.house.api.command.SetThermostatMode set_thermostat_mode = 120;
+    faltung.house.api.command.SetTemperature set_temperature = 121;
+    faltung.house.api.command.SetHeatCoolSetpoints set_heat_cool_setpoints = 122;
+    faltung.house.api.command.SetVentilation set_ventilation = 123;
+    faltung.house.api.command.SetComfortProfile set_comfort_profile = 124;
+    faltung.house.api.command.SetHumidity set_humidity = 125;
   }
 }

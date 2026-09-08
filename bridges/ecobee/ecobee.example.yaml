@@ -1,0 +1,17 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17011
+  refresh_interval: 30 # seconds between polls
+
+ecobee:
+  pairing_store: "ecobee-pairing.json" # written by cmd/pair - see README
+  accessory_name: "ecobee" # matches cmd/pair's --name flag, defaults to "ecobee" if omitted
+
+  thermostat:
+    id: ecobee-main
+    name: "Main Floor Thermostat"
+
+  sensors:
+    - id: ecobee-downstairs
+      name: Downstairs
+      accessory_id: 4297248826 # HAP aid - see docs/ecobee-hap-dump.txt

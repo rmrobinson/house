@@ -12,6 +12,9 @@ message Presence {
   message State {
     // Has motion been detected?
     bool motion_detected = 1;
+    // Has occupancy (debounced presence, not raw motion) been detected? Optional since not every
+    // accessory reports both signals - some only report motion, some only occupancy.
+    optional bool occupancy_detected = 2;
   }
 
   Attributes attributes = 1;

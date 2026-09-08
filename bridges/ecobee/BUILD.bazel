@@ -1,0 +1,58 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "ecobee_lib",
+    srcs = [
+        "bridge.go",
+        "command.go",
+        "config.go",
+        "connection.go",
+        "main.go",
+        "mapping.go",
+        "sensor.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/ecobee",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//bridges/lib/homekitctrl",
+        "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "ecobee_test",
+    srcs = [
+        "bridge_test.go",
+        "command_test.go",
+        "config_test.go",
+        "fakecontroller_test.go",
+        "mapping_test.go",
+    ],
+    embed = [":ecobee_lib"],
+    deps = [
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//bridges/lib/homekitctrl",
+        "//service/bridge",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
+
+go_binary(
+    name = "ecobee",
+    embed = [":ecobee_lib"],
+    visibility = ["//visibility:public"],
+)
