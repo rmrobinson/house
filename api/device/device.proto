@@ -77,6 +77,30 @@ message Device {
   // When this device was last seen.
   google.protobuf.Timestamp last_seen = 52;
 
+  // An opaque token identifying the current significant state of this device.
+  // Minted by the bridge that owns the device. Bridges that aggregate other
+  // bridges (i.e. house itself) MUST pass this through unmodified.
+  //
+  // Clients that wish to serialize conflicting writes read this value, then
+  // supply it on Command.version or UpdateDeviceConfigRequest.version. The
+  // owning bridge rejects the write with FAILED_PRECONDITION if the value no
+  // longer matches.
+  //
+  // version reflects only fields that are targets of a Command message, plus
+  // Device.Config. It MUST NOT reflect telemetry the device reports but no
+  // command controls, even when that telemetry changes as a side effect of a
+  // command succeeding. Per-bridge implementations enumerate their own
+  // controllable set; for MediaPlayer see castctrl's version.go.
+  //
+  // Notably excluded regardless of device type: last_seen, address (including
+  // is_reachable), and any field that a command can nominally move but whose
+  // dominant driver is continuous device-side change rather than the command
+  // itself — e.g. trait.Media.State.playback_position_s, which SeekAbsolute /
+  // SeekRelative can set but which otherwise drifts on every tick of normal
+  // playback. Including such a field would invalidate the version on the same
+  // schedule as pure telemetry, defeating the purpose.
+  string version = 53;
+
   // The specifics of the device this is.
   // Control of these is done via spending relevant 'Command' entities to the Bridge.
   // Each device has a set of supported commands; these can be seen in the comments on the specific device.

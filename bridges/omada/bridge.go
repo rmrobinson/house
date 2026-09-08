@@ -127,6 +127,12 @@ func (omb *OmadaBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 	return nil
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (omb *OmadaBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it queries
 // the Omada API and returns the current state of all the connected devices.
 func (omb *OmadaBridge) Refresh(ctx context.Context) error {

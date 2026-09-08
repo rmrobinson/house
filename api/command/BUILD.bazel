@@ -7,8 +7,10 @@ load("@rules_proto//proto:defs.bzl", "proto_library")
 proto_library(
     name = "command_proto",
     srcs = [
+        "app.proto",
         "brightness.proto",
         "command.proto",
+        "media.proto",
         "mode.proto",
         "movement.proto",
         "onoff.proto",
@@ -17,6 +19,7 @@ proto_library(
         "time.proto",
         "timer.proto",
         "toggle.proto",
+        "volume.proto",
     ],
     visibility = ["//visibility:public"],
     deps = ["//api/trait:trait_proto"],

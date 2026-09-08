@@ -4,9 +4,20 @@ package faltung.house.api.device;
 
 option go_package = "github.com/rmrobinson/house/api/device";
 
+import "api/trait/app.proto";
 import "api/trait/media.proto";
+import "api/trait/volume.proto";
 
-// MediaPlayer is a device which has the ability to play audio or video content.
+// MediaPlayer is a device which has the ability to play audio content.
+// Different devices have different capabilities, making all traits optional.
+//
+// Field numbers are aligned with Television so the two messages can be
+// compared directly. 1 (on_off) and 3 (input) are reserved: media players
+// have no power control and no input selection.
 message MediaPlayer {
-  faltung.house.api.trait.Media media = 1;
+  reserved 1, 3;
+
+  optional faltung.house.api.trait.Volume volume = 2;
+  optional faltung.house.api.trait.App app = 4;
+  optional faltung.house.api.trait.Media media = 5;
 }

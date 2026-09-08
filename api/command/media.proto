@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Playback changes the playback state of the media on a device.
+message Playback {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_PLAY = 1;
+    ACTION_PAUSE = 2;
+    // Ends playback entirely. On devices with an application concept this may
+    // also terminate the running application.
+    ACTION_STOP = 3;
+  }
+  Action action = 1;
+}
+
+// SeekAbsolute moves playback to a fixed offset from the start of the media.
+message SeekAbsolute {
+  // Offset in seconds. Clamped by the device to [0, playback_length_s].
+  double position_s = 1;
+}
+
+// SeekRelative moves playback forward (positive) or backward (negative) from
+// the current position.
+message SeekRelative {
+  double delta_s = 1;
+}

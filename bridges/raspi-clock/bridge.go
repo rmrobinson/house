@@ -167,6 +167,12 @@ func (cb *ClockBridge) SetBridgeConfig(ctx context.Context, config bridge.Config
 	return nil
 }
 
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (cb *ClockBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
+}
+
 // Refresh is present to conform to the bridge.Handler interface. In this implementation it does nothing
 // since there isn't 'remote' state which needs to be refreshed.
 func (cb *ClockBridge) Refresh(ctx context.Context) error {
