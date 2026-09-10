@@ -9,6 +9,7 @@ proto_library(
     srcs = [
         "app.proto",
         "brightness.proto",
+        "channel.proto",
         "command.proto",
         "media.proto",
         "mode.proto",

@@ -29,7 +29,7 @@ var appLaunchCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		req := &command.Command{
 			DeviceId: id,
-			Details:  &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{AppId: launchAppID}},
+			Details:  &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: launchAppID}},
 		}
 
 		resp, err := client.ExecuteCommand(cmd.Context(), req)

@@ -130,7 +130,9 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		} else if d.GetTelevision().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil) {
 			return true
-		} else if d.GetTelevision().GetApp() != nil && req.GetAppLaunch() != nil {
+		} else if d.GetTelevision().GetApp() != nil && (req.GetAppLaunch() != nil || req.GetAppClose() != nil) {
+			return true
+		} else if d.GetTelevision().GetChannel() != nil && (req.GetChannelAbsolute() != nil || req.GetChannelRelative() != nil) {
 			return true
 		}
 	}

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// ChannelAbsolute commands a device with the Channel trait to tune directly to the given channel.
+message ChannelAbsolute {
+  // The channel to tune to, either a trait.Channel.ChannelDetails.id or number, in whatever form
+  // the device itself accepts.
+  string channel = 1;
+}
+
+// ChannelRelative commands a device with the Channel trait to step to another channel relative
+// to the one currently tuned.
+message ChannelRelative {
+  // Positive steps up, negative steps down. Most devices only support a magnitude of 1.
+  int32 delta = 1;
+}

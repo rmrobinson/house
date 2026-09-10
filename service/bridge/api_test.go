@@ -150,7 +150,7 @@ func TestDeviceSupportsCommand(t *testing.T) {
 					Television: &device.Television{App: &trait.App{}},
 				},
 			},
-			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{AppId: "233637DE"}}},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "233637DE"}}},
 			want: true,
 		},
 		{
@@ -161,13 +161,13 @@ func TestDeviceSupportsCommand(t *testing.T) {
 					MediaPlayer: &device.MediaPlayer{App: &trait.App{}},
 				},
 			},
-			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{AppId: "233637DE"}}},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "233637DE"}}},
 			want: true,
 		},
 		{
 			name: "television app launch not supported when field unset",
 			d:    televisionDevice("d1"),
-			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{AppId: "233637DE"}}},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "233637DE"}}},
 			want: false,
 		},
 	}

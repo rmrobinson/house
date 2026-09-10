@@ -99,7 +99,7 @@ func dispatchCommand(ctx context.Context, cd *castDevice, cmd *command.Command) 
 		return translateErr(sess.SetMuted(ctx, cmd.GetMute().GetIsMuted()))
 
 	case cmd.GetAppLaunch() != nil:
-		return translateErr(sess.LaunchApp(ctx, cmd.GetAppLaunch().GetAppId()))
+		return translateErr(sess.LaunchApp(ctx, cmd.GetAppLaunch().GetApplicationId()))
 
 	default:
 		return status.Error(codes.InvalidArgument, "unrecognized command")
