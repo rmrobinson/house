@@ -1,0 +1,57 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "webos_lib",
+    srcs = [
+        "bridge.go",
+        "command.go",
+        "discover.go",
+        "main.go",
+        "normalize.go",
+        "version.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/webos",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//bridges/lib/webosctrl",
+        "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_koron_go_ssdp//:go-ssdp",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "webos",
+    embed = [":webos_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "webos_test",
+    srcs = [
+        "bridge_test.go",
+        "command_test.go",
+        "discover_test.go",
+        "normalize_test.go",
+    ],
+    embed = [":webos_lib"],
+    deps = [
+        "//api/command",
+        "//bridges/lib/webosctrl",
+        "@com_github_koron_go_ssdp//:go-ssdp",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

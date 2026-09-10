@@ -1,0 +1,33 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17013
+  # How often (seconds) to re-run SSDP discovery. Unlike bridges/cast's
+  # opt-in-once mDNS, this always runs: there's no way to pre-populate an
+  # unpaired device's client-key, so discovery is core to operation here.
+  refresh_interval: 300
+
+webos:
+  # Every entry here is optional - a brand new TV can be left entirely
+  # unconfigured and will show up here automatically (uuid/host filled in,
+  # client_key empty) after the first SSDP discovery cycle finds it and a
+  # human accepts the on-screen pairing prompt. Listing a device up front is
+  # only useful for pinning a friendly name, supplying its MAC for
+  # Wake-on-LAN, or opting it into Channel/tuner support.
+  devices:
+    - uuid: "" # filled in automatically once discovered; safe to leave blank
+      host: 192.168.1.42 # optional last-known-ip seed; SSDP re-scan is authoritative
+      name: "Living Room TV"
+      # Required for SetOnOff(true) to work while the TV is in full standby
+      # (socket closed) rather than active-standby. Not learned automatically
+      # - SSDP doesn't report a MAC - so look this up once from your router's
+      # DHCP lease table or the TV's network settings menu.
+      mac: "AA:BB:CC:DD:EE:FF"
+      # Whether to expose the Channel trait (tuner control). Leave false for
+      # HDMI/ARC-only setups with no cable/antenna input configured - per the
+      # handoff's recon notes, tuner endpoints may behave unpredictably
+      # (including closing the connection) on a tuner-less TV.
+      has_tuner: false
+      # Populated automatically after the on-screen pairing prompt is
+      # accepted. Do not set this by hand, except to clear it to force a
+      # fresh pairing prompt on next connect.
+      client_key: ""

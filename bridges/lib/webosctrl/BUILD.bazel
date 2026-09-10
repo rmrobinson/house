@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "webosctrl",
+    srcs = [
+        "conn.go",
+        "payloads.go",
+        "session.go",
+        "wol.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/lib/webosctrl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_gorilla_websocket//:websocket",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "webosctrl_test",
+    srcs = [
+        "conn_test.go",
+        "session_test.go",
+    ],
+    embed = [":webosctrl"],
+    deps = [
+        "@com_github_gorilla_websocket//:websocket",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

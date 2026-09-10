@@ -7,8 +7,10 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/golang-migrate/migrate/v4 v4.16.2
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/mdns v1.0.7
 	github.com/hekmon/plexwebhooks v1.2.0
+	github.com/koron/go-ssdp v0.0.4
 	github.com/mattn/go-sqlite3 v1.14.17
 	github.com/mdlayher/apcupsd v0.0.0-20230802135538-48f5030bcd58
 	github.com/picatz/roku v0.0.0-20230221144619-ec649293f9b5
@@ -36,7 +38,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/koron/go-ssdp v0.0.4 // indirect
 	github.com/magiconair/properties v1.8.7 // indirect
 	github.com/miekg/dns v1.1.72 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
