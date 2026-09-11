@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+message SetVentilation {
+  bool on = 1;
+  optional int32 runtime_minutes = 2;
+}

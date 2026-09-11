@@ -1,0 +1,232 @@
+Accessory: 1 Zone A (REDACTED)
+  Service: 1 AccessoryInformation (3E)
+    1.6: false / Identify (14) [pw]
+    1.3: ecobee Inc. / Manufacturer (20) [pr]
+    1.5: ECB601 / Model (21) [pr]
+    1.2: Zone A / Name (23) [pr]
+    1.4: REDACTED / SerialNumber (30) [pr]
+    1.8: 4.10.330030 / FirmwareRevision (52) [pr]
+    1.11: 6.5;4f2f7530 / <Unknown> (34AB8811-AC7F-4340-BAC3-FD6A85F9943B) [pr hd]
+    1.10: [187 138 179 245 45 74 41 7] / <Unknown> (220) [pr hd]
+    1.9: 0 / AccessoryFlags (A6) [pr ev]
+  Service: 30 HAPProtocolInformation (A2)
+    1.31: 1.1.0 / Version (37) [pr]
+  Service: 16 Thermostat (4A)
+    1.17: 0 / CurrentHeatingCoolingState (F) [pr ev]
+    1.18: 2 / TargetHeatingCoolingState (33) [pr pw ev]
+    1.19: 22.9 / CurrentTemperature (11) [pr ev]
+    1.20: 23 / TargetTemperature (35) [pr pw ev]
+    1.21: 0 / TemperatureDisplayUnits (36) [pr pw ev]
+    1.22: 23 / CoolingThresholdTemperature (D) [pr pw ev]
+    1.23: 21 / HeatingThresholdTemperature (12) [pr pw ev]
+    1.27: Zone A / Name (23) [pr]
+    1.75: 1 / TargetFanState (BF) [pr pw ev]
+    1.76: 2 / CurrentFanState (AF) [pr ev]
+    1.33: 0 / <Unknown> (B7DDB9A3-54BB-4572-91D2-F1F5B0510F8C) [pr]
+    1.34: 21 / <Unknown> (E4489BBC-5227-4569-93E5-B345E3E5508F) [pr pw]
+    1.35: 23 / <Unknown> (7D381BAA-20F9-40E5-9BE9-AEB92D4BECEF) [pr pw]
+    1.36: 18 / <Unknown> (73AAB542-892A-4439-879A-D2A883724B69) [pr pw]
+    1.37: 25 / <Unknown> (5DA985F0-898A-4850-B987-B76C6C78D670) [pr pw]
+    1.38: 18 / <Unknown> (05B97374-6DC0-439B-A0FA-CA33F612D425) [pr pw]
+    1.39: 24 / <Unknown> (A251F6E7-AC46-4190-9C5D-3D06277BDF9F) [pr pw]
+    1.40: 0 / <Unknown> (1B300BC2-CFFC-47FF-89F9-BD6CCF5F2853) [pw]
+    1.41:  / <Unknown> (1621F556-1367-443C-AF19-82AF018E99DE) [pr pw]
+    1.48: false / <Unknown> (FA128DE6-9D7D-49A4-B6D8-4E4E234DEE38) [pw]
+    1.49: 1 / <Unknown> (4A6AE4F6-036C-495D-87CC-B3702B437741) [pr]
+    1.50: 3 / <Unknown> (DB7BF261-7042-4194-8BD1-3AA22830AEDD) [pr]
+    1.51: true / <Unknown> (41935E3E-B54D-42E9-B8B9-D33C6319F0AF) [pr]
+    1.52: 0 / <Unknown> (C35DA3C0-E004-40E3-B153-46655CDD9214) [pr pw]
+    1.53: 100 / <Unknown> (48F62AEC-4171-4B4A-8F0E-1EEB6708B3FB) [pr]
+    1.54: Time to change your ventilator filter.  It was last changed on May 30, 2026. / <Unknown> (1B1515F2-CC45-409F-991F-C480987F92C3) [pr]
+    1.24: 68 / CurrentRelativeHumidity (10) [pr ev]
+    1.25: 36 / TargetRelativeHumidity (34) [pr pw ev]
+  Service: 56 MotionSensor (85)
+    1.28: Zone A Motion / Name (23) [pr]
+    1.66: false / MotionDetected (22) [pr ev]
+    1.67: 735 / <Unknown> (BFE61C70-4A40-11E6-BDF4-0800200C9A66) [pr ev]
+  Service: 57 OccupancySensor (86)
+    1.29: Zone A Occupancy / Name (23) [pr]
+    1.65: 1 / OccupancyDetected (71) [pr ev]
+    1.68: 1307 / <Unknown> (A8F798E0-4A40-11E6-BDF4-0800200C9A66) [pr ev]
+  Service: 240 DataStreamTransportManagement (129)
+    1.242: [1 3 1 1 0] / SupportedDataStreamTransportConfiguration (130) [pr]
+    1.243: [] / SetupDataStreamTransport (131) [pr pw wr]
+    1.244: 1.0 / Version (37) [pr]
+  Service: 512 AudioStreamManagement (127)
+    1.514: [1 14 1 1 3 2 9 1 1 1 2 1 0 3 1 1 2 1 0] / SupportedAudioStreamConfiguration (115) [pr]
+    1.515: [1 17 1 1 3 2 12 1 1 1 2 1 0 3 1 1 4 1 20] / SelectedAudioStreamConfiguration (128) [pr pw]
+  Service: 769 Siri (133)
+    1.771: 1 / SiriInputType (132) [pr]
+    1.772: 0 / <Unknown> (255) [pr pw ev]
+    1.773: 0 / <Unknown> (256) [pr pw ev]
+    1.774: 0 / <Unknown> (257) [pr pw ev]
+    1.775: 0 / <Unknown> (258) [pr pw ev]
+    1.777: 1.0 / <Unknown> (25A) [pr]
+    1.778: 1 / <Unknown> (26B) [pr ev]
+  Service: 784 <Unknown> (253)
+    1.785: [1 1 0] / <Unknown> (254) [pr ev]
+    1.786: 1.0 / Version (37) [pr]
+    1.787: 0 / ActiveIdentifier (E7) [pr pw ev]
+    1.788: 0 / <Unknown> (227) [pr ev]
+  Service: 800 <Unknown> (26A)
+    1.801: 0 / <Unknown> (E6) [pr]
+    1.802: Siri / Name (23) [pr]
+    1.803: 1 / Active (B0) [pr pw ev]
+  Service: 1024 <Unknown> (267)
+    1.1026: 3 / <Unknown> (268) [pr]
+    1.1027: 0 / <Unknown> (269) [pr ev]
+  Service: 352 <Unknown> (26A)
+    1.353: 1 / <Unknown> (E6) [pr]
+    1.354: Alexa / Name (23) [pr]
+    1.355: 0 / Active (B0) [pr pw ev]
+  Service: 4144 <Unknown> (228)
+    1.4146: Zone A / <Unknown> (E3) [pr pw ev]
+    1.4147: 1 / <Unknown> (E0) [pr ev]
+    1.4148: 0 / <Unknown> (137) [pr pw ev]
+    1.4150: false / Mute (11A) [pr pw ev]
+    1.4149: 27 / Volume (119) [pr pw ev]
+    1.4151: 1 / <Unknown> (25B) [pr pw ev]
+  Service: 129 <Unknown> (DA)
+    1.130: 0 / <Unknown> (E5) [pr pw ev]
+    1.131: [1 0 2 1 0] / <Unknown> (E4) [pr pw ev]
+  Service: 16448 <Unknown> (22A)
+    1.16450: true / <Unknown> (22B) [pr]
+    1.16451: 11 / <Unknown> (22C) [pr]
+    1.16452: [] / <Unknown> (22D) [pr pw ev tw wr]
+  Service: 2560 <Unknown> (239)
+    1.2562: [] / <Unknown> (23C) [pr]
+  Service: 208 <Unknown> (237)
+    1.209: [1 1 0 2 1 2 4 2 2 0] / <Unknown> (238) [pr]
+  Service: 192 <Unknown> (270)
+    1.193: 0 / Active (B0) [pr pw]
+    1.194: [1 6 1 1 1 2 1 0 0 0 1 6 1 1 2 2 1 0 0 0 1 6 1 1 3 2 1 0 0 0 1 6 1 1 4 2 1 0 0 0 1 6 1 1 5 2 1 0 0 0 1 6 1 1 7 2 1 0 0 0 1 6 1 1 8 2 1 0 0 0 1 6 1 1 9 2 1 0 0 0 1 6 1 1 10 2 1 0] / <Unknown> (271) [pr pw]
+    1.195: false / <Unknown> (272) [pr ev]
+Accessory: 4297248826 Zone B (REDACTED)
+  Service: 1 AccessoryInformation (3E)
+    4297248826.2: Zone B / Name (23) [pr]
+    4297248826.3: ecobee Inc. / Manufacturer (20) [pr]
+    4297248826.4: REDACTED / SerialNumber (30) [pr]
+    4297248826.5: EBERS41 / Model (21) [pr]
+    4297248826.8: 1.0.0 / FirmwareRevision (52) [pr]
+    4297248826.6: false / Identify (14) [pw]
+  Service: 192 BatteryService (96)
+    4297248826.193: 2 / ChargingState (8F) [pr ev]
+    4297248826.194: 100 / BatteryLevel (68) [pr ev]
+    4297248826.195: 0 / StatusLowBattery (79) [pr ev]
+    4297248826.196: Zone B / Name (23) [pr]
+  Service: 208 TemperatureSensor (8A)
+    4297248826.209: 23.3 / CurrentTemperature (11) [pr ev]
+    4297248826.210: Zone B Temperature / Name (23) [pr]
+    4297248826.211: true / StatusActive (75) [pr ev]
+    4297248826.212: 0 / StatusLowBattery (79) [pr ev]
+  Service: 57 OccupancySensor (86)
+    4297248826.65: 0 / OccupancyDetected (71) [pr ev]
+    4297248826.29: Zone B Occupancy / Name (23) [pr]
+    4297248826.117: true / StatusActive (75) [pr ev]
+    4297248826.116: 0 / StatusLowBattery (79) [pr ev]
+    4297248826.68: -1 / <Unknown> (A8F798E0-4A40-11E6-BDF4-0800200C9A66) [pr]
+  Service: 56 MotionSensor (85)
+    4297248826.66: false / MotionDetected (22) [pr ev]
+    4297248826.28: Zone B Motion / Name (23) [pr]
+    4297248826.101: true / StatusActive (75) [pr ev]
+    4297248826.100: 0 / StatusLowBattery (79) [pr ev]
+    4297248826.67: -1 / <Unknown> (BFE61C70-4A40-11E6-BDF4-0800200C9A66) [pr]
+
+=== getCharacteristics metadata (min/max/step) for setpoint characteristics ===
+--- 1.20 ---
+1.20: TargetTemperature
+Value: 23
+--- 1.22 ---
+1.22: CoolingThresholdTemperature
+Value: 23
+--- 1.23 ---
+1.23: HeatingThresholdTemperature
+Value: 21
+--- 1.25 ---
+1.25: TargetRelativeHumidity
+Value: 36
+--- 1.24 ---
+1.24: CurrentRelativeHumidity
+Value: 68
+
+=== Full metadata (min/max/step/unit/perms) for setpoint characteristics, via direct API call ===
+(the CLI's getCharacteristics command requests Metadata:true but doesn't print min/max/step, so this used a small standalone script against the same paired client instead)
+{
+  "aid": 1,
+  "iid": 20,
+  "value": 23.0,
+  "type": "35",
+  "perms": [
+    "pr",
+    "pw",
+    "ev"
+  ],
+  "format": "float",
+  "unit": "celsius",
+  "maxValue": 33.3,
+  "minValue": 7.2,
+  "minStep": 0.1
+}
+{
+  "aid": 1,
+  "iid": 22,
+  "value": 23.0,
+  "type": "D",
+  "perms": [
+    "pr",
+    "pw",
+    "ev"
+  ],
+  "format": "float",
+  "unit": "celsius",
+  "maxValue": 33.3,
+  "minValue": 18.3,
+  "minStep": 0.1
+}
+{
+  "aid": 1,
+  "iid": 23,
+  "value": 21.0,
+  "type": "12",
+  "perms": [
+    "pr",
+    "pw",
+    "ev"
+  ],
+  "format": "float",
+  "unit": "celsius",
+  "maxValue": 26.1,
+  "minValue": 7.2,
+  "minStep": 0.1
+}
+{
+  "aid": 1,
+  "iid": 25,
+  "value": 36.0,
+  "type": "34",
+  "perms": [
+    "pr",
+    "pw",
+    "ev"
+  ],
+  "format": "float",
+  "unit": "percentage",
+  "maxValue": 50.0,
+  "minValue": 20.0,
+  "minStep": 1.0
+}
+{
+  "aid": 1,
+  "iid": 24,
+  "value": 68.0,
+  "type": "10",
+  "perms": [
+    "pr",
+    "ev"
+  ],
+  "format": "float",
+  "unit": "percentage",
+  "maxValue": 100.0,
+  "minValue": 0,
+  "minStep": 1.0
+}

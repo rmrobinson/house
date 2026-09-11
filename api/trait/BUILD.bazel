@@ -33,6 +33,7 @@ proto_library(
         "time.proto",
         "timer.proto",
         "toggle.proto",
+        "ventilation.proto",
         "volume.proto",
     ],
     visibility = ["//visibility:public"],

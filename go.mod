@@ -8,20 +8,23 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.16.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/grandcat/zeroconf v1.0.0
 	github.com/hashicorp/mdns v1.0.7
 	github.com/hekmon/plexwebhooks v1.2.0
 	github.com/koron/go-ssdp v0.0.4
 	github.com/mattn/go-sqlite3 v1.14.17
+	github.com/mctofu/homekit v0.0.0-20251110180856-4b96295ead66
 	github.com/mdlayher/apcupsd v0.0.0-20230802135538-48f5030bcd58
 	github.com/picatz/roku v0.0.0-20230221144619-ec649293f9b5
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/richard87/esphome-apiclient v1.1.0
 	github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35
 	github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01
-	github.com/spf13/cobra v1.7.0
+	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
+	golang.org/x/crypto v0.48.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.11
 	tinygo.org/x/bluetooth v0.14.0
@@ -29,6 +32,8 @@ require (
 
 require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
+	github.com/brutella/hc v1.2.5 // indirect
+	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/ericlagergren/decimal v0.0.0-20221120152707-495c53812d05 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
@@ -54,13 +59,14 @@ require (
 	github.com/soypat/seqs v0.0.0-20260125140838-2c1c6b1bd69e // indirect
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/spf13/cast v1.6.0 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
+	github.com/tadglines/go-pkgs v0.0.0-20140924210655-1f86682992f1 // indirect
 	github.com/tinygo-org/cbgo v0.0.4 // indirect
 	github.com/tinygo-org/pio v0.2.0 // indirect
+	github.com/xiam/to v0.0.0-20191116183551-8328998fc0ed // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20260212183809-81e46e3db34a // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect

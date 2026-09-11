@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Ventilation describes an ERV/HRV or similar whole-home ventilation system attached to a
+// thermostat.
+message Ventilation {
+  enum SystemType {
+    SYSTEM_TYPE_UNSPECIFIED = 0;
+    STANDARD = 1;
+    ERV = 2;
+    HRV = 3;
+  }
+
+  message Attributes {
+    bool can_control = 1;
+    SystemType system_type = 2;
+  }
+
+  message State {
+    bool is_on = 1;
+    // Remaining runtime if the accessory reports it; absent otherwise.
+    optional int32 minutes_remaining = 2;
+    // Human-readable filter status/reminder text, for accessories that expose one but not
+    // runtime control (e.g. an ecobee's ventilator filter reminder). Absent otherwise.
+    optional string filter_status_message = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

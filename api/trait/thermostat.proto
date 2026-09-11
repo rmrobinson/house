@@ -6,6 +6,20 @@ option go_package = "github.com/rmrobinson/house/api/trait";
 
 // Thermostat describes the part of a device which controls the temperature setting.
 message Thermostat {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    OFF = 1;
+    HEAT = 2;
+    COOL = 3;
+    AUTO = 4;
+  }
+
+  enum TemperatureUnit {
+    TEMPERATURE_UNIT_UNSPECIFIED = 0;
+    CELSIUS = 1;
+    FAHRENHEIT = 2;
+  }
+
   message Attributes {
     // If true, control of the device input property is possible.
     // If false, control is not allowed and the property is read-only.
@@ -13,6 +27,24 @@ message Thermostat {
 
     // The set of possible modes the fan may be in.
     repeated string fan_modes = 2;
+
+    // Which HVAC modes this thermostat supports (e.g. some units lack COOL).
+    repeated Mode supported_modes = 3;
+
+    // Setpoint bounds/step, sourced from the underlying protocol's characteristic metadata.
+    float min_setpoint_celsius = 4;
+    float max_setpoint_celsius = 5;
+    float setpoint_step_celsius = 6;
+
+    // Named comfort profiles this thermostat can switch between (e.g. an ecobee's
+    // Home/Away/Sleep "climates", plus any user-defined ones). Empty on thermostats without this
+    // concept.
+    repeated string comfort_profiles = 7;
+
+    // Target humidity bounds/step. Absent (all zero) on thermostats without humidity control.
+    float min_target_humidity_percent = 8;
+    float max_target_humidity_percent = 9;
+    float target_humidity_step_percent = 10;
   }
   message State {
     // If the furnace is experiencing an error - what is the error?
@@ -20,7 +52,36 @@ message Thermostat {
     // What is the current mode of the fan?
     string fan_mode = 2;
     // What is the temperature set to?
-    float temperature_setpoint = 3;
+    // Deprecated: use heat_setpoint_celsius/cool_setpoint_celsius instead. Retained so existing
+    // bridges don't need to change until they're migrated.
+    float temperature_setpoint = 3 [deprecated = true];
+
+    Mode current_mode = 4;
+    Mode target_mode = 5;
+
+    // Populated based on target_mode: HEAT/COOL use one of these as the active setpoint; AUTO
+    // uses both as the low/high band.
+    optional float heat_setpoint_celsius = 6;
+    optional float cool_setpoint_celsius = 7;
+
+    float current_temperature_celsius = 8;
+    optional float current_humidity_percent = 9;
+
+    TemperatureUnit display_units = 10;
+
+    // Read-only: which comfort profile (from attributes.comfort_profiles) is currently active.
+    // Absent on thermostats without this concept.
+    optional string active_comfort_profile = 11;
+
+    // Read-only: true if the current setpoint/profile is a temporary hold rather than what the
+    // thermostat's own schedule would otherwise be running. A hold reverts at the next scheduled
+    // transition, or per the thermostat's own hold-duration preference if it has one - writes
+    // from this trait do not permanently edit the schedule, only create/replace a hold.
+    optional bool hold_active = 12;
+
+    // Target humidity, for thermostats that control a humidifier/dehumidifier/ERV alongside
+    // temperature. Absent on thermostats without humidity control.
+    optional float target_humidity_percent = 13;
   }
 
   Attributes attributes = 1;

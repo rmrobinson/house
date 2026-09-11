@@ -5,9 +5,13 @@ go_library(
     srcs = [
         "app.go",
         "brightness.go",
+        "comfortprofile.go",
         "device.go",
+        "heatcoolsetpoints.go",
         "mute.go",
         "onoff.go",
+        "temperature.go",
+        "thermostatmode.go",
         "time.go",
         "volume.go",
     ],

@@ -1,0 +1,135 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+
+	"github.com/rmrobinson/house/bridges/lib/homekitctrl"
+)
+
+// fakeController is an in-memory hapController used to test EcobeeBridge/ecobeeConn's
+// orchestration logic (Refresh, ProcessCommand, reconnect-on-failure) without a real network
+// listener. The wire protocol itself (pair-verify, framing, timeouts) is already covered by
+// homekitctrl's own tests against a fake accessory - this fake only needs to behave like
+// *homekitctrl.Controller's read/write/close contract, not actually speak HAP.
+type fakeController struct {
+	mu     sync.Mutex
+	values map[homekitctrl.CharID]any
+	writes []homekitctrl.CharacteristicWrite
+
+	readErr  error
+	writeErr error
+	closed   bool
+
+	subscribedIDs []homekitctrl.CharID
+	subscribeErr  error
+	onEvent       func([]homekitctrl.CharacteristicValue)
+	onDisconnect  func(error)
+
+	// subscribeAttempted is closed the first time Subscribe is called, regardless of outcome.
+	// ensureConnected fires Subscribe off in its own goroutine (see connection.go), so a test that
+	// needs to observe its effects - or just needs it to be done before the test itself returns,
+	// to avoid a "log after test completed" panic from that goroutine's own error logging
+	// outliving the test's zaptest logger - must wait on this rather than assuming it's already
+	// happened by the time Refresh/ensureConnected returns.
+	subscribeAttempted chan struct{}
+	subscribeOnce      sync.Once
+}
+
+func newFakeController() *fakeController {
+	return &fakeController{values: map[homekitctrl.CharID]any{}, subscribeAttempted: make(chan struct{})}
+}
+
+func (f *fakeController) set(id homekitctrl.CharID, v any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.values[id] = v
+}
+
+func (f *fakeController) delete(id homekitctrl.CharID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.values, id)
+}
+
+func (f *fakeController) ReadCharacteristics(ctx context.Context, ids []homekitctrl.CharID) ([]homekitctrl.CharacteristicValue, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.readErr != nil {
+		return nil, f.readErr
+	}
+
+	var out []homekitctrl.CharacteristicValue
+	for _, id := range ids {
+		v, ok := f.values[id]
+		if !ok {
+			continue // simulates the characteristic being missing from an otherwise-ok response
+		}
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, homekitctrl.CharacteristicValue{AccessoryID: id.AccessoryID, CharacteristicID: id.CharacteristicID, Value: b})
+	}
+	return out, nil
+}
+
+func (f *fakeController) WriteCharacteristics(ctx context.Context, writes []homekitctrl.CharacteristicWrite) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+
+	f.writes = append(f.writes, writes...)
+	for _, w := range writes {
+		f.values[homekitctrl.CharID{AccessoryID: w.AccessoryID, CharacteristicID: w.CharacteristicID}] = w.Value
+	}
+	return nil
+}
+
+func (f *fakeController) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func (f *fakeController) Subscribe(ctx context.Context, ids []homekitctrl.CharID, onEvent func([]homekitctrl.CharacteristicValue), onDisconnect func(error)) error {
+	defer f.subscribeOnce.Do(func() { close(f.subscribeAttempted) })
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.subscribeErr != nil {
+		return f.subscribeErr
+	}
+	f.subscribedIDs = append([]homekitctrl.CharID(nil), ids...)
+	f.onEvent, f.onDisconnect = onEvent, onDisconnect
+	return nil
+}
+
+// pushEvent synchronously invokes whatever onEvent was registered via Subscribe, mirroring how
+// the real Controller calls it from its background reader goroutine.
+func (f *fakeController) pushEvent(values ...homekitctrl.CharacteristicValue) {
+	f.mu.Lock()
+	cb := f.onEvent
+	f.mu.Unlock()
+	if cb != nil {
+		cb(values)
+	}
+}
+
+// disconnect synchronously invokes whatever onDisconnect was registered via Subscribe, mirroring
+// how the real Controller calls it when its background reader detects the connection died.
+func (f *fakeController) disconnect(err error) {
+	f.mu.Lock()
+	cb := f.onDisconnect
+	f.mu.Unlock()
+	if cb != nil {
+		cb(err)
+	}
+}

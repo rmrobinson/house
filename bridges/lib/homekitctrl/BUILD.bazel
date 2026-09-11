@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "homekitctrl",
+    srcs = [
+        "controller.go",
+        "crypto.go",
+        "discover.go",
+        "events.go",
+        "pairing.go",
+        "session.go",
+        "timeout.go",
+        "tlv8.go",
+        "verify.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/lib/homekitctrl",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_grandcat_zeroconf//:zeroconf",
+        "@org_golang_x_crypto//chacha20poly1305",
+    ],
+)
+
+go_test(
+    name = "homekitctrl_test",
+    srcs = [
+        "controller_test.go",
+        "fakeaccessory_test.go",
+        "pairing_test.go",
+    ],
+    embed = [":homekitctrl"],
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
