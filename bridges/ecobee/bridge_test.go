@@ -255,6 +255,35 @@ func TestProcessCommandSetTemperatureUsesLiveModeNotStaleCache(t *testing.T) {
 	assert.Equal(t, float32(22), *state.HeatSetpointCelsius)
 }
 
+// TestProcessCommandSurvivesUnrelatedEventMerge is the regression test for a real bug caught in
+// review: ProcessCommand used to apply its optimistic update to eb.lastThermostat only, leaving
+// eb.thermostatValues (the baseline applyEvent merges HAP pushes into) stale. A push for any
+// unrelated characteristic arriving before the next poll would then rebuild the device from that
+// stale baseline, silently reverting the command that was just applied.
+func TestProcessCommandSurvivesUnrelatedEventMerge(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	raw := baselineThermostatValues(t)
+	raw[charTargetHeatingCoolingState] = 2 // COOL as of the last poll
+	seedThermostat(fc, raw)
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	_, err := eb.ProcessCommand(context.Background(), &command.Command{
+		DeviceId: "ecobee-main",
+		Details:  &command.Command_SetThermostatMode{SetThermostatMode: &command.SetThermostatMode{Mode: trait.Thermostat_HEAT}},
+	})
+	require.NoError(t, err)
+
+	// An unrelated characteristic event arrives before the next poll tick.
+	eb.applyEvent([]homekitctrl.CharacteristicValue{
+		{AccessoryID: thermostatAID, CharacteristicID: charCurrentTemperature, Value: json.RawMessage("21.5")},
+	})
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	assert.Equal(t, trait.Thermostat_HEAT, eb.lastThermostat.GetThermostat().GetThermostat().GetState().TargetMode,
+		"an unrelated event merge must not revert the optimistic command state")
+}
+
 // subscribedIDs waits for fc to have been Subscribed (ensureConnected fires it off in its own
 // goroutine, independent of the caller - see connection.go) and returns what it was called with.
 func waitForSubscribeAttempt(t *testing.T, fc *fakeController) {
@@ -333,6 +362,25 @@ func TestApplyEventBeforeAnyRefreshIsDropped(t *testing.T) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 	assert.Nil(t, eb.lastThermostat, "an event with no baseline poll yet must not publish a device built from it alone")
+}
+
+// TestApplyEventIgnoresEmptyValue guards against a per-characteristic HAP failure push (Status
+// set, Value omitted) inserting a present-but-empty entry into the merge baseline - which would
+// satisfy validateRequired's key-presence check while decoding as absent, faking a valid 0/false
+// reading for whatever field it targeted instead of being dropped the way a missing key is.
+func TestApplyEventIgnoresEmptyValue(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	seedThermostat(fc, baselineThermostatValues(t))
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	eb.applyEvent([]homekitctrl.CharacteristicValue{
+		{AccessoryID: thermostatAID, CharacteristicID: charCurrentTemperature, Value: json.RawMessage(nil)},
+	})
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	state := eb.lastThermostat.GetThermostat().GetThermostat().GetState()
+	assert.NotEqual(t, float32(0), state.CurrentTemperatureCelsius, "an empty pushed value must not overwrite the last known reading with a fake 0")
 }
 
 func TestReconnectResubscribesAfterInvalidate(t *testing.T) {

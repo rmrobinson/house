@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -191,6 +192,15 @@ func (eb *EcobeeBridge) applyEvent(values []homekitctrl.CharacteristicValue) {
 	touchedSensors := map[string]bool{}
 
 	for _, v := range values {
+		if len(v.Value) == 0 {
+			// A per-characteristic HAP failure (Status set, Value omitted) - nothing to merge.
+			// Letting this through would insert a present-but-empty entry that satisfies
+			// validateRequired's key-presence check while decoding as absent, which is exactly the
+			// "indistinguishable from a real zero" problem requiredThermostatChars exists to catch
+			// on poll reads (see its doc comment) - silently bypassing that for pushed events would
+			// defeat the point.
+			continue
+		}
 		if v.AccessoryID == thermostatAID {
 			if eb.thermostatValues == nil {
 				continue // no baseline poll yet to merge into - drop until the first Refresh runs
@@ -334,12 +344,32 @@ func (eb *EcobeeBridge) ProcessCommand(ctx context.Context, cmd *command.Command
 	// (at most bridge.refresh_interval seconds away) re-reads the real state and corrects this if
 	// the accessory disagreed, the same way ESPHome's bridge handles optimistic command
 	// application.
+	// eb.thermostatValues (not just eb.lastThermostat) must absorb these writes too: it's the
+	// baseline applyEvent merges HAP pushes into, and if it's left stale, a push for any other
+	// subscribed characteristic arriving before the next poll would rebuild the device from that
+	// stale baseline and silently revert the optimistic update just applied above.
 	eb.mu.Lock()
 	eb.lastThermostat = optimistic
+	for _, w := range writes {
+		if w.AccessoryID != thermostatAID {
+			continue
+		}
+		raw, err := json.Marshal(w.Value)
+		if err != nil {
+			continue // writes' values are always JSON-marshalable primitives (bool/int/float)
+		}
+		eb.thermostatValues[w.CharacteristicID] = raw
+	}
 	eb.mu.Unlock()
 	eb.svc.UpdateDevice(optimistic)
 
 	return optimistic, nil
+}
+
+// ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
+// device traits eligible for asynchronous commands, so it always returns ErrAsyncCommandsNotSupported.
+func (eb *EcobeeBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Command) error {
+	return bridge.ErrAsyncCommandsNotSupported
 }
 
 // readLiveTargetMode reads the thermostat's current TargetHeatingCoolingState directly, bypassing
