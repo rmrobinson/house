@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha512"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -38,8 +40,17 @@ type fakeAccessory struct {
 
 	mu          sync.Mutex
 	chars       map[CharID]json.RawMessage
-	failWriteOf *CharID // if set, WriteCharacteristics for this id reports a HAP failure status
-	hangReads   bool    // if set, GET /characteristics accepts the request but never responds
+	subscribed  map[CharID]bool // characteristics a PUT .../characteristics with "ev":true armed
+	failWriteOf *CharID         // if set, WriteCharacteristics for this id reports a HAP failure status
+	hangReads   bool            // if set, GET /characteristics accepts the request but never responds
+	replyDelay  time.Duration   // if set, handleRead sleeps this long after reading the request but before replying
+	activeConn  net.Conn        // the current encrypted connection, if any - set by serveCharacteristics
+
+	// writeMu serializes writes to activeConn: net.Conn permits one concurrent reader and one
+	// concurrent writer, but not two concurrent writers, and pushEvent (called from a test
+	// goroutine) can otherwise race with this connection's own handleRead/handleWrite goroutine
+	// replying at the same time.
+	writeMu sync.Mutex
 }
 
 func newFakeAccessory(t *testing.T, controllerPairingID string, controllerPublicKey ed25519.PublicKey) *fakeAccessory {
@@ -61,6 +72,7 @@ func newFakeAccessory(t *testing.T, controllerPairingID string, controllerPublic
 		controllerPairingID: controllerPairingID,
 		controllerPublicKey: controllerPublicKey,
 		chars:               map[CharID]json.RawMessage{},
+		subscribed:          map[CharID]bool{},
 	}
 	go fa.serve()
 	return fa
@@ -200,6 +212,10 @@ func (fa *fakeAccessory) handleConn(conn net.Conn) {
 }
 
 func (fa *fakeAccessory) serveCharacteristics(conn net.Conn) {
+	fa.mu.Lock()
+	fa.activeConn = conn
+	fa.mu.Unlock()
+
 	br := bufio.NewReader(conn)
 	for {
 		req, err := http.ReadRequest(br)
@@ -213,7 +229,7 @@ func (fa *fakeAccessory) serveCharacteristics(conn net.Conn) {
 		case req.Method == http.MethodPut && req.URL.Path == "/characteristics":
 			fa.handleWrite(conn, req)
 		default:
-			writeJSONResponse(conn, http.StatusNotFound, []byte(`{}`))
+			fa.writeResponse(conn, http.StatusNotFound, []byte(`{}`))
 		}
 	}
 }
@@ -226,6 +242,13 @@ func (fa *fakeAccessory) handleRead(conn net.Conn, req *http.Request) {
 		// tests using this exercise the client giving up (via deadline or Close), not this
 		// goroutine ever finishing on its own.
 		select {}
+	}
+	if fa.replyDelay > 0 {
+		// Sleeps after the request has already been fully read (see serveCharacteristics'
+		// http.ReadRequest above) but before replying - gives a test room to push an event that
+		// arrives on the wire while this response is still pending, to exercise the demux under
+		// interleaving.
+		time.Sleep(fa.replyDelay)
 	}
 
 	idsParam := req.URL.Query().Get("id")
@@ -255,7 +278,7 @@ func (fa *fakeAccessory) handleRead(conn net.Conn, req *http.Request) {
 	body, _ := json.Marshal(struct {
 		Characteristics []item `json:"characteristics"`
 	}{items})
-	writeJSONResponse(conn, http.StatusOK, body)
+	fa.writeResponse(conn, http.StatusOK, body)
 }
 
 func (fa *fakeAccessory) handleWrite(conn net.Conn, req *http.Request) {
@@ -264,11 +287,12 @@ func (fa *fakeAccessory) handleWrite(conn net.Conn, req *http.Request) {
 			AccessoryID      uint64          `json:"aid"`
 			CharacteristicID uint64          `json:"iid"`
 			Value            json.RawMessage `json:"value"`
+			Ev               *bool           `json:"ev"` // present on a Subscribe request instead of Value
 		} `json:"characteristics"`
 	}
 	body, _ := io.ReadAll(req.Body)
 	if err := json.Unmarshal(body, &payload); err != nil {
-		writeJSONResponse(conn, http.StatusBadRequest, []byte(`{}`))
+		fa.writeResponse(conn, http.StatusBadRequest, []byte(`{}`))
 		return
 	}
 
@@ -282,6 +306,11 @@ func (fa *fakeAccessory) handleWrite(conn net.Conn, req *http.Request) {
 	var statuses []status
 	for _, c := range payload.Characteristics {
 		id := CharID{c.AccessoryID, c.CharacteristicID}
+		if c.Ev != nil {
+			fa.subscribed[id] = *c.Ev
+			statuses = append(statuses, status{c.AccessoryID, c.CharacteristicID, 0})
+			continue
+		}
 		if fa.failWriteOf != nil && *fa.failWriteOf == id {
 			failed = true
 			statuses = append(statuses, status{c.AccessoryID, c.CharacteristicID, -70402})
@@ -293,13 +322,60 @@ func (fa *fakeAccessory) handleWrite(conn net.Conn, req *http.Request) {
 	fa.mu.Unlock()
 
 	if !failed {
-		writeJSONResponse(conn, http.StatusNoContent, nil)
+		fa.writeResponse(conn, http.StatusNoContent, nil)
 		return
 	}
 	body, _ = json.Marshal(struct {
 		Characteristics []status `json:"characteristics"`
 	}{statuses})
-	writeJSONResponse(conn, http.StatusMultiStatus, body)
+	fa.writeResponse(conn, http.StatusMultiStatus, body)
+}
+
+// writeResponse serializes writes to conn against pushEvent - see writeMu's doc comment.
+func (fa *fakeAccessory) writeResponse(conn net.Conn, status int, body []byte) {
+	fa.writeMu.Lock()
+	defer fa.writeMu.Unlock()
+	writeJSONResponse(conn, status, body)
+}
+
+func (fa *fakeAccessory) isSubscribed(id CharID) bool {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+	return fa.subscribed[id]
+}
+
+// pushEvent writes a raw EVENT/1.0-framed push for id to the current connection, simulating an
+// accessory-initiated notification arriving asynchronously - independent of whether id was ever
+// actually subscribed to, since exercising Controller's demux doesn't require a real HAP server's
+// gating logic. Requires a connection to already be established (i.e. call after Connect returns).
+func (fa *fakeAccessory) pushEvent(id CharID, value any) {
+	v, err := json.Marshal(value)
+	require.NoError(fa.t, err)
+
+	body, err := json.Marshal(struct {
+		Characteristics []struct {
+			AccessoryID      uint64          `json:"aid"`
+			CharacteristicID uint64          `json:"iid"`
+			Value            json.RawMessage `json:"value"`
+		} `json:"characteristics"`
+	}{Characteristics: []struct {
+		AccessoryID      uint64          `json:"aid"`
+		CharacteristicID uint64          `json:"iid"`
+		Value            json.RawMessage `json:"value"`
+	}{{id.AccessoryID, id.CharacteristicID, v}}})
+	require.NoError(fa.t, err)
+
+	fa.mu.Lock()
+	conn := fa.activeConn
+	fa.mu.Unlock()
+	require.NotNil(fa.t, conn, "pushEvent called before a connection was established")
+
+	frame := fmt.Sprintf("EVENT/1.0 200 OK\r\nContent-Type: application/hap+json\r\nContent-Length: %d\r\n\r\n", len(body))
+
+	fa.writeMu.Lock()
+	defer fa.writeMu.Unlock()
+	_, err = conn.Write(append([]byte(frame), body...))
+	require.NoError(fa.t, err)
 }
 
 func writeTLV8Response(conn net.Conn, body []byte) error {

@@ -21,10 +21,24 @@ type fakeController struct {
 	readErr  error
 	writeErr error
 	closed   bool
+
+	subscribedIDs []homekitctrl.CharID
+	subscribeErr  error
+	onEvent       func([]homekitctrl.CharacteristicValue)
+	onDisconnect  func(error)
+
+	// subscribeAttempted is closed the first time Subscribe is called, regardless of outcome.
+	// ensureConnected fires Subscribe off in its own goroutine (see connection.go), so a test that
+	// needs to observe its effects - or just needs it to be done before the test itself returns,
+	// to avoid a "log after test completed" panic from that goroutine's own error logging
+	// outliving the test's zaptest logger - must wait on this rather than assuming it's already
+	// happened by the time Refresh/ensureConnected returns.
+	subscribeAttempted chan struct{}
+	subscribeOnce      sync.Once
 }
 
 func newFakeController() *fakeController {
-	return &fakeController{values: map[homekitctrl.CharID]any{}}
+	return &fakeController{values: map[homekitctrl.CharID]any{}, subscribeAttempted: make(chan struct{})}
 }
 
 func (f *fakeController) set(id homekitctrl.CharID, v any) {
@@ -82,4 +96,40 @@ func (f *fakeController) Close() error {
 	defer f.mu.Unlock()
 	f.closed = true
 	return nil
+}
+
+func (f *fakeController) Subscribe(ctx context.Context, ids []homekitctrl.CharID, onEvent func([]homekitctrl.CharacteristicValue), onDisconnect func(error)) error {
+	defer f.subscribeOnce.Do(func() { close(f.subscribeAttempted) })
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.subscribeErr != nil {
+		return f.subscribeErr
+	}
+	f.subscribedIDs = append([]homekitctrl.CharID(nil), ids...)
+	f.onEvent, f.onDisconnect = onEvent, onDisconnect
+	return nil
+}
+
+// pushEvent synchronously invokes whatever onEvent was registered via Subscribe, mirroring how
+// the real Controller calls it from its background reader goroutine.
+func (f *fakeController) pushEvent(values ...homekitctrl.CharacteristicValue) {
+	f.mu.Lock()
+	cb := f.onEvent
+	f.mu.Unlock()
+	if cb != nil {
+		cb(values)
+	}
+}
+
+// disconnect synchronously invokes whatever onDisconnect was registered via Subscribe, mirroring
+// how the real Controller calls it when its background reader detects the connection died.
+func (f *fakeController) disconnect(err error) {
+	f.mu.Lock()
+	cb := f.onDisconnect
+	f.mu.Unlock()
+	if cb != nil {
+		cb(err)
+	}
 }

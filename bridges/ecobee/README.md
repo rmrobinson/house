@@ -57,6 +57,24 @@ bugs - see its own doc comment.
 - `trait.Ventilation.state.filter_status_message`: the ventilator's read-only filter-change
   reminder text, if this unit has one configured. Informational only (`can_control: false`).
 
+## Live updates: HAP push, with poll as a fallback
+
+On connect (and on every reconnect - subscriptions are per-session accessory state, not
+persistent), this bridge arms HAP event notifications (`"ev":true`) for every characteristic it
+watches, matching how real HAP controllers (Apple's Home app, Home Assistant's `homekit_controller`)
+primarily operate. A pushed characteristic change is merged into this bridge's last-known state and
+republished immediately, rather than waiting for the next poll tick - most usefully, it means a
+command this bridge just wrote (see "Write reliability" below) can be confirmed or corrected by an
+echoed push well before `bridge.refresh_interval` would otherwise catch it.
+
+`bridge.refresh_interval` (default 30s) is unchanged and still runs as a periodic reconciliation
+poll regardless of push - both because a subscribe call can silently fail per-characteristic (this
+bridge tolerates that and falls back to poll-only for the affected characteristics rather than
+failing the connection over it) and because this specific accessory's push reliability hasn't been
+characterized empirically yet. If it proves reliable in practice, the interval is a reasonable
+candidate to widen later - that's deliberately not done in the same change that introduced push, to
+keep the two changes independently bisectable.
+
 ## Setup
 
 ### 1. Pair

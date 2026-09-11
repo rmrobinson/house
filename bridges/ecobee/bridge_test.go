@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -65,6 +66,20 @@ func testBridge(t *testing.T, cfg ecobeeConfig) (*EcobeeBridge, *fakeController)
 	eb.conn.ctrl = fc
 
 	return eb, fc
+}
+
+// connectVia forces eb.conn to go through a real (fake) discover+connect cycle against fc on the
+// next ensureConnected call, instead of the cached-controller short-circuit testBridge sets up -
+// needed by any test asserting on Subscribe being called, since that only happens inside
+// ensureConnected's connect path, matching TestEnsureConnectedUsesInjectedDiscoverAndConnect.
+func connectVia(eb *EcobeeBridge, fc *fakeController) {
+	eb.conn.ctrl = nil
+	eb.conn.discover = func(ctx context.Context, pairingID string, timeout time.Duration) (*homekitctrl.DiscoveredAccessory, error) {
+		return &homekitctrl.DiscoveredAccessory{Name: "fake", PairingID: pairingID, IPs: []net.IP{net.ParseIP("127.0.0.1")}, Port: 1234}, nil
+	}
+	eb.conn.connect = func(ctx context.Context, host string, identity *homekitctrl.ControllerIdentity, accessory *homekitctrl.AccessoryRecord) (hapController, error) {
+		return fc, nil
+	}
 }
 
 // seedThermostat writes raw values keyed by thermostat characteristic ID into fc, mirroring what
@@ -238,4 +253,180 @@ func TestProcessCommandSetTemperatureUsesLiveModeNotStaleCache(t *testing.T) {
 	require.NotNil(t, state.HeatSetpointCelsius, "should route to the heat setpoint per the live HEAT mode, not the stale cached COOL")
 	assert.Nil(t, state.CoolSetpointCelsius)
 	assert.Equal(t, float32(22), *state.HeatSetpointCelsius)
+}
+
+// subscribedIDs waits for fc to have been Subscribed (ensureConnected fires it off in its own
+// goroutine, independent of the caller - see connection.go) and returns what it was called with.
+func waitForSubscribeAttempt(t *testing.T, fc *fakeController) {
+	t.Helper()
+	select {
+	case <-fc.subscribeAttempted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected Subscribe to be called asynchronously after connect")
+	}
+}
+
+func subscribedIDs(t *testing.T, fc *fakeController) []homekitctrl.CharID {
+	t.Helper()
+	waitForSubscribeAttempt(t, fc)
+
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return append([]homekitctrl.CharID(nil), fc.subscribedIDs...)
+}
+
+func TestEnsureConnectedSubscribesToWatchedCharacteristics(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	connectVia(eb, fc)
+	seedThermostat(fc, baselineThermostatValues(t))
+	fc.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	assert.ElementsMatch(t, eb.allWatchedCharIDs(), subscribedIDs(t, fc))
+}
+
+func TestApplyEventUpdatesThermostatWithoutFullPoll(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	seedThermostat(fc, baselineThermostatValues(t))
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	eb.applyEvent([]homekitctrl.CharacteristicValue{
+		{AccessoryID: thermostatAID, CharacteristicID: charCurrentTemperature, Value: json.RawMessage("21.5")},
+	})
+
+	eb.mu.Lock()
+	thermostat := eb.lastThermostat
+	eb.mu.Unlock()
+
+	state := thermostat.GetThermostat().GetThermostat().GetState()
+	assert.Equal(t, float32(21.5), state.CurrentTemperatureCelsius)
+	// Unrelated fields from the baseline poll must survive the single-field merge, not be zeroed.
+	assert.Equal(t, trait.Thermostat_COOL, state.TargetMode)
+}
+
+func TestApplyEventUpdatesSensor(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	seedThermostat(fc, baselineThermostatValues(t))
+	fc.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	eb.applyEvent([]homekitctrl.CharacteristicValue{
+		{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature, Value: json.RawMessage("19.9")},
+	})
+
+	eb.mu.Lock()
+	sensor := eb.lastSensors["ecobee-downstairs"]
+	eb.mu.Unlock()
+	assert.Equal(t, float32(19.9), sensor.GetSensor().AirProperties.State.TemperatureC)
+}
+
+func TestApplyEventBeforeAnyRefreshIsDropped(t *testing.T) {
+	eb, _ := testBridge(t, testConfig())
+
+	assert.NotPanics(t, func() {
+		eb.applyEvent([]homekitctrl.CharacteristicValue{
+			{AccessoryID: thermostatAID, CharacteristicID: charCurrentTemperature, Value: json.RawMessage("21.5")},
+		})
+	})
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	assert.Nil(t, eb.lastThermostat, "an event with no baseline poll yet must not publish a device built from it alone")
+}
+
+func TestReconnectResubscribesAfterInvalidate(t *testing.T) {
+	eb, fc1 := testBridge(t, testConfig())
+	connectVia(eb, fc1)
+	seedThermostat(fc1, baselineThermostatValues(t))
+	fc1.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	require.NoError(t, eb.Refresh(context.Background()))
+	require.NotEmpty(t, subscribedIDs(t, fc1))
+
+	eb.conn.invalidate(fc1)
+
+	fc2 := newFakeController()
+	seedThermostat(fc2, baselineThermostatValues(t))
+	fc2.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	eb.conn.connect = func(ctx context.Context, host string, identity *homekitctrl.ControllerIdentity, accessory *homekitctrl.AccessoryRecord) (hapController, error) {
+		return fc2, nil
+	}
+
+	require.NoError(t, eb.Refresh(context.Background()))
+
+	assert.NotEmpty(t, subscribedIDs(t, fc2), "the second connection should have been subscribed too, not just the first")
+}
+
+func TestHandleConnectionLostInvalidatesAndMarksUnreachable(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	connectVia(eb, fc)
+	seedThermostat(fc, baselineThermostatValues(t))
+	fc.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	require.NoError(t, eb.Refresh(context.Background()))
+	subscribedIDs(t, fc) // wait for Subscribe (and its onDisconnect registration) to complete
+
+	fc.disconnect(assert.AnError)
+
+	eb.conn.mu.Lock()
+	assert.Nil(t, eb.conn.ctrl)
+	eb.conn.mu.Unlock()
+	assert.True(t, fc.closed)
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	assert.False(t, eb.lastThermostat.Address.IsReachable)
+	assert.False(t, eb.lastSensors["ecobee-downstairs"].Address.IsReachable)
+}
+
+// TestStaleDisconnectDoesNotTearDownHealthyReconnect is the regression test for a real bug caught
+// during live testing: ecobeeConn.invalidate used to close+nil whatever ctrl was current with no
+// check that it was the same instance reporting trouble. A Controller that fails and gets replaced
+// can still report its own disconnection later (its background reader notices the closed conn on
+// its own schedule) - by which point a healthy replacement may already be in place. That delayed
+// report must not tear the replacement down too.
+func TestStaleDisconnectDoesNotTearDownHealthyReconnect(t *testing.T) {
+	eb, fc1 := testBridge(t, testConfig())
+	connectVia(eb, fc1)
+	seedThermostat(fc1, baselineThermostatValues(t))
+	fc1.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	require.NoError(t, eb.Refresh(context.Background()))
+	subscribedIDs(t, fc1) // wait for fc1's onDisconnect to be registered
+
+	eb.conn.invalidate(fc1) // fc1 fails and is replaced
+	assert.True(t, fc1.closed)
+
+	fc2 := newFakeController()
+	seedThermostat(fc2, baselineThermostatValues(t))
+	fc2.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+	eb.conn.connect = func(ctx context.Context, host string, identity *homekitctrl.ControllerIdentity, accessory *homekitctrl.AccessoryRecord) (hapController, error) {
+		return fc2, nil
+	}
+	require.NoError(t, eb.Refresh(context.Background()))
+	subscribedIDs(t, fc2)
+
+	// fc1's own background reader (in the real Controller) only now notices its conn is closed
+	// and fires the onDisconnect it was given at Subscribe time - the same callback fc2 was also
+	// given, since it's derived from the same eb, not tied to one specific connection.
+	fc1.disconnect(assert.AnError)
+
+	eb.conn.mu.Lock()
+	stillConnected := eb.conn.ctrl != nil
+	eb.conn.mu.Unlock()
+	assert.True(t, stillConnected, "fc1's stale disconnect notification should not have torn down the healthy fc2 connection")
+	assert.False(t, fc2.closed, "fc2 (the current, healthy connection) should not have been closed")
+}
+
+func TestSubscribeFailureDoesNotBreakConnect(t *testing.T) {
+	eb, fc := testBridge(t, testConfig())
+	connectVia(eb, fc)
+	fc.subscribeErr = assert.AnError
+	seedThermostat(fc, baselineThermostatValues(t))
+	fc.set(homekitctrl.CharID{AccessoryID: 4297248826, CharacteristicID: remoteSensorCharCurrentTemperature}, 23.3)
+
+	require.NoError(t, eb.Refresh(context.Background()), "a failed Subscribe should degrade to poll-only, not break the connection")
+	waitForSubscribeAttempt(t, fc) // let the async Subscribe attempt (and its own error log) finish before the test ends
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+	assert.True(t, eb.lastThermostat.Address.IsReachable)
 }

@@ -34,6 +34,13 @@ type EcobeeBridge struct {
 	mu             sync.Mutex
 	lastThermostat *device.Device
 	lastSensors    map[string]*device.Device // keyed by house device ID
+
+	// thermostatValues/sensorValues are the full last-known characteristic snapshot for each
+	// accessory, populated by Refresh and merged into (not replaced by) applyEvent - see
+	// applyEvent's doc comment for why a single pushed characteristic can't be built into a
+	// device on its own.
+	thermostatValues charValues
+	sensorValues     map[uint64]charValues // keyed by sensor accessory ID
 }
 
 // NewEcobeeBridge creates a bridge for the ecobee described by cfg. The connection to it isn't
@@ -53,14 +60,17 @@ func NewEcobeeBridge(logger *zap.Logger, svc *bridge.Service, store homekitctrl.
 		},
 	}
 
-	return &EcobeeBridge{
-		logger:      logger,
-		svc:         svc,
-		b:           b,
-		conn:        newEcobeeConn(store, cfg.AccessoryName),
-		config:      cfg,
-		lastSensors: make(map[string]*device.Device),
+	eb := &EcobeeBridge{
+		logger:       logger,
+		svc:          svc,
+		b:            b,
+		conn:         newEcobeeConn(logger, store, cfg.AccessoryName),
+		config:       cfg,
+		lastSensors:  make(map[string]*device.Device),
+		sensorValues: make(map[uint64]charValues),
 	}
+	eb.conn.configureEvents(eb.allWatchedCharIDs, eb.applyEvent, eb.handleConnectionLost)
+	return eb
 }
 
 // Bridge returns the static Bridge descriptor for this process.
@@ -107,14 +117,9 @@ func (eb *EcobeeBridge) Refresh(ctx context.Context) error {
 		return fmt.Errorf("connect: %w", err)
 	}
 
-	ids := thermostatCharIDs()
-	for _, s := range eb.config.Sensors {
-		ids = append(ids, remoteSensorCharIDs(s.AccessoryID)...)
-	}
-
-	values, err := ctrl.ReadCharacteristics(ctx, ids)
+	values, err := ctrl.ReadCharacteristics(ctx, eb.allWatchedCharIDs())
 	if err != nil {
-		eb.conn.invalidate()
+		eb.conn.invalidate(ctrl)
 		eb.markAllUnreachable()
 		return fmt.Errorf("read characteristics: %w", err)
 	}
@@ -133,6 +138,7 @@ func (eb *EcobeeBridge) Refresh(ctx context.Context) error {
 
 	eb.mu.Lock()
 	eb.lastThermostat = d
+	eb.thermostatValues = thermostatValues
 	eb.mu.Unlock()
 	eb.svc.UpdateDevice(d)
 
@@ -143,11 +149,101 @@ func (eb *EcobeeBridge) Refresh(ctx context.Context) error {
 
 		eb.mu.Lock()
 		eb.lastSensors[s.ID] = sd
+		eb.sensorValues[s.AccessoryID] = sensorValues
 		eb.mu.Unlock()
 		eb.svc.UpdateDevice(sd)
 	}
 
 	return nil
+}
+
+// allWatchedCharIDs returns every characteristic this bridge cares about across the thermostat and
+// all configured remote sensors - shared by Refresh's poll and the event subscription armed in
+// ensureConnected, so the two can't drift apart.
+func (eb *EcobeeBridge) allWatchedCharIDs() []homekitctrl.CharID {
+	ids := thermostatCharIDs()
+	for _, s := range eb.config.Sensors {
+		ids = append(ids, remoteSensorCharIDs(s.AccessoryID)...)
+	}
+	return ids
+}
+
+// applyEvent merges a HAP push into this bridge's persisted per-accessory characteristic state and
+// rebuilds/republishes the affected device via the same builders Refresh uses - buildThermostatDevice
+// and buildRemoteSensorDevice both require a complete characteristic snapshot (see
+// requiredThermostatChars' doc comment and the target-mode-dependent setpoint routing in
+// buildThermostatDevice), so a single pushed characteristic is merged into the last full snapshot
+// rather than being built into a device on its own, which would otherwise silently drop every
+// field the push didn't happen to include.
+//
+// Called synchronously from homekitctrl's background reader goroutine (via the onEvent callback
+// passed to ctrl.Subscribe) - must not block or call back into ctrl (ReadCharacteristics/
+// WriteCharacteristics/Subscribe from here would deadlock against that same reader).
+func (eb *EcobeeBridge) applyEvent(values []homekitctrl.CharacteristicValue) {
+	if len(values) == 0 {
+		return
+	}
+
+	eb.mu.Lock()
+	defer eb.mu.Unlock()
+
+	touchedThermostat := false
+	touchedSensors := map[string]bool{}
+
+	for _, v := range values {
+		if v.AccessoryID == thermostatAID {
+			if eb.thermostatValues == nil {
+				continue // no baseline poll yet to merge into - drop until the first Refresh runs
+			}
+			eb.thermostatValues[v.CharacteristicID] = v.Value
+			touchedThermostat = true
+			continue
+		}
+		for _, s := range eb.config.Sensors {
+			if s.AccessoryID != v.AccessoryID {
+				continue
+			}
+			sv := eb.sensorValues[v.AccessoryID]
+			if sv == nil {
+				break // no baseline poll yet for this sensor - drop
+			}
+			sv[v.CharacteristicID] = v.Value
+			touchedSensors[s.ID] = true
+			break
+		}
+	}
+
+	if touchedThermostat {
+		if err := eb.thermostatValues.validateRequired(requiredThermostatChars); err != nil {
+			eb.logger.Warn("event pushed an incomplete thermostat state, dropping merge", zap.Error(err))
+		} else {
+			d := buildThermostatDevice(eb.config.Thermostat.ID, eb.config.Thermostat.Name, eb.thermostatValues)
+			d.Address = &device.Device_Address{IsReachable: true}
+			eb.lastThermostat = d
+			eb.svc.UpdateDevice(d)
+		}
+	}
+	for _, s := range eb.config.Sensors {
+		if !touchedSensors[s.ID] {
+			continue
+		}
+		sd := buildRemoteSensorDevice(s.ID, s.Name, eb.sensorValues[s.AccessoryID])
+		sd.Address = &device.Device_Address{IsReachable: true}
+		eb.lastSensors[s.ID] = sd
+		eb.svc.UpdateDevice(sd)
+	}
+}
+
+// handleConnectionLost is registered (indirectly - see ensureConnected's wrapping) as
+// ctrl.Subscribe's onDisconnect callback: it fires when homekitctrl's background reader detects
+// the connection died with no request in flight to surface the error through (e.g. idle between
+// polls, relying on push). ensureConnected's wrapper has already invalidated the connection (if it
+// was still the active one) before calling this, so this just marks devices unreachable
+// immediately rather than waiting for the next Refresh/ProcessCommand error path, since push being
+// primary means a foreground caller might not otherwise notice for up to a full poll cycle.
+func (eb *EcobeeBridge) handleConnectionLost(err error) {
+	eb.logger.Warn("hap connection lost", zap.Error(err))
+	eb.markAllUnreachable()
 }
 
 // markAllUnreachable flips every known device's reachability off in place, preserving its last
@@ -227,7 +323,7 @@ func (eb *EcobeeBridge) ProcessCommand(ctx context.Context, cmd *command.Command
 
 	if err := ctrl.WriteCharacteristics(ctx, writes); err != nil {
 		eb.logger.Error("unable to write command to ecobee", zap.String("device_id", cmd.DeviceId), zap.Error(err))
-		eb.conn.invalidate()
+		eb.conn.invalidate(ctrl)
 		return nil, status.Error(codes.Internal, "unable to write command to ecobee")
 	}
 

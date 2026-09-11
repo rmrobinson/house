@@ -6,6 +6,7 @@ go_library(
         "controller.go",
         "crypto.go",
         "discover.go",
+        "events.go",
         "pairing.go",
         "session.go",
         "timeout.go",
