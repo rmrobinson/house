@@ -16,4 +16,7 @@ var (
 	// type-compatibility check rejects these before the handler is ever called, so bridges
 	// with no async-eligible device traits can return this unconditionally.
 	ErrAsyncCommandsNotSupported = status.Error(codes.Unimplemented, "bridge does not support asynchronous commands")
+	// ErrCommandTimeout is returned when a bridge writes a command to a device but doesn't
+	// observe the device confirm it within the bridge's own timeout.
+	ErrCommandTimeout = status.Error(codes.DeadlineExceeded, "device did not confirm command in time")
 )

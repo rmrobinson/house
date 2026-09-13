@@ -7,6 +7,7 @@ option go_package = "github.com/rmrobinson/house/api/command";
 import "api/command/app.proto";
 import "api/command/brightness.proto";
 import "api/command/channel.proto";
+import "api/command/colour.proto";
 import "api/command/media.proto";
 import "api/command/mode.proto";
 import "api/command/movement.proto";
@@ -65,5 +66,6 @@ message Command {
     faltung.house.api.command.SetVentilation set_ventilation = 123;
     faltung.house.api.command.SetComfortProfile set_comfort_profile = 124;
     faltung.house.api.command.SetHumidity set_humidity = 125;
+    faltung.house.api.command.Colour colour = 126;
   }
 }

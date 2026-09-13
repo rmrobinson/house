@@ -1,0 +1,60 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17014
+
+zwave:
+  mqtt:
+    broker_url: "tcp://localhost:1883" # or "ssl://host:8883" for TLS
+    client_id: "house-zwave-bridge"
+    username: ""
+    password: ""
+    # ca_cert_file: "/etc/house/zwave-mqtt-ca.pem"  # only needed for a self-signed broker cert
+    # insecure_skip_verify: false
+
+    # zwave-js-ui's configured MQTT topic prefix (Settings -> MQTT -> "Name" in zwave-js-ui,
+    # a.k.a. mqtt.prefix). Include any location segment zwave-js-ui is configured to add - it's
+    # static per deployment, so it's folded into this single prefix rather than modeled
+    # separately (see valueID's doc comment in mqtt.go).
+    prefix: "zwave"
+    # zwave-js-ui's configured gateway name (Settings -> Gateway -> "Name"), used to address the
+    # <prefix>/_CLIENTS/ZWAVE_GATEWAY-<name>/api/... topics for node discovery.
+    gateway_name: "Home"
+
+    # Override the topic-path segment this bridge uses for a given command class, keyed by CC
+    # number as a string. Only needed if a real device proves one of the built-in guesses
+    # (switch_binary/switch_multilevel) wrong - see README's "Architecture" section.
+    # cc_topic_names:
+    #   "37": "switch_binary"
+
+  # Per-product-model overrides. Keyed by device_id ("<manufacturerId>-<productId>-
+  # <producttype>", stable per physical product - read it off a node from zwave-js-ui's own UI,
+  # or from a getNodes dump). Every field is optional; omit an override entirely for a product
+  # the standard convention table already handles correctly. See README.md.
+  #
+  # IMPORTANT: device_id must be zwave-js-ui's DECIMAL "deviceId" field (e.g. "271-4098-2049"),
+  # NOT its hex "hexId" field (e.g. "0x010f-0x1002-0x0801") - this bridge matches against
+  # nodeInfo's "deviceId" JSON field exactly, so a hex-formatted key never matches a real node.
+  devices:
+    # A plug whose description doesn't already contain "plug"/"outlet" (see
+    # classifyBinarySwitchLabel in devices.go) - override is purely cosmetic (ModelDescription),
+    # not required for the switch to work.
+    - device_id: "134-96-96"
+      id: outdoor-plug
+      binary_switch_label: plug
+
+    # An RGB(W) bulb. colour_channels is REQUIRED for this builder to work at all - the CC 51
+    # propertyKey numbering for color components is not fixed across devices, so this bridge
+    # refuses to guess it. Confirm the actual numbering against this bulb model's own
+    # nodeinfo/valueId list (e.g. via zwave-js-ui's own node inspector) before setting these -
+    # do not assume a numbering from a datasheet.
+    - device_id: "816-513-3"
+      id: living-room-bulb
+      colour_channels:
+        red: "2"
+        green: "3"
+        blue: "4"
+      # Only needed if colour commands against this bulb consistently time out despite the
+      # colour_channels mapping above being correct - defaults to "targetColor"/"currentColor",
+      # an unverified guess at this bulb's actual zwave-js-ui CC 51 property names.
+      # colour_target_property: "targetColor"
+      # colour_current_property: "currentColor"

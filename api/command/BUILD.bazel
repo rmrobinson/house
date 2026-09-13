@@ -10,6 +10,7 @@ proto_library(
         "app.proto",
         "brightness.proto",
         "channel.proto",
+        "colour.proto",
         "command.proto",
         "media.proto",
         "mode.proto",

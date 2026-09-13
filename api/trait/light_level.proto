@@ -27,6 +27,10 @@ message LightLevel {
     bool is_dark = 3;
     // Whether the light level measurement is greater than (light_level_dark_threshold + light_level_daylight_offset)
     bool is_daylight = 4;
+    // Ultraviolet index, on the standard 0-11+ UV index scale. Optional since not every light
+    // sensor reports UV - this is an independent reading from the same photometric sensor
+    // package, not derived from lux/light_level.
+    optional int32 uv_index = 5;
   }
 
   Attributes attributes = 1;
