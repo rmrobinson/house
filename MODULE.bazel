@@ -24,6 +24,13 @@ bazel_dep(name = "platforms", version = "1.0.0")
 # import path conflicts at link time.
 bazel_dep(name = "googleapis", version = "0.0.0-20260825-d10ac924")
 
+# Deploy tooling: cross-compilation (incl. CGO, e.g. bridges/airthings) and
+# OCI image build/push for house-config's docker-compose deploys. See
+# images/README.md.
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0")
+bazel_dep(name = "rules_oci", version = "2.3.0")
+bazel_dep(name = "rules_pkg", version = "1.3.0")
+
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.26.4")
 
@@ -70,4 +77,46 @@ use_repo(
     "org_golang_x_sync",
     "org_tinygo_x_bluetooth",
     "org_uber_go_zap",
+)
+
+# hermetic, Zig-based C/C++ cross-toolchain — lets CGO bridges (airthings
+# today) and housed (CGO via mattn/go-sqlite3) cross-compile for iot001's
+# arm64 without a hand-maintained sysroot. libc_aware/glibc variants chosen
+# to match the glibc-based runtime base images in //images.
+cc_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
+use_repo(cc_toolchains, "zig_sdk")
+
+register_toolchains(
+    "@zig_sdk//libc_aware/toolchain:linux_amd64_gnu.2.28",
+    "@zig_sdk//libc_aware/toolchain:linux_arm64_gnu.2.28",
+)
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
+oci.pull(
+    name = "distroless_base",
+    image = "gcr.io/distroless/base-debian12",
+    tag = "latest",
+    reproducible = False,  # home-lab use; pin a digest instead if this needs to be reproducible
+    # arm64's manifest-list entry carries an OCI "variant: v8" descriptor —
+    # plain "linux/arm64" doesn't match it, has to be spelled out.
+    platforms = ["linux/amd64", "linux/arm64/v8"],
+)
+
+# airthings needs libdbus at runtime (tinygo BLE -> cbgo -> BlueZ over D-Bus),
+# which distroless/base doesn't carry.
+oci.pull(
+    name = "debian_slim",
+    image = "docker.io/library/debian",
+    tag = "trixie-slim",
+    reproducible = False,
+    platforms = ["linux/amd64", "linux/arm64/v8"],
+)
+use_repo(
+    oci,
+    "debian_slim",
+    "debian_slim_linux_amd64",
+    "debian_slim_linux_arm64_v8",
+    "distroless_base",
+    "distroless_base_linux_amd64",
+    "distroless_base_linux_arm64_v8",
 )

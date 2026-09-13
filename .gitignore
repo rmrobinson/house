@@ -27,6 +27,9 @@ go.work
 
 # Bazel
 bazel-bin
-bazel-house
 bazel-out
 bazel-testlogs
+# bazel-<workspace-dir-name> — named after the checkout/worktree dir, so a
+# literal "bazel-house" alone misses every git worktree (each gets its own
+# bazel-<worktree-dir> symlink).
+bazel-*

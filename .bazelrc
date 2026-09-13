@@ -1,0 +1,10 @@
+# Necessary to properly build protobuf on MacOS
+# See https://github.com/protocolbuffers/protobuf/issues/16944 for details
+#build --host_cxxopt=-std=c++14 --cxxopt=-std=c++14
+
+# Raspberry Pi 1 / ARMv6 cross-compilation.
+# Use: bazel build --config=rpi1 //bridges/raspi-clock:raspi-clock
+# Note: --pure disables CGO; targets requiring CGO (housed, airthings) won't
+# cross-compile without a C arm-linux-gnueabi toolchain configured.
+build:rpi1 --platforms=//:linux_arm6
+build:rpi1 --@rules_go//go/config:pure=on
