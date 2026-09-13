@@ -1,0 +1,58 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "zwave_lib",
+    srcs = [
+        "bridge.go",
+        "config.go",
+        "devices.go",
+        "main.go",
+        "mqtt.go",
+        "network.go",
+        "version.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/zwave",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/bridge",
+        "@com_github_eclipse_paho_mqtt_golang//:paho_mqtt_golang",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_protobuf//proto",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "zwave",
+    embed = [":zwave_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "zwave_test",
+    srcs = [
+        "devices_test.go",
+        "fakemqtt_test.go",
+        "mqtt_test.go",
+        "network_test.go",
+        "version_test.go",
+    ],
+    embed = [":zwave_lib"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/bridge",
+        "@com_github_eclipse_paho_mqtt_golang//:paho_mqtt_golang",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

@@ -88,7 +88,16 @@ func (a *API) UpdateDeviceConfig(ctx context.Context, req *api2.UpdateDeviceConf
 // ExecuteCommandAsync so the device-type/command-type compatibility rules only live
 // in one place.
 func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
-	if d.GetAvReceiver() != nil {
+	if d.GetGeneric() != nil {
+		g := d.GetGeneric()
+		if g.GetOnOff() != nil && req.GetOnOff() != nil {
+			return true
+		} else if g.GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
+			return true
+		} else if g.GetColour() != nil && req.GetColour() != nil {
+			return true
+		}
+	} else if d.GetAvReceiver() != nil {
 		return req.GetOnOff() != nil
 	} else if d.GetClock() != nil {
 		if req.GetOnOff() != nil {
@@ -102,6 +111,8 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 		if req.GetOnOff() != nil {
 			return true
 		} else if d.GetLight().GetBrightness() != nil && (req.GetBrightnessRelative() != nil || req.GetBrightnessAbsolute() != nil) {
+			return true
+		} else if d.GetLight().GetColour() != nil && req.GetColour() != nil {
 			return true
 		}
 	} else if d.GetThermostat() != nil {

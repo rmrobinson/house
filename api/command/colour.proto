@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Colour controls a device with the colour trait, setting it to one of the trait's supported
+// colour representations. Which representation is valid for a given device is determined by its
+// Colour.Attributes (rgb/hsb depending on attributes.mode, colour_temperature_k only if
+// attributes.colour_temperature_range is set) - see api/trait/colour.proto.
+message Colour {
+  message RGB {
+    // Red channel - between 0 and 255
+    int32 red = 1;
+    // Green channel - between 0 and 255
+    int32 green = 2;
+    // Blue channel - between 0 and 255
+    int32 blue = 3;
+  }
+
+  message HSB {
+    // In degrees - between 0 and 360
+    int32 hue = 1;
+    // In percent - between 0 and 100
+    int32 saturation = 2;
+    // In percent - between 0 and 100
+    int32 brightness = 3;
+  }
+
+  oneof value {
+    RGB rgb = 1;
+    HSB hsb = 2;
+    // The colour temperature to set, in Kelvin.
+    int32 colour_temperature_k = 3;
+  }
+}
