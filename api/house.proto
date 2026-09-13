@@ -23,12 +23,29 @@ message Room {
   string id = 1;
   Config config = 2;
   Properties properties = 3;
+  string floor_id = 4;
+  string version = 5;
+  // Denormalized from the owning Floor for query convenience - set by the
+  // server from floor_id at creation, not independently settable.
+  string building_id = 6;
+
   repeated faltung.house.api.device.Device devices = 11;
+}
+
+message Floor {
+  string id = 1;
+  string name = 2;       // "First Floor", "Full Yard"
+  int32 sort_order = 3;  // controls level-list position; not physical elevation
+  string building_id = 4;
+  string version = 5;    // optimistic concurrency
 }
 
 message Building {
   message Config {
     string name = 1;
+    string tz = 2;
+    double lat = 3;
+    double lon = 4;
   }
   message State {
     // Who is present?
@@ -38,45 +55,126 @@ message Building {
   string id = 1;
   Config config = 2;
   State state = 3;
-  repeated Room rooms = 11;
+  string version = 4;
 }
 
+/* ----- Building ----- */
 message ListBuildingsRequest {
-}
-message ListBuildingsResponse {
-  repeated Building buildings = 1;
 }
 message GetBuildingRequest {
   string id = 1;
 }
-message LinkDeviceRequest {
-  string device_id = 1;
-  string room_id = 2;
+message CreateBuildingRequest {
+  Building.Config config = 1;
 }
-message UnlinkDeviceRequest {
+message UpdateBuildingRequest {
+  string id = 1;
+  string version = 2;
+  Building.Config config = 10;
+}
+message DeleteBuildingRequest {
   string id = 1;
 }
 
-message CreateRoomRequest {
+/* ----- Floor ----- */
+message ListFloorsRequest {
   string building_id = 1;
+}
+message GetFloorRequest {
+  string id = 1;
+}
+message CreateFloorRequest {
+  string building_id = 1;
+  string name = 2;
+  int32 sort_order = 3;
+}
+message UpdateFloorRequest {
+  string id = 1;
+  string version = 2;
+  string name = 10;
+  int32 sort_order = 11;
+}
+message DeleteFloorRequest {
+  string id = 1;
+}
+
+/* ----- Room ----- */
+message ListRoomsRequest {
+  // At least one of these should be set. If floor_id is set, rooms are
+  // scoped to that floor; otherwise all rooms across every floor of
+  // building_id are returned.
+  optional string building_id = 1;
+  optional string floor_id = 2;
+}
+message GetRoomRequest {
+  string id = 1;
+}
+message CreateRoomRequest {
+  string floor_id = 1;
   Room.Config config = 2;
 }
 message UpdateRoomRequest {
   string id = 1;
-  Room.Config config = 2;
+  string version = 2;
+  Room.Config config = 10;
 }
 message DeleteRoomRequest {
   string id = 1;
 }
 
+/* ----- Device <-> Room linking -----
+ * Modeled as a standalone mapping, not a field on Device - a device can
+ * operate standalone and shouldn't carry room state in its own config. */
+message DeviceRoomLink {
+  string device_id = 1;
+  string room_id = 2;
+}
+
+message LinkDeviceRequest {
+  string device_id = 1;
+  string room_id = 2;
+}
+message LinkDeviceResponse {
+  DeviceRoomLink link = 1;
+  // Unset if the device was previously unlinked.
+  optional string previous_room_id = 2;
+}
+
+message UnlinkDeviceRequest {
+  string device_id = 1;
+}
+
+message ListDeviceLinksRequest {
+  optional string building_id = 1;
+  optional string room_id = 2;
+  optional string device_id = 3;
+}
+
 service HouseService {
-  rpc ListBuildings(ListBuildingsRequest) returns (ListBuildingsResponse) {}
+  // Building
+  rpc ListBuildings(ListBuildingsRequest) returns (stream Building) {}
   rpc GetBuilding(GetBuildingRequest) returns (Building) {}
+  rpc CreateBuilding(CreateBuildingRequest) returns (Building) {}
+  rpc UpdateBuilding(UpdateBuildingRequest) returns (Building) {}
+  rpc DeleteBuilding(DeleteBuildingRequest) returns (google.protobuf.Empty) {}
 
-  rpc LinkDevice(LinkDeviceRequest) returns (Room) {}
-  rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
+  // Floor
+  rpc ListFloors(ListFloorsRequest) returns (stream Floor) {}
+  rpc GetFloor(GetFloorRequest) returns (Floor) {}
+  rpc CreateFloor(CreateFloorRequest) returns (Floor) {}
+  rpc UpdateFloor(UpdateFloorRequest) returns (Floor) {}
+  rpc DeleteFloor(DeleteFloorRequest) returns (google.protobuf.Empty) {}
 
+  // Room
+  rpc ListRooms(ListRoomsRequest) returns (stream Room) {}
+  rpc GetRoom(GetRoomRequest) returns (Room) {}
   rpc CreateRoom(CreateRoomRequest) returns (Room) {}
   rpc UpdateRoom(UpdateRoomRequest) returns (Room) {}
   rpc DeleteRoom(DeleteRoomRequest) returns (google.protobuf.Empty) {}
+
+  // Device <-> Room linking. LinkDevice upserts keyed on device_id, so
+  // moving a device to a new room is a single call, not unlink-then-link.
+  rpc LinkDevice(LinkDeviceRequest) returns (LinkDeviceResponse) {}
+  rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
+  rpc ListDeviceLinks(ListDeviceLinksRequest) returns (stream DeviceRoomLink) {}
 }

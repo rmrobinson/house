@@ -12,4 +12,7 @@ type Building struct {
 	Name     string
 	TZ       string
 	Location Location
+	// Version is an opaque token minted fresh on every create/update, used
+	// for optimistic concurrency the same way device.Device.version is.
+	Version string
 }

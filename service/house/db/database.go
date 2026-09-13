@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"embed"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/sqlite3"
@@ -15,6 +17,19 @@ import (
 
 //go:embed migrations/*.sql
 var fs embed.FS
+
+// ErrNotFound is returned when a requested id doesn't exist.
+var ErrNotFound = errors.New("not found")
+
+// ErrVersionMismatch is returned by an Update* call when the supplied
+// version doesn't match the row's current version - the same optimistic
+// concurrency contract as device.Device.version.
+var ErrVersionMismatch = errors.New("version mismatch")
+
+// ErrHasChildren is returned by a Delete* call when child records still
+// exist (a building with floors, a floor with rooms, a room with linked
+// devices). Callers must delete children first - no cascade.
+var ErrHasChildren = errors.New("has child records")
 
 // Database contains a handle to interface with the building DB
 type Database struct {
@@ -54,23 +69,82 @@ func NewDatabase(logger *zap.Logger, db *sql.DB) (*Database, error) {
 	}, nil
 }
 
+// checkVersionedUpdate turns the RowsAffected of an `UPDATE ... WHERE
+// id=? AND version=?` into ErrNotFound or ErrVersionMismatch when it
+// affected no rows - table is always a fixed internal constant, never
+// caller-supplied, so building the query with it is safe.
+func (db *Database) checkVersionedUpdate(ctx context.Context, res sql.Result, table, id string) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+
+	var exists int
+	row := db.db.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id=?", table), id)
+	if err := row.Scan(&exists); err == sql.ErrNoRows {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	return ErrVersionMismatch
+}
+
+// deleteWithChildCheck deletes the row identified by id from table, first
+// verifying no row in childTable still references it via childFK - shared by
+// DeleteBuilding/DeleteFloor/DeleteRoom, which differ only in these names.
+// table, childTable and childFK are always fixed internal constants, never
+// caller-supplied, so building the query with them is safe.
+func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable, childFK, id string) error {
+	var count int
+	row := db.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s=?", childTable, childFK), id)
+	if err := row.Scan(&count); err != nil {
+		db.logger.Error("unable to check child records", zap.String("table", table), zap.String("id", id), zap.Error(err))
+		return err
+	}
+	if count > 0 {
+		return ErrHasChildren
+	}
+
+	res, err := db.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id=?", table), id)
+	if err != nil {
+		db.logger.Error("unable to delete row", zap.String("table", table), zap.String("id", id), zap.Error(err))
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+/* ----- Building ----- */
+
 // CreateBuilding inserts a new building into the database.
 func (db *Database) CreateBuilding(ctx context.Context, b *Building) (*Building, error) {
 	newID := uuid.NewString()
+	newVersion := uuid.NewString()
 
-	_, err := db.db.ExecContext(ctx, "INSERT INTO building (id, name, tz, lat, lon) VALUES (?, ?, ?, ?, ?)", newID, b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude)
+	_, err := db.db.ExecContext(ctx, "INSERT INTO building (id, name, tz, lat, lon, version) VALUES (?, ?, ?, ?, ?, ?)",
+		newID, b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, newVersion)
 	if err != nil {
 		db.logger.Error("unable to create building", zap.Error(err))
 		return nil, err
 	}
 
 	b.ID = newID
+	b.Version = newVersion
 	return b, nil
 }
 
 // GetBuildings retrieves all stored buildings
 func (db *Database) GetBuildings(ctx context.Context) ([]Building, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT id,name,tz,lat,lon FROM building")
+	rows, err := db.db.QueryContext(ctx, "SELECT id,name,tz,lat,lon,version FROM building")
 	if err != nil {
 		db.logger.Error("unable to get buildings", zap.Error(err))
 		return nil, err
@@ -80,23 +154,27 @@ func (db *Database) GetBuildings(ctx context.Context) ([]Building, error) {
 	var buildings []Building
 	for rows.Next() {
 		building := Building{}
-		err = rows.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude)
+		err = rows.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude, &building.Version)
 		if err != nil && err != sql.ErrNoRows {
 			db.logger.Error("unable to scan building row", zap.Error(err))
 			return nil, err
 		}
 		buildings = append(buildings, building)
 	}
+	if err := rows.Err(); err != nil {
+		db.logger.Error("error iterating building rows", zap.Error(err))
+		return nil, err
+	}
 	return buildings, nil
 }
 
-// GetBuilding retrieves all the linked properties of the building and returns them.
+// GetBuilding retrieves the building with the specified ID, or nil if it doesn't exist.
 func (db *Database) GetBuilding(ctx context.Context, buildingID string) (*Building, error) {
 	building := &Building{}
-	row := db.db.QueryRowContext(ctx, "SELECT id,name,tz,lat,lon FROM building WHERE id=?", buildingID)
+	row := db.db.QueryRowContext(ctx, "SELECT id,name,tz,lat,lon,version FROM building WHERE id=?", buildingID)
 
 	var err error
-	if err = row.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude); err == sql.ErrNoRows {
+	if err = row.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude, &building.Version); err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
@@ -106,113 +184,366 @@ func (db *Database) GetBuilding(ctx context.Context, buildingID string) (*Buildi
 	return building, nil
 }
 
-func (db *Database) CreateRoom(ctx context.Context, r *Room) (*Room, error) {
-	newID := uuid.NewString()
+// UpdateBuilding updates the specified building, enforcing that b.Version
+// matches the row's current version. Returns ErrNotFound or
+// ErrVersionMismatch as appropriate when it doesn't.
+func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building, error) {
+	newVersion := uuid.NewString()
 
-	_, err := db.db.ExecContext(ctx, "INSERT INTO room (id, building_id, name, type) VALUES (?, ?, ?, ?)", newID, r.BuildingID, r.Name, r.Type)
+	res, err := db.db.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,version=? WHERE id=? AND version=?",
+		b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, newVersion, b.ID, b.Version)
+	if err != nil {
+		db.logger.Error("unable to update building", zap.String("building_id", b.ID), zap.Error(err))
+		return nil, err
+	}
+	if err := db.checkVersionedUpdate(ctx, res, "building", b.ID); err != nil {
+		return nil, err
+	}
+
+	b.Version = newVersion
+	return b, nil
+}
+
+// DeleteBuilding deletes the specified building. Returns ErrHasChildren if
+// any floors still reference it.
+func (db *Database) DeleteBuilding(ctx context.Context, buildingID string) error {
+	return db.deleteWithChildCheck(ctx, "building", "floor", "building_id", buildingID)
+}
+
+/* ----- Floor ----- */
+
+// CreateFloor inserts a new floor into the database. f.BuildingID must
+// reference an existing building.
+func (db *Database) CreateFloor(ctx context.Context, f *Floor) (*Floor, error) {
+	building, err := db.GetBuilding(ctx, f.BuildingID)
+	if err != nil {
+		return nil, err
+	}
+	if building == nil {
+		return nil, ErrNotFound
+	}
+
+	newID := uuid.NewString()
+	newVersion := uuid.NewString()
+
+	_, err = db.db.ExecContext(ctx, "INSERT INTO floor (id, building_id, name, sort_order, version) VALUES (?, ?, ?, ?, ?)",
+		newID, f.BuildingID, f.Name, f.SortOrder, newVersion)
+	if err != nil {
+		db.logger.Error("unable to create floor", zap.Error(err))
+		return nil, err
+	}
+
+	f.ID = newID
+	f.Version = newVersion
+	return f, nil
+}
+
+// GetFloor retrieves the floor with the specified ID, or nil if it doesn't exist.
+func (db *Database) GetFloor(ctx context.Context, floorID string) (*Floor, error) {
+	f := &Floor{}
+	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,name,sort_order,version FROM floor WHERE id=?", floorID)
+
+	if err := row.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Version); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		db.logger.Error("unable to retrieve floor", zap.Error(err))
+		return nil, err
+	}
+	return f, nil
+}
+
+// ListFloors retrieves every floor of the specified building, ordered by SortOrder.
+func (db *Database) ListFloors(ctx context.Context, buildingID string) ([]Floor, error) {
+	rows, err := db.db.QueryContext(ctx, "SELECT id,building_id,name,sort_order,version FROM floor WHERE building_id=? ORDER BY sort_order", buildingID)
+	if err != nil {
+		db.logger.Error("unable to list floors", zap.String("building_id", buildingID), zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var floors []Floor
+	for rows.Next() {
+		f := Floor{}
+		if err := rows.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Version); err != nil {
+			db.logger.Error("unable to scan floor row", zap.Error(err))
+			return nil, err
+		}
+		floors = append(floors, f)
+	}
+	if err := rows.Err(); err != nil {
+		db.logger.Error("error iterating floor rows", zap.Error(err))
+		return nil, err
+	}
+	return floors, nil
+}
+
+// UpdateFloor updates the specified floor, enforcing that f.Version matches
+// the row's current version.
+func (db *Database) UpdateFloor(ctx context.Context, f *Floor) (*Floor, error) {
+	newVersion := uuid.NewString()
+
+	res, err := db.db.ExecContext(ctx, "UPDATE floor SET name=?,sort_order=?,version=? WHERE id=? AND version=?",
+		f.Name, f.SortOrder, newVersion, f.ID, f.Version)
+	if err != nil {
+		db.logger.Error("unable to update floor", zap.String("floor_id", f.ID), zap.Error(err))
+		return nil, err
+	}
+	if err := db.checkVersionedUpdate(ctx, res, "floor", f.ID); err != nil {
+		return nil, err
+	}
+
+	f.Version = newVersion
+	return f, nil
+}
+
+// DeleteFloor deletes the specified floor. Returns ErrHasChildren if any
+// rooms still reference it.
+func (db *Database) DeleteFloor(ctx context.Context, floorID string) error {
+	return db.deleteWithChildCheck(ctx, "floor", "room", "floor_id", floorID)
+}
+
+/* ----- Room ----- */
+
+// CreateRoom inserts a new room into the database. r.FloorID must reference
+// an existing floor; r.BuildingID is derived from it, not taken from r.
+func (db *Database) CreateRoom(ctx context.Context, r *Room) (*Room, error) {
+	floor, err := db.GetFloor(ctx, r.FloorID)
+	if err != nil {
+		return nil, err
+	}
+	if floor == nil {
+		return nil, ErrNotFound
+	}
+
+	newID := uuid.NewString()
+	newVersion := uuid.NewString()
+
+	_, err = db.db.ExecContext(ctx, "INSERT INTO room (id, building_id, floor_id, name, type, version) VALUES (?, ?, ?, ?, ?, ?)",
+		newID, floor.BuildingID, r.FloorID, r.Name, r.Type, newVersion)
 	if err != nil {
 		db.logger.Error("unable to create room", zap.Error(err))
 		return nil, err
 	}
 
 	r.ID = newID
+	r.BuildingID = floor.BuildingID
+	r.Version = newVersion
 	return r, nil
 }
 
+// UpdateRoom updates the specified room, enforcing that r.Version matches
+// the row's current version. Room-to-floor reassignment isn't supported
+// here.
 func (db *Database) UpdateRoom(ctx context.Context, r *Room) (*Room, error) {
-	_, err := db.db.ExecContext(ctx, "UPDATE room SET name=?,type=? WHERE id=?", r.Name, r.Type, r.ID)
+	newVersion := uuid.NewString()
+
+	res, err := db.db.ExecContext(ctx, "UPDATE room SET name=?,type=?,version=? WHERE id=? AND version=?",
+		r.Name, r.Type, newVersion, r.ID, r.Version)
 	if err != nil {
 		db.logger.Error("unable to update room", zap.String("room_id", r.ID), zap.Error(err))
 		return nil, err
 	}
+	if err := db.checkVersionedUpdate(ctx, res, "room", r.ID); err != nil {
+		return nil, err
+	}
 
+	r.Version = newVersion
 	return r, nil
 }
 
+// DeleteRoom deletes the specified room. Returns ErrHasChildren if any
+// devices are still linked to it.
 func (db *Database) DeleteRoom(ctx context.Context, roomID string) error {
-	_, err := db.db.ExecContext(ctx, "DELETE FROM room WHERE id = ?", roomID)
-	if err != nil {
-		db.logger.Error("unable to delete room", zap.String("room_id", roomID), zap.Error(err))
+	return db.deleteWithChildCheck(ctx, "room", "device_room", "room_id", roomID)
+}
+
+// scanRoom scans one room row, tolerating a NULL floor_id - rooms created
+// before migration 000003 added the column predate any floor assignment, so
+// NULL there means "not yet assigned to a floor" rather than data
+// corruption; it surfaces as FloorID == "" rather than a scan error.
+func scanRoom(row interface{ Scan(...any) error }, r *Room) error {
+	var floorID sql.NullString
+	if err := row.Scan(&r.ID, &r.BuildingID, &floorID, &r.Name, &r.Type, &r.Version); err != nil {
 		return err
 	}
-
+	r.FloorID = floorID.String
 	return nil
 }
 
+// GetRoom retrieves the room with the specified ID, or nil if it doesn't
+// exist. It does not populate Devices - use ListDeviceLinks for that.
 func (db *Database) GetRoom(ctx context.Context, roomID string) (*Room, error) {
 	room := &Room{}
-	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,name,type FROM room WHERE id=?", roomID)
+	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,floor_id,name,type,version FROM room WHERE id=?", roomID)
 
-	var err error
-	if err = row.Scan(&room.ID, &room.BuildingID, &room.Name, &room.Type); err == sql.ErrNoRows {
+	if err := scanRoom(row, room); err == sql.ErrNoRows {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		db.logger.Error("unable to retrieve room", zap.Error(err))
 		return nil, err
 	}
 	return room, nil
 }
 
-func (db *Database) GetBuildingRooms(ctx context.Context, buildingID string) ([]Room, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT room.id AS room_id,room.building_id,room.name,room.type,device_room.id FROM room LEFT JOIN device_room ON room.id=device_room.room_id WHERE room.building_id=?", buildingID)
+// ListRooms retrieves rooms scoped to floorID if set, otherwise every room
+// across every floor of buildingID.
+func (db *Database) ListRooms(ctx context.Context, buildingID, floorID *string) ([]Room, error) {
+	query := "SELECT id,building_id,floor_id,name,type,version FROM room"
+	var args []any
+	switch {
+	case floorID != nil:
+		query += " WHERE floor_id=?"
+		args = append(args, *floorID)
+	case buildingID != nil:
+		query += " WHERE building_id=?"
+		args = append(args, *buildingID)
+	}
+
+	rows, err := db.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		db.logger.Error("unable to get building rooms and devices", zap.String("building_id", buildingID), zap.Error(err))
+		db.logger.Error("unable to list rooms", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
 
-	rooms := map[string]Room{}
+	var rooms []Room
 	for rows.Next() {
-		room := Room{}
-		var deviceID sql.NullString
-		err = rows.Scan(&room.ID, &room.BuildingID, &room.Name, &room.Type, &deviceID)
-		if err != nil && err != sql.ErrNoRows {
-			db.logger.Error("unable to scan room row", zap.String("building_id", buildingID), zap.Error(err))
+		r := Room{}
+		if err := scanRoom(rows, &r); err != nil {
+			db.logger.Error("unable to scan room row", zap.Error(err))
 			return nil, err
 		}
-
-		if deviceID.Valid {
-			device := Device{}
-			device.ID = deviceID.String
-			device.RoomID = room.ID
-
-			if r, found := rooms[room.ID]; found {
-				room.Devices = append(r.Devices, device)
-			} else {
-				room.Devices = []Device{device}
-			}
-		}
-
-		rooms[room.ID] = room
+		rooms = append(rooms, r)
 	}
-
-	var ret []Room
-	for _, r := range rooms {
-		ret = append(ret, r)
-	}
-	return ret, nil
-}
-
-func (db *Database) CreateDevice(ctx context.Context, deviceID string, room Room) (*Device, error) {
-	_, err := db.db.ExecContext(ctx, "INSERT INTO device_room (id, room_id) VALUES (?, ?)", deviceID, room.ID)
-	if err != nil {
-		db.logger.Error("unable to create device", zap.String("device_id", deviceID), zap.Error(err))
+	if err := rows.Err(); err != nil {
+		db.logger.Error("error iterating room rows", zap.Error(err))
 		return nil, err
 	}
-
-	return &Device{
-		ID:     deviceID,
-		RoomID: room.ID,
-	}, nil
+	return rooms, nil
 }
 
-func (db *Database) DeleteDevice(ctx context.Context, deviceID string) error {
+/* ----- Device <-> Room linking ----- */
+
+// LinkDevice upserts the device_id -> room_id mapping, keyed on deviceID, so
+// moving a device to a new room is a single call. previousRoomID is nil if
+// the device wasn't previously linked to any room.
+func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID string) (link *Device, previousRoomID *string, err error) {
+	var prev sql.NullString
+	row := db.db.QueryRowContext(ctx, "SELECT room_id FROM device_room WHERE id=?", deviceID)
+	if scanErr := row.Scan(&prev); scanErr != nil && scanErr != sql.ErrNoRows {
+		db.logger.Error("unable to check existing device link", zap.String("device_id", deviceID), zap.Error(scanErr))
+		return nil, nil, scanErr
+	}
+
+	_, err = db.db.ExecContext(ctx,
+		"INSERT INTO device_room (id, room_id) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id",
+		deviceID, roomID)
+	if err != nil {
+		db.logger.Error("unable to link device", zap.String("device_id", deviceID), zap.String("room_id", roomID), zap.Error(err))
+		return nil, nil, err
+	}
+
+	if prev.Valid {
+		p := prev.String
+		previousRoomID = &p
+	}
+
+	return &Device{ID: deviceID, RoomID: roomID}, previousRoomID, nil
+}
+
+// UnlinkDevice removes deviceID's room link, if any.
+func (db *Database) UnlinkDevice(ctx context.Context, deviceID string) error {
 	_, err := db.db.ExecContext(ctx, "DELETE FROM device_room WHERE id = ?", deviceID)
 	if err != nil {
-		db.logger.Error("unable to delete device", zap.String("device_id", deviceID), zap.Error(err))
+		db.logger.Error("unable to unlink device", zap.String("device_id", deviceID), zap.Error(err))
 		return err
 	}
 
 	return nil
+}
+
+// ListDeviceLinks retrieves device_id/room_id links, filtered by whichever
+// of buildingID, roomID and deviceID are non-nil.
+func (db *Database) ListDeviceLinks(ctx context.Context, buildingID, roomID, deviceID *string) ([]Device, error) {
+	query := "SELECT device_room.id, device_room.room_id FROM device_room"
+	var conditions []string
+	var args []any
+
+	if buildingID != nil {
+		query += " JOIN room ON device_room.room_id = room.id"
+		conditions = append(conditions, "room.building_id = ?")
+		args = append(args, *buildingID)
+	}
+	if roomID != nil {
+		conditions = append(conditions, "device_room.room_id = ?")
+		args = append(args, *roomID)
+	}
+	if deviceID != nil {
+		conditions = append(conditions, "device_room.id = ?")
+		args = append(args, *deviceID)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := db.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		db.logger.Error("unable to list device links", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var links []Device
+	for rows.Next() {
+		d := Device{}
+		if err := rows.Scan(&d.ID, &d.RoomID); err != nil {
+			db.logger.Error("unable to scan device link row", zap.Error(err))
+			return nil, err
+		}
+		links = append(links, d)
+	}
+	if err := rows.Err(); err != nil {
+		db.logger.Error("error iterating device link rows", zap.Error(err))
+		return nil, err
+	}
+	return links, nil
+}
+
+// ListDeviceLinksForRooms retrieves the device_id/room_id links for every
+// room in roomIDs in a single query - used by callers resolving devices for
+// many rooms at once (see house.Service.ListRooms) instead of calling
+// ListDeviceLinks once per room.
+func (db *Database) ListDeviceLinksForRooms(ctx context.Context, roomIDs []string) ([]Device, error) {
+	if len(roomIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(roomIDs)), ",")
+	query := fmt.Sprintf("SELECT id, room_id FROM device_room WHERE room_id IN (%s)", placeholders)
+	args := make([]any, len(roomIDs))
+	for i, id := range roomIDs {
+		args[i] = id
+	}
+
+	rows, err := db.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		db.logger.Error("unable to list device links for rooms", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	var links []Device
+	for rows.Next() {
+		d := Device{}
+		if err := rows.Scan(&d.ID, &d.RoomID); err != nil {
+			db.logger.Error("unable to scan device link row", zap.Error(err))
+			return nil, err
+		}
+		links = append(links, d)
+	}
+	if err := rows.Err(); err != nil {
+		db.logger.Error("error iterating device link rows", zap.Error(err))
+		return nil, err
+	}
+	return links, nil
 }

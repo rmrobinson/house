@@ -1,36 +1,42 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "house",
-    srcs = ["service.go"],
-    importpath = "github.com/rmrobinson/house/service/house",
+    name = "facade",
+    srcs = [
+        "facade.go",
+        "upstream.go",
+    ],
+    importpath = "github.com/rmrobinson/house/service/bridge/facade",
     visibility = ["//visibility:public"],
     deps = [
         "//api",
+        "//api/command",
         "//api/device",
-        "//service/house/db",
+        "//grpcutil",
+        "//service/bridge",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
-        "@org_golang_google_protobuf//types/known/emptypb",
+        "@org_golang_google_protobuf//proto",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
-    name = "house_test",
-    srcs = ["service_test.go"],
-    embed = [":house"],
+    name = "facade_test",
+    srcs = [
+        "facade_test.go",
+        "stream_test.go",
+        "upstream_test.go",
+    ],
+    embed = [":facade"],
     deps = [
         "//api",
-        "//api/command",
         "//api/device",
-        "//service/house/db",
-        "@com_github_mattn_go_sqlite3//:go-sqlite3",
+        "//service/bridge",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
         "@org_uber_go_zap//zaptest",
     ],
 )
