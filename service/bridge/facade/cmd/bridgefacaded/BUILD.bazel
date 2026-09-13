@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//api",
         "//service/bridge/facade",
-        "@com_github_google_uuid//:uuid",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",

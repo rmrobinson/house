@@ -1,0 +1,23 @@
+house:
+  db: /var/lib/house/house.db
+  listen_port: 1337
+  # Only used if the facade section below is absent - dials a
+  # separately-running bridgefacaded instead of embedding one here.
+  bridge_facade_addr: ""
+
+# Optional: embed a BridgeService facade in this same process, sharing
+# house.listen_port instead of running service/bridge/facade/cmd/bridgefacaded
+# as a separate process. Same shape as that binary's own config - see
+# ../../../bridge/facade/cmd/bridgefacaded/bridgefacade.example.yaml. Omit
+# this whole section (and bridge below) to run housed with no facade at all.
+bridge:
+  id: "<bridge ID>"
+  # The address downstream clients use to reach this facade - typically
+  # this host's address on house.listen_port, since HouseService and
+  # BridgeService are served from the same listener here.
+  address: "192.168.1.5:1337"
+
+facade:
+  bridges:
+    - "192.168.1.50:17010" # esphome bridge
+    - "192.168.1.51:17011" # cast bridge

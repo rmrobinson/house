@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "facade",
     srcs = [
+        "config.go",
         "facade.go",
         "upstream.go",
     ],
@@ -14,6 +15,8 @@ go_library(
         "//api/device",
         "//grpcutil",
         "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//proto",
@@ -24,6 +27,7 @@ go_library(
 go_test(
     name = "facade_test",
     srcs = [
+        "config_test.go",
         "facade_test.go",
         "stream_test.go",
         "upstream_test.go",
@@ -33,6 +37,7 @@ go_test(
         "//api",
         "//api/device",
         "//service/bridge",
+        "@com_github_spf13_viper//:viper",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",

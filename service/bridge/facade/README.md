@@ -62,3 +62,13 @@ of dialing each bridge directly.
 
 Individual bridges are untouched by this package - each keeps running as a
 standalone `BridgeService` server, unaware it's being proxied.
+
+- **Embeddable.** `LoadConfig`/`NewFromConfig` (`config.go`) are what
+  `cmd/bridgefacaded/main.go` uses to build a standalone facade process, but
+  they're exported so another process can embed a facade instead - see
+  `service/house/cmd/housed/main.go`, which registers `BridgeServiceServer`
+  on the same `grpc.Server`/listener as `HouseService` when a `facade`
+  section is present in its config, rather than requiring a separately-run
+  `bridgefacaded`. The facade itself has no notion of "embedded" vs
+  "standalone" - it's the same `Facade` type either way, just registered on
+  a listener its embedder owns instead of one it opens itself.

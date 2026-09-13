@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -32,56 +31,18 @@ func main() {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	if len(viper.GetString("bridge.id")) < 1 {
-		bridgeID := uuid.New().String()
-
-		logger.Info("config missing bridge id, saving new bridge id",
-			zap.String("bridge_id", bridgeID))
-
-		viper.Set("bridge.id", bridgeID)
-
-		if err := viper.WriteConfig(); err != nil {
-			logger.Fatal("unable to write new config", zap.Error(err))
-		}
+	cfg, err := facade.LoadConfig(logger)
+	if err != nil {
+		logger.Fatal("unable to load facade config", zap.Error(err))
 	}
-
-	// bridge.address is the network address downstream clients use to reach
-	// this facade - published as the Address of every device it proxies (see
-	// facade.present()), since a client of the facade should never need to
-	// dial an individual upstream bridge directly.
-	selfAddress := viper.GetString("bridge.address")
-	if len(selfAddress) < 1 {
-		logger.Fatal("bridge.address is required: the address downstream clients use to reach this facade")
-	}
-
-	var addrs []string
-	if err := viper.UnmarshalKey("facade.bridges", &addrs); err != nil {
-		logger.Fatal("unable to parse facade.bridges config", zap.Error(err))
-	}
-	if len(addrs) < 1 {
+	if cfg == nil {
 		logger.Fatal("facade.bridges config is empty; nothing to connect to")
 	}
-
-	self := &api2.Bridge{
-		Id:           viper.GetString("bridge.id"),
-		IsReachable:  true,
-		ModelId:      "HouseBridgeFacade",
-		Manufacturer: "Faltung Networks",
-		Config: &api2.Bridge_Config{
-			Name:        viper.GetString("bridge.name"),
-			Description: viper.GetString("bridge.description"),
-		},
-	}
-
-	f := facade.New(logger, self, selfAddress)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	for _, addr := range addrs {
-		logger.Info("connecting to upstream bridge", zap.String("address", addr))
-		f.Connect(ctx, addr)
-	}
+	f := facade.NewFromConfig(ctx, logger, cfg)
 
 	port := viper.GetInt("bridge.listen_port")
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
