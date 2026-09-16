@@ -31,7 +31,9 @@ func main() {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	cfg, err := facade.LoadConfig(logger)
+	port := viper.GetInt("bridge.listen_port")
+
+	cfg, err := facade.LoadConfig(logger, port)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
 	}
@@ -43,8 +45,6 @@ func main() {
 	defer cancel()
 
 	f := facade.NewFromConfig(ctx, logger, cfg)
-
-	port := viper.GetInt("bridge.listen_port")
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
 		logger.Fatal("error listening", zap.Error(err), zap.Int("port", port))

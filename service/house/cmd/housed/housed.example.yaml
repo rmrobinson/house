@@ -12,10 +12,11 @@ house:
 # this whole section (and bridge below) to run housed with no facade at all.
 bridge:
   id: "<bridge ID>"
-  # The address downstream clients use to reach this facade - typically
-  # this host's address on house.listen_port, since HouseService and
-  # BridgeService are served from the same listener here.
-  address: "192.168.1.5:1337"
+  # The host downstream clients use to reach this facade - combined with
+  # house.listen_port above (HouseService and BridgeService are served from
+  # the same listener here) to build the address published as the Address
+  # of every device it proxies.
+  host: "192.168.1.5"
 
 facade:
   bridges:

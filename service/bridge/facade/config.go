@@ -35,12 +35,23 @@ type Config struct {
 // for viper's config name/search path and for calling ReadInConfig first
 // (see cmd/bridgefacaded/main.go).
 //
+// listenPort is the port the caller's gRPC server is (or will be) listening
+// on - combined with bridge.host to build the self address published as the
+// Address of every device this facade proxies. It's taken as a parameter
+// rather than its own config key because it must always match the actual
+// listener; letting it be configured separately (as bridge.address, in an
+// earlier version of this config) let the two silently drift, advertising
+// an address nothing was actually listening on. Only the host can't be
+// inferred - a process has no way to know which of its own addresses (LAN
+// IP, DNS name, NAT'd address, ...) is the one a downstream client should
+// actually dial.
+//
 // Returns (nil, nil) if facade.bridges is unset/empty, so a caller that only
 // conditionally embeds a facade (see cmd/housed) can tell "no facade
 // configured" apart from "facade configured but invalid" - bridgefacaded,
 // which always embeds one, treats a nil Config as a fatal config error
 // instead.
-func LoadConfig(logger *zap.Logger) (*Config, error) {
+func LoadConfig(logger *zap.Logger, listenPort int) (*Config, error) {
 	var addrs []string
 	if err := viper.UnmarshalKey("facade.bridges", &addrs); err != nil {
 		return nil, fmt.Errorf("unable to parse facade.bridges config: %w", err)
@@ -58,10 +69,11 @@ func LoadConfig(logger *zap.Logger) (*Config, error) {
 		}
 	}
 
-	selfAddress := viper.GetString("bridge.address")
-	if len(selfAddress) < 1 {
-		return nil, errors.New("bridge.address is required: the address downstream clients use to reach this facade")
+	host := viper.GetString("bridge.host")
+	if len(host) < 1 {
+		return nil, errors.New("bridge.host is required: the host downstream clients use to reach this facade")
 	}
+	selfAddress := fmt.Sprintf("%s:%d", host, listenPort)
 
 	// A facade listed as its own upstream would have it dial itself and
 	// subscribe to its own StreamUpdates, which - even if it didn't just
@@ -72,7 +84,7 @@ func LoadConfig(logger *zap.Logger) (*Config, error) {
 	// e.g. "localhost:X" aliasing "192.168.1.5:X".
 	for _, addr := range addrs {
 		if addr == selfAddress {
-			return nil, fmt.Errorf("facade.bridges cannot include this facade's own address (bridge.address: %s)", selfAddress)
+			return nil, fmt.Errorf("facade.bridges cannot include this facade's own address (%s)", selfAddress)
 		}
 	}
 

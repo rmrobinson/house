@@ -84,7 +84,7 @@ func main() {
 	// If neither is configured, linked devices are still returned but only
 	// as ID-only stubs (see house.Service.resolveDevices).
 	var bridgeClient api2.BridgeServiceClient
-	facadeCfg, err := facade.LoadConfig(logger)
+	facadeCfg, err := facade.LoadConfig(logger, listenPort)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
 	}

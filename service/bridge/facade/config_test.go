@@ -20,27 +20,27 @@ func resetViper(t *testing.T) {
 func TestLoadConfig_NoFacadeBridgesReturnsNilConfig(t *testing.T) {
 	resetViper(t)
 
-	cfg, err := LoadConfig(zaptest.NewLogger(t))
+	cfg, err := LoadConfig(zaptest.NewLogger(t), 1337)
 	require.NoError(t, err)
 	assert.Nil(t, cfg)
 }
 
-func TestLoadConfig_MissingSelfAddressIsError(t *testing.T) {
+func TestLoadConfig_MissingHostIsError(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.id", "test-id")
 	viper.Set("facade.bridges", []string{"192.168.1.50:17010"})
 
-	_, err := LoadConfig(zaptest.NewLogger(t))
+	_, err := LoadConfig(zaptest.NewLogger(t), 1337)
 	assert.Error(t, err)
 }
 
 func TestLoadConfig_RejectsSelfReferentialUpstream(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.id", "test-id")
-	viper.Set("bridge.address", "192.168.1.5:1337")
+	viper.Set("bridge.host", "192.168.1.5")
 	viper.Set("facade.bridges", []string{"192.168.1.50:17010", "192.168.1.5:1337"})
 
-	_, err := LoadConfig(zaptest.NewLogger(t))
+	_, err := LoadConfig(zaptest.NewLogger(t), 1337)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "own address")
 }
@@ -48,11 +48,11 @@ func TestLoadConfig_RejectsSelfReferentialUpstream(t *testing.T) {
 func TestLoadConfig_Success(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.id", "test-id")
-	viper.Set("bridge.address", "192.168.1.5:1337")
+	viper.Set("bridge.host", "192.168.1.5")
 	viper.Set("bridge.name", "Home Facade")
 	viper.Set("facade.bridges", []string{"192.168.1.50:17010"})
 
-	cfg, err := LoadConfig(zaptest.NewLogger(t))
+	cfg, err := LoadConfig(zaptest.NewLogger(t), 1337)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, "test-id", cfg.BridgeID)

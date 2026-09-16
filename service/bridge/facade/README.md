@@ -8,8 +8,9 @@ of dialing each bridge directly.
 - **Its own identity.** The facade is itself a `Bridge`, with its own minted
   `Bridge.Id` (same generate-and-persist pattern as an individual bridge -
   see `cmd/bridgefacaded/main.go`) and its own advertised network address
-  (`bridge.address` in config). It's seeded into the cache at construction,
-  so `GetBridge` on its own ID works like any other bridge.
+  (`bridge.host` in config, combined with the embedding process's own listen
+  port - see `LoadConfig` in `config.go`). It's seeded into the cache at
+  construction, so `GetBridge` on its own ID works like any other bridge.
 - **Upstream connections.** One `BridgeService` client connection per
   configured bridge address, config-driven (a list of addresses, same
   YAML/viper pattern as the ESPHome bridge - see `cmd/bridgefacaded`).
