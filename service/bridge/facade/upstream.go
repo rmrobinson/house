@@ -83,10 +83,6 @@ func (u *upstreamConn) connectOnce(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	// A successful dial means whatever backoff accumulated from prior
-	// failures no longer applies - the next drop (if any) starts fresh.
-	u.backoff.Store(int64(minReconnectBackoff))
-
 	client := api2.NewBridgeServiceClient(conn)
 
 	u.mu.Lock()
@@ -106,10 +102,26 @@ func (u *upstreamConn) connectOnce(ctx context.Context) error {
 		return fmt.Errorf("stream updates: %w", err)
 	}
 
+	first := true
 	for {
 		update, err := stream.Recv()
 		if err != nil {
 			return fmt.Errorf("recv: %w", err)
+		}
+
+		if first {
+			// The connection is only confirmed live once a message has
+			// actually been received from it - neither a successful Dial
+			// (grpcutil.DialInsecure dials lazily and essentially never
+			// fails synchronously) nor a successful StreamUpdates call
+			// (which can still return a stream that errors on the first
+			// Recv) proves the upstream is reachable. Resetting backoff
+			// here, rather than right after Dial, means a
+			// persistently-failing upstream actually backs off toward
+			// maxReconnectBackoff instead of retrying at the minimum
+			// forever.
+			u.backoff.Store(int64(minReconnectBackoff))
+			first = false
 		}
 
 		if iu := update.GetInitialUpdate(); iu != nil {
