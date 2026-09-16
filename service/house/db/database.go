@@ -92,22 +92,23 @@ func (db *Database) checkVersionedUpdate(ctx context.Context, res sql.Result, ta
 	return ErrVersionMismatch
 }
 
-// deleteWithChildCheck deletes the row identified by id from table, first
-// verifying no row in childTable still references it via childFK - shared by
-// DeleteBuilding/DeleteFloor/DeleteRoom, which differ only in these names.
-// table, childTable and childFK are always fixed internal constants, never
-// caller-supplied, so building the query with them is safe.
-func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable, childFK, id string) error {
+// hasRows reports whether any row in table has fk = id. table and fk are
+// always fixed internal constants, never caller-supplied, so building the
+// query with them is safe.
+func (db *Database) hasRows(ctx context.Context, table, fk, id string) (bool, error) {
 	var count int
-	row := db.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s=?", childTable, childFK), id)
+	row := db.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s=?", table, fk), id)
 	if err := row.Scan(&count); err != nil {
 		db.logger.Error("unable to check child records", zap.String("table", table), zap.String("id", id), zap.Error(err))
-		return err
+		return false, err
 	}
-	if count > 0 {
-		return ErrHasChildren
-	}
+	return count > 0, nil
+}
 
+// deleteRow deletes the row identified by id from table, returning
+// ErrNotFound if it didn't exist. table is always a fixed internal constant,
+// never caller-supplied, so building the query with it is safe.
+func (db *Database) deleteRow(ctx context.Context, table, id string) error {
 	res, err := db.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id=?", table), id)
 	if err != nil {
 		db.logger.Error("unable to delete row", zap.String("table", table), zap.String("id", id), zap.Error(err))
@@ -121,6 +122,21 @@ func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable,
 		return ErrNotFound
 	}
 	return nil
+}
+
+// deleteWithChildCheck deletes the row identified by id from table, first
+// verifying no row in childTable still references it via childFK - shared by
+// DeleteFloor/DeleteRoom, which differ only in these names.
+func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable, childFK, id string) error {
+	hasChildren, err := db.hasRows(ctx, childTable, childFK, id)
+	if err != nil {
+		return err
+	}
+	if hasChildren {
+		return ErrHasChildren
+	}
+
+	return db.deleteRow(ctx, table, id)
 }
 
 /* ----- Building ----- */
@@ -205,9 +221,28 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 }
 
 // DeleteBuilding deletes the specified building. Returns ErrHasChildren if
-// any floors still reference it.
+// any floors still reference it, or if any room does - including a legacy
+// room predating migration 000003 (see scanRoom), which can have floor_id
+// NULL while still carrying building_id directly, and so isn't reachable
+// through the floor check alone.
 func (db *Database) DeleteBuilding(ctx context.Context, buildingID string) error {
-	return db.deleteWithChildCheck(ctx, "building", "floor", "building_id", buildingID)
+	hasFloors, err := db.hasRows(ctx, "floor", "building_id", buildingID)
+	if err != nil {
+		return err
+	}
+	if hasFloors {
+		return ErrHasChildren
+	}
+
+	hasRooms, err := db.hasRows(ctx, "room", "building_id", buildingID)
+	if err != nil {
+		return err
+	}
+	if hasRooms {
+		return ErrHasChildren
+	}
+
+	return db.deleteRow(ctx, "building", buildingID)
 }
 
 /* ----- Floor ----- */

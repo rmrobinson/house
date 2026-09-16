@@ -93,6 +93,25 @@ func TestBuilding_DeleteBlockedByFloor(t *testing.T) {
 	assert.ErrorIs(t, err, ErrHasChildren)
 }
 
+// TestBuilding_DeleteBlockedByLegacyFloorlessRoom simulates a room created
+// before migration 000003_add_floors_and_versions, which has floor_id NULL
+// but still carries building_id directly (see scanRoom) - such a room isn't
+// reachable through the floor table, so DeleteBuilding must check for it
+// separately.
+func TestBuilding_DeleteBlockedByLegacyFloorlessRoom(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	b := createTestBuilding(t, d)
+
+	_, err := d.db.ExecContext(ctx, "INSERT INTO room (id, building_id, floor_id, name, type, version) VALUES (?, ?, NULL, ?, ?, ?)",
+		"legacy-room", b.ID, "Attic", Unspecified, "1")
+	require.NoError(t, err)
+
+	err = d.DeleteBuilding(ctx, b.ID)
+	assert.ErrorIs(t, err, ErrHasChildren)
+}
+
 func TestFloor_CreateGetListUpdateDelete(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
