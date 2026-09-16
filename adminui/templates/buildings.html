@@ -1,0 +1,25 @@
+{{define "content"}}
+<div id="page-content">
+  <h1>Buildings</h1>
+
+  <table>
+    <thead><tr><th>Name</th><th>Timezone</th></tr></thead>
+    <tbody>
+    {{range .Buildings}}
+      <tr><td><a href="/buildings/{{.ID}}">{{.Name}}</a></td><td>{{.TZ}}</td></tr>
+    {{else}}
+      <tr><td colspan="2">No buildings yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <div class="panel">
+    <h3>Add building</h3>
+    <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+</div>
+{{end}}

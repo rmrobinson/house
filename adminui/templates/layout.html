@@ -1,0 +1,42 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>House Admin</title>
+<script src="/static/htmx.min.js"></script>
+<script src="/static/htmx-sse.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 0 auto; padding: 1rem; color: #1a1a1a; }
+  nav { display: flex; gap: 1rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #ccc; }
+  nav a { text-decoration: none; color: #1a5fb4; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #e0e0e0; }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; background: #e0e0e0; }
+  .badge-online { background: #d4edda; color: #155724; }
+  .badge-offline { background: #f8d7da; color: #721c24; }
+  form.inline { display: inline; }
+  .panel { border: 1px solid #ddd; border-radius: 0.4rem; padding: 0.75rem 1rem; margin: 0.75rem 0; }
+  #flash { margin: 0.75rem 0; }
+  .flash { padding: 0.5rem 0.75rem; border-radius: 0.3rem; background: #d4edda; color: #155724; }
+  .flash-error { background: #f8d7da; color: #721c24; }
+  .flash:empty { display: none; }
+  button, input[type=submit] { cursor: pointer; }
+  .danger { color: #a00; }
+  .crumbs { color: #666; margin-bottom: 0.5rem; }
+  .crumbs a { color: #666; }
+</style>
+</head>
+<body hx-ext="sse" sse-connect="/events">
+<nav>
+  <a href="/buildings">Buildings</a>
+  <a href="/devices">Devices</a>
+</nav>
+<div id="flash"></div>
+<div id="picker"></div>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

@@ -1,0 +1,7 @@
+{{define "device_info"}}<td id="device-info-{{.ID}}" hx-swap-oob="true">
+  <strong>{{.Name}}</strong>
+  <span class="badge">{{.Kind}}</span>
+  {{if .Online}}<span class="badge badge-online">online</span>{{else}}<span class="badge badge-offline">offline</span>{{end}}
+</td>{{end}}
+
+{{define "device_info_removed"}}<td id="device-info-{{.}}" hx-swap-oob="true"><em>(device removed)</em></td>{{end}}

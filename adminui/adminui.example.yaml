@@ -1,0 +1,9 @@
+adminui:
+  listen_port: 8080
+  # Address of housed's HouseService.
+  house_addr: "192.168.1.5:1337"
+  # Address of the BridgeService facade. Defaults to house_addr if unset -
+  # the common case is housed embedding the facade on its own listener (see
+  # service/house/cmd/housed/housed.example.yaml). Set this explicitly only
+  # if the facade runs as its own bridgefacaded process.
+  bridge_facade_addr: ""

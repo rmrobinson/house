@@ -1,0 +1,40 @@
+{{define "content"}}
+<div id="page-content">
+  <p class="crumbs"><a href="/buildings">Buildings</a> / <a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a> / {{.Floor.Name}}</p>
+  <h1>{{.Floor.Name}}</h1>
+
+  <div class="panel">
+    <h3>Edit floor</h3>
+    <form hx-post="/floors/{{.Floor.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+      <input type="hidden" name="version" value="{{.Floor.Version}}">
+      <label>Name <input type="text" name="name" value="{{.Floor.Name}}" required></label>
+      <label>Sort order <input type="number" name="sort_order" value="{{.Floor.SortOrder}}"></label>
+      <button type="submit">Save</button>
+    </form>
+  </div>
+
+  <h2>Rooms</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Devices</th></tr></thead>
+    <tbody>
+    {{range .Rooms}}
+      <tr><td><a href="/rooms/{{.ID}}">{{.Name}}</a></td><td>{{len .Devices}}</td></tr>
+    {{else}}
+      <tr><td colspan="2">No rooms yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <div class="panel">
+    <h3>Add room</h3>
+    <form hx-post="/floors/{{.Floor.ID}}/rooms" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+
+  <form class="inline" hx-post="/floors/{{.Floor.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this floor?">
+    <button type="submit" class="danger">Delete floor</button>
+  </form>
+</div>
+{{end}}

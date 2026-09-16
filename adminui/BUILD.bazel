@@ -1,0 +1,46 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "adminui_lib",
+    srcs = [
+        "handlers_building.go",
+        "handlers_device.go",
+        "handlers_floor.go",
+        "handlers_room.go",
+        "main.go",
+        "server.go",
+        "sse.go",
+        "templates.go",
+        "view.go",
+    ],
+    embedsrcs = [
+        "static/htmx-sse.js",
+        "static/htmx.min.js",
+        "templates/building.html",
+        "templates/buildings.html",
+        "templates/devices.html",
+        "templates/floor.html",
+        "templates/layout.html",
+        "templates/partials/device_info.html",
+        "templates/partials/device_picker.html",
+        "templates/partials/room_picker.html",
+        "templates/room.html",
+    ],
+    importpath = "github.com/rmrobinson/house/adminui",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/device",
+        "//grpcutil",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "adminui",
+    embed = [":adminui_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,33 @@
+{{define "content"}}
+<div id="page-content">
+  <p class="crumbs"><a href="/buildings">Buildings</a> / <a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a> / <a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a> / {{.Room.Name}}</p>
+  <h1>{{.Room.Name}}</h1>
+
+  <h2>Linked devices</h2>
+  <table>
+    <thead><tr><th colspan="2">Device</th><th></th></tr></thead>
+    <tbody>
+    {{$roomID := .Room.ID}}
+    {{range .Room.Devices}}
+      <tr>
+        {{template "device_info" .}}
+        <td>
+          <form class="inline" hx-post="/rooms/{{$roomID}}/unlink" hx-target="#page-content" hx-swap="outerHTML">
+            <input type="hidden" name="device_id" value="{{.ID}}">
+            <button type="submit">Unlink</button>
+          </form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="3">No devices linked yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <button hx-get="/rooms/{{.Room.ID}}/device-picker" hx-target="#picker" hx-swap="innerHTML">Add device</button>
+
+  <form class="inline" hx-post="/rooms/{{.Room.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this room?">
+    <button type="submit" class="danger">Delete room</button>
+  </form>
+</div>
+{{end}}

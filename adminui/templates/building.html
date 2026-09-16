@@ -1,0 +1,31 @@
+{{define "content"}}
+<div id="page-content">
+  <p class="crumbs"><a href="/buildings">Buildings</a> / {{.Building.Name}}</p>
+  <h1>{{.Building.Name}}</h1>
+
+  <h2>Floors</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Sort order</th></tr></thead>
+    <tbody>
+    {{range .Floors}}
+      <tr><td><a href="/floors/{{.ID}}">{{.Name}}</a></td><td>{{.SortOrder}}</td></tr>
+    {{else}}
+      <tr><td colspan="2">No floors yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  <div class="panel">
+    <h3>Add floor</h3>
+    <form hx-post="/buildings/{{.Building.ID}}/floors" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Sort order <input type="number" name="sort_order" value="0"></label>
+      <button type="submit">Create</button>
+    </form>
+  </div>
+
+  <form class="inline" hx-post="/buildings/{{.Building.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
+    <button type="submit" class="danger">Delete building</button>
+  </form>
+</div>
+{{end}}
