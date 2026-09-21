@@ -114,6 +114,8 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		} else if d.GetLight().GetColour() != nil && req.GetColour() != nil {
 			return true
+		} else if d.GetLight().GetScene() != nil && req.GetAppLaunch() != nil {
+			return true
 		}
 	} else if d.GetThermostat() != nil {
 		return req.GetOnOff() != nil

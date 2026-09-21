@@ -1,0 +1,16 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17015
+
+nanoleaf:
+  devices:
+    - id: nanoleaf-living-room
+      name: "Living Room Panels"
+      host: 192.168.1.50
+      # port defaults to 16021 (Nanoleaf's standard control port) if omitted
+      api_key: "<API key from cmd/pair>"
+
+    - id: nanoleaf-office
+      name: "Office Panels"
+      host: 192.168.1.51
+      api_key: "<API key from cmd/pair>"

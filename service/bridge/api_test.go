@@ -170,6 +170,23 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "233637DE"}}},
 			want: false,
 		},
+		{
+			name: "light scene app launch supported",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_Light{
+					Light: &device.Light{OnOff: &trait.OnOff{}, Scene: &trait.App{}},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "Nemo"}}},
+			want: true,
+		},
+		{
+			name: "light app launch not supported when scene field unset",
+			d:    lightDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "Nemo"}}},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
