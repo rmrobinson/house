@@ -24,9 +24,20 @@ full vision; the short version:
   (what's possible) and `state` (what's currently true).
 - **`clients/bridgecli`** is a cobra-based CLI for talking to a bridge's gRPC
   API directly (useful for manual testing of a bridge).
+- **`service/policy`** is the policy execution engine: user- and
+  system-defined policies pair a Boolean condition expression (built from
+  named, registered condition types) with a Lua script, run via
+  `github.com/yuin/gopher-lua`. It reads/writes device and house state
+  through the `HomeAPI` interface it defines; a concrete adapter wiring that
+  interface to real bridge gRPC clients, and a house-state stream/service to
+  back `GetHouseState`/`SetHouseState`, don't exist yet (see
+  `service/policy`'s doc comments for the open seams). Persistence
+  (`Store`/`SQLiteStore`, `WithStore`) is optional and off by default — an
+  `Engine` with no store configured keeps policies and execution logs
+  in-memory only, same as before persistence existed.
 
-An automation engine and UI layer are described in the vision doc but live in
-separate repos not present here — don't go looking for them in this tree.
+A UI layer is described in the vision doc but lives in a separate repo not
+present here — don't go looking for it in this tree.
 
 ## Repo structure conventions
 

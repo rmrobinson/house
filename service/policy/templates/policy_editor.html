@@ -1,0 +1,61 @@
+{{define "policy_editor_page"}}
+<!doctype html>
+<html>
+<head>{{template "head" .}}</head>
+{{template "body_open" .}}
+<main>
+  {{template "policy_editor_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "policy_editor_content"}}
+<div id="page-content">
+  <h1>{{if .IsNew}}New Policy{{else}}Edit {{.ID}}{{end}}</h1>
+
+  <form hx-post="/policies" hx-target="#page-content" hx-swap="outerHTML">
+    <input type="hidden" name="is_new" value="{{.IsNew}}">
+
+    <label for="id">Policy ID</label>
+    <input type="text" id="id" name="id" value="{{.ID}}" {{if not .IsNew}}readonly{{end}} required>
+
+    <label for="condition_expr">Condition expression (JSON)</label>
+    <textarea id="condition_expr" name="condition_expr" rows="10">{{.ConditionExprJSON}}</textarea>
+    <div class="hint">
+      Registered condition types:
+      <ul class="type-list">
+        {{range .TypeNames}}<li><code>{{.}}</code></li>{{else}}<li>none registered</li>{{end}}
+      </ul>
+      A leaf node looks like <code>{"type":"use","name":"&lt;type&gt;","params":{...}}</code>;
+      compose with <code>{"type":"and"|"or","children":[...]}</code> or
+      <code>{"type":"not","children":[...]}</code> (exactly one child).
+    </div>
+
+    <label for="script">Lua script</label>
+    <textarea id="script" name="script" rows="12">{{.Script}}</textarea>
+
+    <label for="on_condition_false">On condition false</label>
+    <select id="on_condition_false" name="on_condition_false">
+      <option value="interrupt" {{if eq (onConditionFalseStr .OnConditionFalse) "interrupt"}}selected{{end}}>Interrupt</option>
+      <option value="complete" {{if eq (onConditionFalseStr .OnConditionFalse) "complete"}}selected{{end}}>Complete</option>
+    </select>
+
+    <div class="actions">
+      <button class="btn" type="submit">{{if .IsNew}}Create{{else}}Save{{end}}</button>
+      <a href="/policies">Cancel</a>
+    </div>
+  </form>
+
+  {{/* Inside #page-content, not after it: this must travel with every
+  outerHTML swap of #page-content (initial load AND a validation-error
+  re-render both go through this same define), each time binding CodeMirror
+  to that render's own fresh <textarea>. htmx executes inline <script>
+  tags in swapped-in content by default (htmx.config.allowScriptTags). */}}
+  <script>
+    CodeMirror.fromTextArea(document.getElementById('script'), {
+      mode: 'lua', lineNumbers: true, indentUnit: 2
+    });
+  </script>
+</div>
+{{end}}

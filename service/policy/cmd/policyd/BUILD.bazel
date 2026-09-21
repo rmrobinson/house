@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "policyd_lib",
+    srcs = [
+        "main.go",
+        "stubhome.go",
+    ],
+    importpath = "github.com/rmrobinson/house/service/policy/cmd/policyd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//service/policy",
+        "@com_github_mattn_go_sqlite3//:go-sqlite3",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "policyd",
+    embed = [":policyd_lib"],
+    visibility = ["//visibility:public"],
+)
