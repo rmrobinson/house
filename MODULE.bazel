@@ -63,6 +63,7 @@ use_repo(
     "com_github_spf13_cobra",
     "com_github_spf13_viper",
     "com_github_stretchr_testify",
+    "com_github_yuin_gopher_lua",
     "org_golang_google_genproto_googleapis_rpc",
     "org_golang_google_grpc",
     "org_golang_google_protobuf",

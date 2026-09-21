@@ -1,0 +1,67 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "policy",
+    srcs = [
+        "bindings.go",
+        "bus.go",
+        "cache.go",
+        "condition.go",
+        "defaults.go",
+        "engine.go",
+        "http.go",
+        "policy.go",
+        "store.go",
+    ],
+    embedsrcs = [
+        "scripts/sys_occupancy.lua",
+        "scripts/sys_power_restore.lua",
+        "migrations/000001_setup.down.sql",
+        "migrations/000001_setup.up.sql",
+        "templates/base.html",
+        "templates/logs.html",
+        "templates/policies.html",
+        "templates/policy_detail.html",
+        "templates/policy_editor.html",
+        "static/codemirror.min.css",
+        "static/codemirror.min.js",
+        "static/htmx-sse.js",
+        "static/htmx.min.js",
+        "static/lua.min.js",
+        "templates/partials.html",
+    ],
+    importpath = "github.com/rmrobinson/house/service/policy",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_golang_migrate_migrate_v4//:migrate",
+        "@com_github_golang_migrate_migrate_v4//database/sqlite3",
+        "@com_github_golang_migrate_migrate_v4//source/iofs",
+        "@com_github_yuin_gopher_lua//:gopher-lua",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "policy_test",
+    srcs = [
+        "bindings_test.go",
+        "bus_test.go",
+        "condition_test.go",
+        "defaults_test.go",
+        "engine_test.go",
+        "fakehome_test.go",
+        "http_test.go",
+        "policy_test.go",
+        "store_test.go",
+    ],
+    embed = [":policy"],
+    deps = [
+        "@com_github_mattn_go_sqlite3//:go-sqlite3",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_yuin_gopher_lua//:gopher-lua",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
+)
