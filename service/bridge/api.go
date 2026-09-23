@@ -119,6 +119,23 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 		}
 	} else if d.GetThermostat() != nil {
 		return req.GetOnOff() != nil
+	} else if d.GetFan() != nil {
+		// Fan had no branch here at all until bridges/zigbee's fanBuilder became the first
+		// device.Fan producer in this repo and every command against it was rejected here before
+		// ever reaching a bridge - found via live testing against a real IKEA STARKVIND air
+		// purifier. Mode/Toggles are only eligible when the specific device actually reports that
+		// trait, mirroring every other branch here; OnOff is unconditional since Fan.OnOff (like
+		// Light.OnOff) is always present. No Speed branch: every Fan.Speed this repo's one
+		// producer (fanBuilder) ever builds is read-only telemetry (Attributes.can_control always
+		// false, confirmed against real hardware whose only speed control is its Mode enum) - add
+		// one only once some builder actually implements a Speed command against a Fan.
+		if req.GetOnOff() != nil {
+			return true
+		} else if d.GetFan().GetMode() != nil && req.GetMode() != nil {
+			return true
+		} else if d.GetFan().GetToggles() != nil && req.GetToggle() != nil {
+			return true
+		}
 	} else if d.GetMediaPlayer() != nil {
 		if d.GetMediaPlayer().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
