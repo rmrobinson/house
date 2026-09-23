@@ -29,10 +29,14 @@ type upstreamConn struct {
 	addr string
 	f    *Facade
 
-	// backoff is nanoseconds, reset to minReconnectBackoff on every
-	// successful dial so a brief blip after a long stable connection doesn't
-	// pay for backoff accumulated by earlier, unrelated failures - mirrors
-	// bridges/lib/webosctrl/conn.go's Conn.backoff.
+	// backoff is nanoseconds, reset to minReconnectBackoff once the
+	// connection has actually delivered a message (see connectOnce) so a
+	// brief blip after a long stable connection doesn't pay for backoff
+	// accumulated by earlier, unrelated failures - mirrors bridges/lib/
+	// webosctrl/conn.go's Conn.backoff. Deliberately not reset on a bare
+	// successful Dial - grpcutil.DialInsecure dials lazily and essentially
+	// never fails synchronously, so that would prove nothing about whether
+	// the upstream is actually reachable.
 	backoff atomic.Int64
 
 	mu       sync.Mutex
