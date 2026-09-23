@@ -1,0 +1,26 @@
+{{define "device_picker"}}
+<div class="panel">
+  <h3>Add device</h3>
+  <table>
+    <thead><tr><th>Name</th><th>Current location</th><th></th></tr></thead>
+    <tbody>
+    {{range .Devices}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td><span class="badge">{{.Location}}</span></td>
+        <td>
+          <form class="inline" hx-post="/rooms/{{$.TargetRoomID}}/link" hx-target="#page-content" hx-swap="outerHTML">
+            <input type="hidden" name="device_id" value="{{.ID}}">
+            <input type="hidden" name="version" value="{{.Version}}">
+            <button type="submit">Select</button>
+          </form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="3">No other devices available.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <button type="button" onclick="document.getElementById('picker').innerHTML=''">Cancel</button>
+</div>
+{{end}}

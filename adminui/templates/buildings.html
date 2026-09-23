@@ -1,0 +1,31 @@
+{{define "content"}}
+<div id="page-content">
+  <div class="entity-header">
+    <h1>Buildings</h1>
+    <button type="button" class="icon-btn" title="Add building" onclick="document.getElementById('add-building-dialog').showModal()">+</button>
+  </div>
+
+  <dialog id="add-building-dialog">
+    <h3>Add building</h3>
+    <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <table>
+    <thead><tr><th>Name</th><th>Timezone</th></tr></thead>
+    <tbody>
+    {{range .Buildings}}
+      <tr><td><a href="/buildings/{{.ID}}">{{.Name}}</a></td><td>{{.TZ}}</td></tr>
+    {{else}}
+      <tr><td colspan="2">No buildings yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

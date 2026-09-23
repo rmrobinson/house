@@ -7,9 +7,9 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/clients/bridgecli/cmd/bridge"
 	"github.com/rmrobinson/house/clients/bridgecli/cmd/device"
+	"github.com/rmrobinson/house/grpcutil"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -48,9 +48,7 @@ func initClient() {
 		return
 	}
 
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	conn, err := grpc.Dial(bridgeAddr, opts...)
+	conn, err := grpcutil.DialInsecure(bridgeAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

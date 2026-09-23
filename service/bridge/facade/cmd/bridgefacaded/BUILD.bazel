@@ -1,16 +1,13 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
-    name = "housed_lib",
+    name = "bridgefacaded_lib",
     srcs = ["main.go"],
-    importpath = "github.com/rmrobinson/house/service/house/cmd/housed",
+    importpath = "github.com/rmrobinson/house/service/bridge/facade/cmd/bridgefacaded",
     visibility = ["//visibility:private"],
     deps = [
         "//api",
-        "//grpcutil",
         "//service/bridge/facade",
-        "//service/house",
-        "//service/house/db",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
@@ -18,7 +15,7 @@ go_library(
 )
 
 go_binary(
-    name = "housed",
-    embed = [":housed_lib"],
+    name = "bridgefacaded",
+    embed = [":bridgefacaded_lib"],
     visibility = ["//visibility:public"],
 )

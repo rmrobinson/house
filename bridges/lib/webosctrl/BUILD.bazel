@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/rmrobinson/house/bridges/lib/webosctrl",
     visibility = ["//visibility:public"],
     deps = [
+        "//backoffutil",
         "@com_github_gorilla_websocket//:websocket",
         "@org_uber_go_zap//:zap",
     ],

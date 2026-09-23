@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "db",
@@ -6,6 +6,7 @@ go_library(
         "building.go",
         "database.go",
         "device.go",
+        "floor.go",
         "room.go",
     ],
     embedsrcs = [
@@ -13,6 +14,10 @@ go_library(
         "migrations/000001_setup.up.sql",
         "migrations/000002_add_device_mapping.down.sql",
         "migrations/000002_add_device_mapping.up.sql",
+        "migrations/000003_add_floors_and_versions.down.sql",
+        "migrations/000003_add_floors_and_versions.up.sql",
+        "migrations/000004_add_device_room_version.down.sql",
+        "migrations/000004_add_device_room_version.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/house/db",
     visibility = ["//visibility:public"],
@@ -22,5 +27,17 @@ go_library(
         "@com_github_golang_migrate_migrate_v4//source/iofs",
         "@com_github_google_uuid//:uuid",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "db_test",
+    srcs = ["database_test.go"],
+    embed = [":db"],
+    deps = [
+        "@com_github_mattn_go_sqlite3//:go-sqlite3",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//zaptest",
     ],
 )

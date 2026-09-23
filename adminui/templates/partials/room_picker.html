@@ -1,0 +1,25 @@
+{{define "room_picker"}}
+<div class="panel">
+  <h3>Link / move device</h3>
+  <table>
+    <thead><tr><th>Room</th><th></th></tr></thead>
+    <tbody>
+    {{range .Rooms}}
+      <tr>
+        <td>{{.Label}}</td>
+        <td>
+          <form class="inline" hx-post="/devices/{{$.DeviceID}}/link" hx-target="#page-content" hx-swap="outerHTML">
+            <input type="hidden" name="room_id" value="{{.ID}}">
+            <input type="hidden" name="version" value="{{$.Version}}">
+            <button type="submit">Select</button>
+          </form>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="2">No rooms exist yet - create one under Buildings first.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  <button type="button" onclick="document.getElementById('picker').innerHTML=''">Cancel</button>
+</div>
+{{end}}

@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "grpcutil",
+    srcs = ["dial.go"],
+    importpath = "github.com/rmrobinson/house/grpcutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)

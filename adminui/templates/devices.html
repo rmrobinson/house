@@ -1,0 +1,30 @@
+{{define "content"}}
+<div id="page-content">
+  <h1>Devices</h1>
+
+  <p>
+    {{if eq .Filter "all"}}<strong>All</strong>{{else}}<a href="/devices?filter=all">All</a>{{end}}
+    ·
+    {{if eq .Filter "unlinked"}}<strong>Unlinked</strong>{{else}}<a href="/devices?filter=unlinked">Unlinked</a>{{end}}
+  </p>
+
+  <table>
+    <thead><tr><th colspan="2">Device</th><th>Location</th><th></th></tr></thead>
+    <tbody>
+    {{range .Devices}}
+      <tr>
+        {{template "device_info" .}}
+        <td>{{.RoomName}}</td>
+        <td>
+          <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">
+            {{if .RoomID}}Move{{else}}Link{{end}}
+          </button>
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4">No devices found.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}

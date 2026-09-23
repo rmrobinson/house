@@ -1,0 +1,13 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17020
+  # The host downstream clients use to reach this facade - combined with
+  # listen_port above to build the address published as the Address of
+  # every device it proxies, so clients never need to dial an individual
+  # upstream bridge directly.
+  host: "192.168.1.5"
+
+facade:
+  bridges:
+    - "192.168.1.50:17010" # esphome bridge
+    - "192.168.1.51:17011" # cast bridge
