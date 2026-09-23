@@ -45,7 +45,14 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	for {
 		update, err := stream.Recv()
 		if err != nil {
-			if err != io.EOF {
+			// ctx is r.Context(), so ctx.Err() != nil means the client
+			// itself went away (tab closed, or - since top-level navigation
+			// is a plain <a href>, not htmx-boosted, see server.go - simply
+			// navigated to the next page) and StreamUpdates was cancelled
+			// as a result. That's the expected end of every SSE connection,
+			// not a failure worth a warning, unlike the stream actually
+			// ending on the bridge-facade side.
+			if err != io.EOF && ctx.Err() == nil {
 				s.logger.Warn("bridge update stream ended", zap.Error(err))
 			}
 			return
@@ -61,7 +68,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 		if update.GetAction() == api2.Update_REMOVED {
 			renderErr = fragments["device_info"].ExecuteTemplate(&frag, "device_info_removed", du.GetDeviceId())
 		} else {
-			renderErr = fragments["device_info"].ExecuteTemplate(&frag, "device_info", deviceToView(du.GetDevice()))
+			renderErr = fragments["device_info"].ExecuteTemplate(&frag, "device_info_oob", deviceToView(du.GetDevice()))
 		}
 		if renderErr != nil {
 			s.logger.Error("template render failed", zap.String("fragment", "device_info"), zap.Error(renderErr))

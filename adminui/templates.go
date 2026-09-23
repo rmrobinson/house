@@ -20,15 +20,19 @@ var pages = map[string]*template.Template{
 	"building":  mustParsePage("templates/building.html"),
 	"floor":     mustParsePage("templates/floor.html"),
 	// room/devices embed the device_info partial directly (via
-	// {{template "device_info" .}}), since it's also the fragment the SSE
-	// relay pushes as an out-of-band swap into whichever page has it.
+	// {{template "device_info" .}}) for their own device table rows. The SSE
+	// relay (sse.go) renders the same file's device_info_oob block instead -
+	// same markup, but with hx-swap-oob set - since a live push has to target
+	// an id already on the page rather than land as part of a larger swap;
+	// see templates/partials/device_info.html for why the two can't share a
+	// single block.
 	"room":    mustParsePage("templates/room.html", "templates/partials/device_info.html"),
 	"devices": mustParsePage("templates/devices.html", "templates/partials/device_info.html"),
 }
 
 // fragments are partials rendered standalone (no layout) - pickers, and
-// device_info again for the SSE relay (sse.go), which has no page of its own
-// to attach to.
+// device_info again for the SSE relay (sse.go)'s device_info_oob block,
+// which has no page of its own to attach to.
 var fragments = map[string]*template.Template{
 	"device_picker": template.Must(template.ParseFS(templatesFS, "templates/partials/device_picker.html")),
 	"room_picker":   template.Must(template.ParseFS(templatesFS, "templates/partials/room_picker.html")),

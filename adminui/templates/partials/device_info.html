@@ -1,4 +1,23 @@
-{{define "device_info"}}<td id="device-info-{{.ID}}" hx-swap-oob="true">
+{{/* device_info is embedded inline in room.html/devices.html's own device
+tables - no hx-swap-oob, since an htmx action response (e.g. linking a
+device for the first time) can render a row for a device with no
+device-info-<id> element yet anywhere in the DOM. If this block carried
+hx-swap-oob, htmx would treat it as out-of-band content, fail to find a
+matching target, and silently drop it instead of leaving it in the main
+swap - see device_info_oob below for the variant that actually wants that
+behaviour. */}}
+{{define "device_info"}}<td id="device-info-{{.ID}}">
+  <strong>{{.Name}}</strong>
+  <span class="badge">{{.Kind}}</span>
+  {{if .Online}}<span class="badge badge-online">online</span>{{else}}<span class="badge badge-offline">offline</span>{{end}}
+</td>{{end}}
+
+{{/* device_info_oob is the same content, but for sse.go's live-push relay:
+there it's the entire SSE payload, not part of a larger swap, so it must
+carry hx-swap-oob to land in the matching device-info-<id> cell wherever
+that device is currently shown - which, unlike the case above, is
+guaranteed to already exist for a live update to an already-rendered page. */}}
+{{define "device_info_oob"}}<td id="device-info-{{.ID}}" hx-swap-oob="true">
   <strong>{{.Name}}</strong>
   <span class="badge">{{.Kind}}</span>
   {{if .Online}}<span class="badge badge-online">online</span>{{else}}<span class="badge badge-offline">offline</span>{{end}}
