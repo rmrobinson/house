@@ -74,6 +74,7 @@ message UpdateBuildingRequest {
 }
 message DeleteBuildingRequest {
   string id = 1;
+  string version = 2;
 }
 
 /* ----- Floor ----- */
@@ -96,6 +97,7 @@ message UpdateFloorRequest {
 }
 message DeleteFloorRequest {
   string id = 1;
+  string version = 2;
 }
 
 /* ----- Room ----- */
@@ -120,6 +122,7 @@ message UpdateRoomRequest {
 }
 message DeleteRoomRequest {
   string id = 1;
+  string version = 2;
 }
 
 /* ----- Device <-> Room linking -----
@@ -128,11 +131,20 @@ message DeleteRoomRequest {
 message DeviceRoomLink {
   string device_id = 1;
   string room_id = 2;
+  // Opaque token minted fresh on every link/move, the same optimistic
+  // concurrency contract as Building/Floor/Room.version - see
+  // LinkDeviceRequest.version.
+  string version = 3;
 }
 
 message LinkDeviceRequest {
   string device_id = 1;
   string room_id = 2;
+  // If set, must match the device's current link version (DeviceRoomLink.
+  // version) or the request is rejected - the same optimistic concurrency
+  // contract as Update*Request.version. Left empty for a device's first-ever
+  // link, which has no prior version to race against.
+  string version = 3;
 }
 message LinkDeviceResponse {
   DeviceRoomLink link = 1;

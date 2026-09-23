@@ -69,7 +69,7 @@ func NewDatabase(logger *zap.Logger, db *sql.DB) (*Database, error) {
 	}, nil
 }
 
-// checkVersionedUpdate turns the RowsAffected of an `UPDATE ... WHERE
+// checkVersionedUpdate turns the RowsAffected of an `UPDATE/DELETE ... WHERE
 // id=? AND version=?` into ErrNotFound or ErrVersionMismatch when it
 // affected no rows - table is always a fixed internal constant, never
 // caller-supplied, so building the query with it is safe.
@@ -105,29 +105,24 @@ func (db *Database) hasRows(ctx context.Context, table, fk, id string) (bool, er
 	return count > 0, nil
 }
 
-// deleteRow deletes the row identified by id from table, returning
-// ErrNotFound if it didn't exist. table is always a fixed internal constant,
-// never caller-supplied, so building the query with it is safe.
-func (db *Database) deleteRow(ctx context.Context, table, id string) error {
-	res, err := db.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id=?", table), id)
+// deleteVersionedRow deletes the row identified by id from table, enforcing
+// that version matches the row's current version - the same optimistic
+// concurrency contract as an Update* call, via checkVersionedUpdate. table
+// is always a fixed internal constant, never caller-supplied, so building
+// the query with it is safe.
+func (db *Database) deleteVersionedRow(ctx context.Context, table, id, version string) error {
+	res, err := db.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE id=? AND version=?", table), id, version)
 	if err != nil {
 		db.logger.Error("unable to delete row", zap.String("table", table), zap.String("id", id), zap.Error(err))
 		return err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return db.checkVersionedUpdate(ctx, res, table, id)
 }
 
 // deleteWithChildCheck deletes the row identified by id from table, first
 // verifying no row in childTable still references it via childFK - shared by
 // DeleteFloor/DeleteRoom, which differ only in these names.
-func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable, childFK, id string) error {
+func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable, childFK, id, version string) error {
 	hasChildren, err := db.hasRows(ctx, childTable, childFK, id)
 	if err != nil {
 		return err
@@ -136,7 +131,7 @@ func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable,
 		return ErrHasChildren
 	}
 
-	return db.deleteRow(ctx, table, id)
+	return db.deleteVersionedRow(ctx, table, id, version)
 }
 
 /* ----- Building ----- */
@@ -225,7 +220,7 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 // room predating migration 000003 (see scanRoom), which can have floor_id
 // NULL while still carrying building_id directly, and so isn't reachable
 // through the floor check alone.
-func (db *Database) DeleteBuilding(ctx context.Context, buildingID string) error {
+func (db *Database) DeleteBuilding(ctx context.Context, buildingID, version string) error {
 	hasFloors, err := db.hasRows(ctx, "floor", "building_id", buildingID)
 	if err != nil {
 		return err
@@ -242,7 +237,7 @@ func (db *Database) DeleteBuilding(ctx context.Context, buildingID string) error
 		return ErrHasChildren
 	}
 
-	return db.deleteRow(ctx, "building", buildingID)
+	return db.deleteVersionedRow(ctx, "building", buildingID, version)
 }
 
 /* ----- Floor ----- */
@@ -333,8 +328,8 @@ func (db *Database) UpdateFloor(ctx context.Context, f *Floor) (*Floor, error) {
 
 // DeleteFloor deletes the specified floor. Returns ErrHasChildren if any
 // rooms still reference it.
-func (db *Database) DeleteFloor(ctx context.Context, floorID string) error {
-	return db.deleteWithChildCheck(ctx, "floor", "room", "floor_id", floorID)
+func (db *Database) DeleteFloor(ctx context.Context, floorID, version string) error {
+	return db.deleteWithChildCheck(ctx, "floor", "room", "floor_id", floorID, version)
 }
 
 /* ----- Room ----- */
@@ -388,8 +383,8 @@ func (db *Database) UpdateRoom(ctx context.Context, r *Room) (*Room, error) {
 
 // DeleteRoom deletes the specified room. Returns ErrHasChildren if any
 // devices are still linked to it.
-func (db *Database) DeleteRoom(ctx context.Context, roomID string) error {
-	return db.deleteWithChildCheck(ctx, "room", "device_room", "room_id", roomID)
+func (db *Database) DeleteRoom(ctx context.Context, roomID, version string) error {
+	return db.deleteWithChildCheck(ctx, "room", "device_room", "room_id", roomID, version)
 }
 
 // scanRoom scans one room row, tolerating a NULL floor_id - rooms created
@@ -460,30 +455,50 @@ func (db *Database) ListRooms(ctx context.Context, buildingID, floorID *string) 
 /* ----- Device <-> Room linking ----- */
 
 // LinkDevice upserts the device_id -> room_id mapping, keyed on deviceID, so
-// moving a device to a new room is a single call. previousRoomID is nil if
-// the device wasn't previously linked to any room.
-func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID string) (link *Device, previousRoomID *string, err error) {
+// moving a device to a new room is a single call. If the device is already
+// linked, expectedVersion must match its current version - checked
+// atomically as part of the upsert's own WHERE clause below, not via a
+// separate read-then-write, which would leave a race window - or
+// ErrVersionMismatch is returned. An empty expectedVersion accepts any
+// current version, which is the only option for a device's first-ever link
+// (nothing to race against yet); it also means a race between two
+// concurrent first links of the same never-before-linked device isn't
+// caught here, same as Create* has no equivalent protection - a narrower
+// case than the stale-edit race this version check exists for.
+// previousRoomID is nil if the device wasn't previously linked to any room.
+func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID, expectedVersion string) (link *Device, previousRoomID *string, err error) {
 	var prev sql.NullString
 	row := db.db.QueryRowContext(ctx, "SELECT room_id FROM device_room WHERE id=?", deviceID)
 	if scanErr := row.Scan(&prev); scanErr != nil && scanErr != sql.ErrNoRows {
 		db.logger.Error("unable to check existing device link", zap.String("device_id", deviceID), zap.Error(scanErr))
 		return nil, nil, scanErr
 	}
+	hadLink := prev.Valid
 
-	_, err = db.db.ExecContext(ctx,
-		"INSERT INTO device_room (id, room_id) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id",
-		deviceID, roomID)
+	newVersion := uuid.NewString()
+	res, err := db.db.ExecContext(ctx,
+		`INSERT INTO device_room (id, room_id, version) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id, version=excluded.version
+		 WHERE ?='' OR device_room.version=?`,
+		deviceID, roomID, newVersion, expectedVersion, expectedVersion)
 	if err != nil {
 		db.logger.Error("unable to link device", zap.String("device_id", deviceID), zap.String("room_id", roomID), zap.Error(err))
 		return nil, nil, err
 	}
 
-	if prev.Valid {
+	if hadLink {
+		n, raErr := res.RowsAffected()
+		if raErr != nil {
+			return nil, nil, raErr
+		}
+		if n == 0 {
+			return nil, nil, ErrVersionMismatch
+		}
 		p := prev.String
 		previousRoomID = &p
 	}
 
-	return &Device{ID: deviceID, RoomID: roomID}, previousRoomID, nil
+	return &Device{ID: deviceID, RoomID: roomID, Version: newVersion}, previousRoomID, nil
 }
 
 // UnlinkDevice removes deviceID's room link, if any.
@@ -500,7 +515,7 @@ func (db *Database) UnlinkDevice(ctx context.Context, deviceID string) error {
 // ListDeviceLinks retrieves device_id/room_id links, filtered by whichever
 // of buildingID, roomID and deviceID are non-nil.
 func (db *Database) ListDeviceLinks(ctx context.Context, buildingID, roomID, deviceID *string) ([]Device, error) {
-	query := "SELECT device_room.id, device_room.room_id FROM device_room"
+	query := "SELECT device_room.id, device_room.room_id, device_room.version FROM device_room"
 	var conditions []string
 	var args []any
 
@@ -531,7 +546,7 @@ func (db *Database) ListDeviceLinks(ctx context.Context, buildingID, roomID, dev
 	var links []Device
 	for rows.Next() {
 		d := Device{}
-		if err := rows.Scan(&d.ID, &d.RoomID); err != nil {
+		if err := rows.Scan(&d.ID, &d.RoomID, &d.Version); err != nil {
 			db.logger.Error("unable to scan device link row", zap.Error(err))
 			return nil, err
 		}
@@ -554,7 +569,7 @@ func (db *Database) ListDeviceLinksForRooms(ctx context.Context, roomIDs []strin
 	}
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(roomIDs)), ",")
-	query := fmt.Sprintf("SELECT id, room_id FROM device_room WHERE room_id IN (%s)", placeholders)
+	query := fmt.Sprintf("SELECT id, room_id, version FROM device_room WHERE room_id IN (%s)", placeholders)
 	args := make([]any, len(roomIDs))
 	for i, id := range roomIDs {
 		args[i] = id
@@ -570,7 +585,7 @@ func (db *Database) ListDeviceLinksForRooms(ctx context.Context, roomIDs []strin
 	var links []Device
 	for rows.Next() {
 		d := Device{}
-		if err := rows.Scan(&d.ID, &d.RoomID); err != nil {
+		if err := rows.Scan(&d.ID, &d.RoomID, &d.Version); err != nil {
 			db.logger.Error("unable to scan device link row", zap.Error(err))
 			return nil, err
 		}

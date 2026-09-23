@@ -119,7 +119,7 @@ func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRe
 }
 
 func (s *Service) DeleteBuilding(ctx context.Context, req *api2.DeleteBuildingRequest) (*emptypb.Empty, error) {
-	if err := s.db.DeleteBuilding(ctx, req.GetId()); err != nil {
+	if err := s.db.DeleteBuilding(ctx, req.GetId(), req.GetVersion()); err != nil {
 		s.logger.Error("unable to delete building", zap.String("building_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "building")
 	}
@@ -189,7 +189,7 @@ func (s *Service) UpdateFloor(ctx context.Context, req *api2.UpdateFloorRequest)
 }
 
 func (s *Service) DeleteFloor(ctx context.Context, req *api2.DeleteFloorRequest) (*emptypb.Empty, error) {
-	if err := s.db.DeleteFloor(ctx, req.GetId()); err != nil {
+	if err := s.db.DeleteFloor(ctx, req.GetId(), req.GetVersion()); err != nil {
 		s.logger.Error("unable to delete floor", zap.String("floor_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "floor")
 	}
@@ -282,7 +282,7 @@ func (s *Service) UpdateRoom(ctx context.Context, req *api2.UpdateRoomRequest) (
 }
 
 func (s *Service) DeleteRoom(ctx context.Context, req *api2.DeleteRoomRequest) (*emptypb.Empty, error) {
-	if err := s.db.DeleteRoom(ctx, req.GetId()); err != nil {
+	if err := s.db.DeleteRoom(ctx, req.GetId(), req.GetVersion()); err != nil {
 		s.logger.Error("unable to delete room", zap.String("room_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "room")
 	}
@@ -300,16 +300,17 @@ func (s *Service) LinkDevice(ctx context.Context, req *api2.LinkDeviceRequest) (
 		return nil, status.Error(codes.NotFound, "room doesn't exist")
 	}
 
-	link, previousRoomID, err := s.db.LinkDevice(ctx, req.GetDeviceId(), req.GetRoomId())
+	link, previousRoomID, err := s.db.LinkDevice(ctx, req.GetDeviceId(), req.GetRoomId(), req.GetVersion())
 	if err != nil {
 		s.logger.Error("unable to link device", zap.String("device_id", req.GetDeviceId()), zap.String("room_id", req.GetRoomId()), zap.Error(err))
-		return nil, status.Error(codes.Internal, "unable to link device")
+		return nil, mapDBErr(err, "device link")
 	}
 
 	return &api2.LinkDeviceResponse{
 		Link: &api2.DeviceRoomLink{
 			DeviceId: link.ID,
 			RoomId:   link.RoomID,
+			Version:  link.Version,
 		},
 		PreviousRoomId: previousRoomID,
 	}, nil
@@ -331,7 +332,7 @@ func (s *Service) ListDeviceLinks(req *api2.ListDeviceLinksRequest, stream api2.
 	}
 
 	for _, l := range links {
-		if err := stream.Send(&api2.DeviceRoomLink{DeviceId: l.ID, RoomId: l.RoomID}); err != nil {
+		if err := stream.Send(&api2.DeviceRoomLink{DeviceId: l.ID, RoomId: l.RoomID, Version: l.Version}); err != nil {
 			return err
 		}
 	}

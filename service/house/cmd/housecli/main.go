@@ -127,7 +127,7 @@ func main() {
 		logger.Info("building updated", zap.String("id", res.ID), zap.String("version", res.Version))
 
 	case "DeleteBuilding":
-		if err := buildingDB.DeleteBuilding(ctx, *id); err != nil {
+		if err := buildingDB.DeleteBuilding(ctx, *id, *version); err != nil {
 			logger.Fatal("error deleting building", zap.Error(err))
 		}
 		logger.Info("building deleted", zap.String("id", *id))
@@ -178,7 +178,7 @@ func main() {
 		logger.Info("floor updated", zap.String("id", res.ID), zap.String("version", res.Version))
 
 	case "DeleteFloor":
-		if err := buildingDB.DeleteFloor(ctx, *id); err != nil {
+		if err := buildingDB.DeleteFloor(ctx, *id, *version); err != nil {
 			logger.Fatal("error deleting floor", zap.Error(err))
 		}
 		logger.Info("floor deleted", zap.String("id", *id))
@@ -231,17 +231,17 @@ func main() {
 		logger.Info("room updated", zap.String("id", res.ID), zap.String("version", res.Version))
 
 	case "DeleteRoom":
-		if err := buildingDB.DeleteRoom(ctx, *id); err != nil {
+		if err := buildingDB.DeleteRoom(ctx, *id, *version); err != nil {
 			logger.Fatal("error deleting room", zap.Error(err))
 		}
 		logger.Info("room deleted", zap.String("id", *id))
 
 	case "LinkDevice":
-		link, previousRoomID, err := buildingDB.LinkDevice(ctx, *deviceID, *roomID)
+		link, previousRoomID, err := buildingDB.LinkDevice(ctx, *deviceID, *roomID, *version)
 		if err != nil {
 			logger.Fatal("error linking device", zap.Error(err))
 		}
-		fields := []zap.Field{zap.String("device_id", link.ID), zap.String("room_id", link.RoomID)}
+		fields := []zap.Field{zap.String("device_id", link.ID), zap.String("room_id", link.RoomID), zap.String("version", link.Version)}
 		if previousRoomID != nil {
 			fields = append(fields, zap.String("previous_room_id", *previousRoomID))
 		}

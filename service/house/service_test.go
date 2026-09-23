@@ -202,6 +202,27 @@ func TestDeleteFloor_BlockedByRoomIsFailedPrecondition(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
+// TestDeleteRoom_VersionMismatchIsFailedPrecondition covers the same
+// mapDBErr wiring TestDeleteFloor_BlockedByRoomIsFailedPrecondition covers
+// for ErrHasChildren, but for the version check added to every Delete*
+// handler alongside Update*'s existing one.
+func TestDeleteRoom_VersionMismatchIsFailedPrecondition(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	room := createTestRoom(t, s)
+
+	_, err := s.DeleteRoom(ctx, &api2.DeleteRoomRequest{Id: room.Id, Version: "stale"})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+
+	// The current version is accepted.
+	_, err = s.DeleteRoom(ctx, &api2.DeleteRoomRequest{Id: room.Id, Version: room.Version})
+	require.NoError(t, err)
+}
+
 func TestLinkDevice_ReturnsPreviousRoomID(t *testing.T) {
 	s := newTestService(t, nil)
 	ctx := context.Background()
@@ -218,4 +239,26 @@ func TestLinkDevice_ReturnsPreviousRoomID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp.PreviousRoomId)
 	assert.Equal(t, roomA.Id, *resp.PreviousRoomId)
+}
+
+func TestLinkDevice_VersionMismatchIsFailedPrecondition(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	roomA := createTestRoom(t, s)
+	roomB, err := s.CreateRoom(ctx, &api2.CreateRoomRequest{FloorId: roomA.FloorId, Config: &api2.Room_Config{Name: "Office"}})
+	require.NoError(t, err)
+
+	resp, err := s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "device-1", RoomId: roomA.Id})
+	require.NoError(t, err)
+
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "device-1", RoomId: roomB.Id, Version: "stale"})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.FailedPrecondition, st.Code())
+
+	// The current version is accepted.
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "device-1", RoomId: roomB.Id, Version: resp.Link.Version})
+	require.NoError(t, err)
 }

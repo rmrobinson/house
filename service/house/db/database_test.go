@@ -75,7 +75,11 @@ func TestBuilding_CreateGetUpdateDelete(t *testing.T) {
 	_, err = d.UpdateBuilding(ctx, &Building{ID: "nope", Version: "v1", Name: "X"})
 	assert.ErrorIs(t, err, ErrNotFound)
 
-	require.NoError(t, d.DeleteBuilding(ctx, b.ID))
+	// A delete against a stale version is rejected the same way an update is.
+	err = d.DeleteBuilding(ctx, b.ID, b.Version)
+	assert.ErrorIs(t, err, ErrVersionMismatch)
+
+	require.NoError(t, d.DeleteBuilding(ctx, b.ID, updated.Version))
 
 	got, err = d.GetBuilding(ctx, b.ID)
 	require.NoError(t, err)
@@ -89,7 +93,7 @@ func TestBuilding_DeleteBlockedByFloor(t *testing.T) {
 	b := createTestBuilding(t, d)
 	createTestFloor(t, d, b.ID)
 
-	err := d.DeleteBuilding(ctx, b.ID)
+	err := d.DeleteBuilding(ctx, b.ID, b.Version)
 	assert.ErrorIs(t, err, ErrHasChildren)
 }
 
@@ -108,7 +112,7 @@ func TestBuilding_DeleteBlockedByLegacyFloorlessRoom(t *testing.T) {
 		"legacy-room", b.ID, "Attic", Unspecified, "1")
 	require.NoError(t, err)
 
-	err = d.DeleteBuilding(ctx, b.ID)
+	err = d.DeleteBuilding(ctx, b.ID, b.Version)
 	assert.ErrorIs(t, err, ErrHasChildren)
 }
 
@@ -143,7 +147,11 @@ func TestFloor_CreateGetListUpdateDelete(t *testing.T) {
 	_, err = d.UpdateFloor(ctx, &Floor{ID: f1.ID, Version: "stale", Name: "X"})
 	assert.ErrorIs(t, err, ErrVersionMismatch)
 
-	require.NoError(t, d.DeleteFloor(ctx, f2.ID))
+	// A delete against a stale version is rejected the same way an update is.
+	err = d.DeleteFloor(ctx, f2.ID, "stale")
+	assert.ErrorIs(t, err, ErrVersionMismatch)
+
+	require.NoError(t, d.DeleteFloor(ctx, f2.ID, f2.Version))
 	floors, err = d.ListFloors(ctx, b.ID)
 	require.NoError(t, err)
 	assert.Len(t, floors, 1)
@@ -165,7 +173,7 @@ func TestFloor_DeleteBlockedByRoom(t *testing.T) {
 	f := createTestFloor(t, d, b.ID)
 	createTestRoom(t, d, f.ID)
 
-	err := d.DeleteFloor(ctx, f.ID)
+	err := d.DeleteFloor(ctx, f.ID, f.Version)
 	assert.ErrorIs(t, err, ErrHasChildren)
 }
 
@@ -222,7 +230,11 @@ func TestRoom_GetListUpdateDelete(t *testing.T) {
 	_, err = d.UpdateRoom(ctx, &Room{ID: r1.ID, Version: "stale", Name: "X"})
 	assert.ErrorIs(t, err, ErrVersionMismatch)
 
-	require.NoError(t, d.DeleteRoom(ctx, r2.ID))
+	// A delete against a stale version is rejected the same way an update is.
+	err = d.DeleteRoom(ctx, r2.ID, "stale")
+	assert.ErrorIs(t, err, ErrVersionMismatch)
+
+	require.NoError(t, d.DeleteRoom(ctx, r2.ID, r2.Version))
 	rooms, err = d.ListRooms(ctx, &b.ID, nil)
 	require.NoError(t, err)
 	assert.Len(t, rooms, 1)
@@ -236,10 +248,10 @@ func TestRoom_DeleteBlockedByLinkedDevice(t *testing.T) {
 	f := createTestFloor(t, d, b.ID)
 	r := createTestRoom(t, d, f.ID)
 
-	_, _, err := d.LinkDevice(ctx, "device-1", r.ID)
+	_, _, err := d.LinkDevice(ctx, "device-1", r.ID, "")
 	require.NoError(t, err)
 
-	err = d.DeleteRoom(ctx, r.ID)
+	err = d.DeleteRoom(ctx, r.ID, r.Version)
 	assert.ErrorIs(t, err, ErrHasChildren)
 }
 
@@ -253,13 +265,15 @@ func TestLinkDevice_UpsertReportsPreviousRoom(t *testing.T) {
 	roomB, err := d.CreateRoom(ctx, &Room{FloorID: f.ID, Name: "Office", Type: Office})
 	require.NoError(t, err)
 
-	link, prev, err := d.LinkDevice(ctx, "device-1", roomA.ID)
+	// First link has nothing to protect against - empty expectedVersion.
+	link, prev, err := d.LinkDevice(ctx, "device-1", roomA.ID, "")
 	require.NoError(t, err)
 	assert.Equal(t, roomA.ID, link.RoomID)
+	assert.NotEmpty(t, link.Version)
 	assert.Nil(t, prev)
 
 	// Moving the device is a single upsert call.
-	link, prev, err = d.LinkDevice(ctx, "device-1", roomB.ID)
+	link, prev, err = d.LinkDevice(ctx, "device-1", roomB.ID, link.Version)
 	require.NoError(t, err)
 	assert.Equal(t, roomB.ID, link.RoomID)
 	require.NotNil(t, prev)
@@ -268,9 +282,39 @@ func TestLinkDevice_UpsertReportsPreviousRoom(t *testing.T) {
 	require.NoError(t, d.UnlinkDevice(ctx, "device-1"))
 
 	// Re-linking after an unlink has no previous room.
-	_, prev, err = d.LinkDevice(ctx, "device-1", roomA.ID)
+	_, prev, err = d.LinkDevice(ctx, "device-1", roomA.ID, "")
 	require.NoError(t, err)
 	assert.Nil(t, prev)
+}
+
+func TestLinkDevice_StaleVersionIsRejected(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	b := createTestBuilding(t, d)
+	f := createTestFloor(t, d, b.ID)
+	roomA := createTestRoom(t, d, f.ID)
+	roomB, err := d.CreateRoom(ctx, &Room{FloorID: f.ID, Name: "Office", Type: Office})
+	require.NoError(t, err)
+
+	link, _, err := d.LinkDevice(ctx, "device-1", roomA.ID, "")
+	require.NoError(t, err)
+
+	// A stale version is rejected, same as UpdateRoom/DeleteRoom.
+	_, _, err = d.LinkDevice(ctx, "device-1", roomB.ID, "stale")
+	assert.ErrorIs(t, err, ErrVersionMismatch)
+
+	// The device stayed in its original room - the rejected write never applied.
+	links, err := d.ListDeviceLinks(ctx, nil, nil, new("device-1"))
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	assert.Equal(t, roomA.ID, links[0].RoomID)
+	assert.Equal(t, link.Version, links[0].Version)
+
+	// The current version is accepted.
+	link, _, err = d.LinkDevice(ctx, "device-1", roomB.ID, link.Version)
+	require.NoError(t, err)
+	assert.Equal(t, roomB.ID, link.RoomID)
 }
 
 func TestListDeviceLinks_Filters(t *testing.T) {
@@ -286,11 +330,11 @@ func TestListDeviceLinks_Filters(t *testing.T) {
 	f2 := createTestFloor(t, d, b2.ID)
 	room2 := createTestRoom(t, d, f2.ID)
 
-	_, _, err = d.LinkDevice(ctx, "device-1", room1.ID)
+	_, _, err = d.LinkDevice(ctx, "device-1", room1.ID, "")
 	require.NoError(t, err)
-	_, _, err = d.LinkDevice(ctx, "device-2", room1.ID)
+	_, _, err = d.LinkDevice(ctx, "device-2", room1.ID, "")
 	require.NoError(t, err)
-	_, _, err = d.LinkDevice(ctx, "device-3", room2.ID)
+	_, _, err = d.LinkDevice(ctx, "device-3", room2.ID, "")
 	require.NoError(t, err)
 
 	all, err := d.ListDeviceLinks(ctx, nil, nil, nil)
