@@ -25,7 +25,7 @@ bazel_dep(name = "platforms", version = "1.0.0")
 bazel_dep(name = "googleapis", version = "0.0.0-20260825-d10ac924")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
-go_sdk.download(version = "1.26.1")
+go_sdk.download(version = "1.26.4")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
@@ -58,6 +58,7 @@ use_repo(
     "com_github_rafalop_sevensegment",
     "com_github_richard87_esphome_apiclient",
     "com_github_rmrobinson_airthings_btle",
+    "com_github_rmrobinson_nanoleaf_go",
     "com_github_rmrobinson_omada",
     "com_github_spf13_cobra",
     "com_github_spf13_viper",

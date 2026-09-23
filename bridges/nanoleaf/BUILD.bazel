@@ -1,0 +1,52 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "nanoleaf_lib",
+    srcs = [
+        "bridge.go",
+        "config.go",
+        "main.go",
+        "panel.go",
+    ],
+    importpath = "github.com/rmrobinson/house/bridges/nanoleaf",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/bridge",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_rmrobinson_nanoleaf_go//:nanoleaf-go",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//proto",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "nanoleaf",
+    embed = [":nanoleaf_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "nanoleaf_test",
+    srcs = [
+        "devices_test.go",
+        "fakepanel_test.go",
+    ],
+    embed = [":nanoleaf_lib"],
+    deps = [
+        "//api/command",
+        "//service/bridge",
+        "@com_github_rmrobinson_nanoleaf_go//:nanoleaf-go",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
