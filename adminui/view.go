@@ -23,6 +23,12 @@ type buildingView struct {
 	Name    string
 	TZ      string
 	Version string
+	// Lat/Lon aren't exposed as editable fields anywhere in this app (see
+	// buildings.html/building.html) - carried through only so an edit form
+	// can round-trip them via hidden inputs instead of silently zeroing
+	// them out on save.
+	Lat float64
+	Lon float64
 }
 
 type floorView struct {
@@ -39,7 +45,12 @@ type roomView struct {
 	FloorID    string
 	BuildingID string
 	Version    string
-	Devices    []deviceView
+	// Type isn't exposed as an editable field anywhere in this app (see
+	// floor.html's "Add room" form) - carried through only so an edit form
+	// can round-trip it via a hidden input instead of silently resetting it
+	// to Unspecified on save.
+	Type    int32
+	Devices []deviceView
 }
 
 // deviceView is shown both embedded in a room and on the flat /devices list.
@@ -60,6 +71,8 @@ func buildingToView(b *api2.Building) buildingView {
 		Name:    b.GetConfig().GetName(),
 		TZ:      b.GetConfig().GetTz(),
 		Version: b.GetVersion(),
+		Lat:     b.GetConfig().GetLat(),
+		Lon:     b.GetConfig().GetLon(),
 	}
 }
 
@@ -80,6 +93,7 @@ func roomToView(r *api2.Room) roomView {
 		FloorID:    r.GetFloorId(),
 		BuildingID: r.GetBuildingId(),
 		Version:    r.GetVersion(),
+		Type:       r.GetConfig().GetType(),
 	}
 	for _, d := range r.GetDevices() {
 		rv.Devices = append(rv.Devices, deviceToView(d))
@@ -264,14 +278,22 @@ func (s *Server) allRoomOptions(ctx context.Context) ([]roomOption, error) {
 	return opts, nil
 }
 
-// deviceRoomMap returns every current device_id -> room_id link, unfiltered.
-func (s *Server) deviceRoomMap(ctx context.Context) (map[string]string, error) {
+// deviceLink is one device's current room_id and link version - the version
+// lets a Link/Move action round-trip it back as LinkDeviceRequest.version,
+// the same optimistic concurrency contract Update*/Delete* already use.
+type deviceLink struct {
+	RoomID  string
+	Version string
+}
+
+// deviceRoomMap returns every current device_id -> room link, unfiltered.
+func (s *Server) deviceRoomMap(ctx context.Context) (map[string]deviceLink, error) {
 	stream, err := s.house.ListDeviceLinks(ctx, &api2.ListDeviceLinksRequest{})
 	if err != nil {
 		return nil, err
 	}
 
-	out := map[string]string{}
+	out := map[string]deviceLink{}
 	for {
 		link, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -280,7 +302,7 @@ func (s *Server) deviceRoomMap(ctx context.Context) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		out[link.GetDeviceId()] = link.GetRoomId()
+		out[link.GetDeviceId()] = deviceLink{RoomID: link.GetRoomId(), Version: link.GetVersion()}
 	}
 }
 

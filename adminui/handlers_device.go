@@ -44,7 +44,7 @@ func (s *Server) loadDevicesPageData(r *http.Request) (devicesPageData, error) {
 
 	data := devicesPageData{Filter: filter}
 	for _, d := range devices {
-		roomID := links[d.GetId()]
+		roomID := links[d.GetId()].RoomID
 		if filter == "unlinked" && roomID != "" {
 			continue
 		}
@@ -71,24 +71,48 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceRoomPicker lists every room in the house (flat, see
-// admin-ui-implementation.md's "Known scaling gap" note), for the
-// Link/Move picker on a /devices row.
+// admin-ui-implementation.md's "Known scaling gap" note) except the
+// device's current one - mirrors handleRoomDevicePicker excluding the
+// current room's own devices - for the Link/Move picker on a /devices row.
 func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
-	opts, err := s.allRoomOptions(r.Context())
+	ctx := r.Context()
+
+	opts, err := s.allRoomOptions(ctx)
 	if err != nil {
 		s.httpError(w, r, err)
 		return
 	}
+	links, err := s.deviceRoomMap(ctx)
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	current := links[deviceID]
+	filtered := opts[:0]
+	for _, opt := range opts {
+		if opt.ID == current.RoomID {
+			continue
+		}
+		filtered = append(filtered, opt)
+	}
+
 	s.renderFragment(w, "room_picker", roomPickerData{
 		DeviceID: deviceID,
-		Rooms:    opts,
+		Version:  current.Version,
+		Rooms:    filtered,
 	})
 }
 
 type roomPickerData struct {
 	DeviceID string
-	Rooms    []roomOption
+	// Version is deviceID's current link version (empty if it isn't linked
+	// yet) - carried through as a hidden field on every room option's Select
+	// form, so handleDeviceLink can enforce it hasn't changed since this
+	// picker was opened.
+	Version string
+	Rooms   []roomOption
 }
 
 func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +135,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID})
+	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID, Version: r.FormValue("version")})
 	if err != nil {
 		s.respond(w, "devices", data, grpcMessage(err), true)
 		return

@@ -8,6 +8,10 @@
 <script src="/static/htmx-sse.js"></script>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 0 auto; padding: 1rem; color: #1a1a1a; }
+  /* Every link here is internal navigation within one user's own data, not a
+     list of external links worth distinguishing by visited/unvisited - so
+     visited never changes color, unlike the browser default. */
+  a, a:visited { color: #1a5fb4; }
   nav { display: flex; gap: 1rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #ccc; }
   nav a { text-decoration: none; color: #1a5fb4; font-weight: 600; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
@@ -16,6 +20,13 @@
   .badge-online { background: #d4edda; color: #155724; }
   .badge-offline { background: #f8d7da; color: #721c24; }
   form.inline { display: inline; }
+  /* Every create/edit form here is <label>Field <input ...></label> pairs
+     with no wrapping markup of their own - label is inline by default, so
+     with no rule like this they'd just run together on one line rather than
+     one field per row. form.inline forms (Unlink, Delete, per-row picker
+     buttons) have no <label> in them, so this doesn't affect those. */
+  form label { display: block; margin-bottom: 0.6rem; }
+  form label input[type=text], form label input[type=number] { display: block; width: 100%; margin-top: 0.25rem; box-sizing: border-box; }
   .panel { border: 1px solid #ddd; border-radius: 0.4rem; padding: 0.75rem 1rem; margin: 0.75rem 0; }
   #flash { margin: 0.75rem 0; }
   .flash { padding: 0.5rem 0.75rem; border-radius: 0.3rem; background: #d4edda; color: #155724; }
@@ -25,6 +36,23 @@
   .danger { color: #a00; }
   .crumbs { color: #666; margin-bottom: 0.5rem; }
   .crumbs a { color: #666; }
+  /* Gear (edit+delete) / plus (add child) icon buttons beside an entity's
+     h1 - see building.html/floor.html/room.html. Each opens a <dialog> (see
+     the showModal()/close() calls inline on the buttons and inside the
+     dialog itself, and the backdrop-click handler at the bottom of this
+     file) rather than expanding inline, so the form gets real overlay
+     styling instead of competing for space with the page underneath it. */
+  .entity-header { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; }
+  .entity-header h1 { margin: 0; }
+  .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border: 1px solid #ccc; border-radius: 50%; background: #fff; color: #555; font-size: 1rem; cursor: pointer; padding: 0; }
+  .icon-btn:hover { background: #f0f0f0; }
+  dialog { border: none; border-radius: 0.5rem; padding: 1.25rem 1.5rem; min-width: 20rem; max-width: min(28rem, 90vw); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+  dialog > *:first-child { margin-top: 0; }
+  dialog > *:last-child { margin-bottom: 0; }
+  dialog h3 { margin: 0 0 0.75rem; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
+  .panel-danger { margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #eee; }
 </style>
 </head>
 <body hx-ext="sse" sse-connect="/events">
@@ -37,6 +65,18 @@
 <main>
 {{template "content" .}}
 </main>
+<script>
+// A click event's target is the <dialog> element itself only when the click
+// landed on its backdrop, not its content (a click inside the dialog's own
+// box targets whatever element is there instead) - the standard way to
+// detect a backdrop click with no library. Escape-to-close is native to
+// showModal() and needs no handler here.
+document.addEventListener('click', function (e) {
+  if (e.target.tagName === 'DIALOG' && e.target.open) {
+    e.target.close();
+  }
+});
+</script>
 </body>
 </html>
 {{end}}

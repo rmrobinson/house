@@ -11,6 +11,7 @@
         <td>
           <form class="inline" hx-post="/rooms/{{$.TargetRoomID}}/link" hx-target="#page-content" hx-swap="outerHTML">
             <input type="hidden" name="device_id" value="{{.ID}}">
+            <input type="hidden" name="version" value="{{.Version}}">
             <button type="submit">Select</button>
           </form>
         </td>

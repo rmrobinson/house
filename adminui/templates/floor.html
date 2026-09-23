@@ -1,17 +1,42 @@
 {{define "content"}}
 <div id="page-content">
   <p class="crumbs"><a href="/buildings">Buildings</a> / <a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a> / {{.Floor.Name}}</p>
-  <h1>{{.Floor.Name}}</h1>
 
-  <div class="panel">
+  <div class="entity-header">
+    <h1>{{.Floor.Name}}</h1>
+    <button type="button" class="icon-btn" title="Edit floor" onclick="document.getElementById('edit-floor-dialog').showModal()">⚙</button>
+    <button type="button" class="icon-btn" title="Add room" onclick="document.getElementById('add-room-dialog').showModal()">+</button>
+  </div>
+
+  <dialog id="edit-floor-dialog">
     <h3>Edit floor</h3>
     <form hx-post="/floors/{{.Floor.ID}}" hx-target="#page-content" hx-swap="outerHTML">
       <input type="hidden" name="version" value="{{.Floor.Version}}">
       <label>Name <input type="text" name="name" value="{{.Floor.Name}}" required></label>
       <label>Sort order <input type="number" name="sort_order" value="{{.Floor.SortOrder}}"></label>
-      <button type="submit">Save</button>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
     </form>
-  </div>
+    <div class="panel-danger">
+      <form hx-post="/floors/{{.Floor.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this floor?">
+        <input type="hidden" name="version" value="{{.Floor.Version}}">
+        <button type="submit" class="danger">Delete floor</button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="add-room-dialog">
+    <h3>Add room</h3>
+    <form hx-post="/floors/{{.Floor.ID}}/rooms" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
 
   <h2>Rooms</h2>
   <table>
@@ -24,17 +49,5 @@
     {{end}}
     </tbody>
   </table>
-
-  <div class="panel">
-    <h3>Add room</h3>
-    <form hx-post="/floors/{{.Floor.ID}}/rooms" hx-target="#page-content" hx-swap="outerHTML">
-      <label>Name <input type="text" name="name" required></label>
-      <button type="submit">Create</button>
-    </form>
-  </div>
-
-  <form class="inline" hx-post="/floors/{{.Floor.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this floor?">
-    <button type="submit" class="danger">Delete floor</button>
-  </form>
 </div>
 {{end}}

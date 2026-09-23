@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
 	api2 "github.com/rmrobinson/house/api"
 )
@@ -88,9 +89,57 @@ func (s *Server) handleBuildingGet(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, "building", data)
 }
 
+func (s *Server) handleBuildingUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	// lat/lon aren't editable here - see buildingView - so they arrive as
+	// hidden fields round-tripping the current value rather than typed
+	// input. A malformed value here means the request didn't actually come
+	// from this form as rendered, so reject it rather than silently writing
+	// 0,0 over whatever the building's coordinates actually were.
+	lat, err := strconv.ParseFloat(r.FormValue("lat"), 64)
+	if err != nil {
+		s.httpError(w, r, fmt.Errorf("invalid lat: %w", err))
+		return
+	}
+	lon, err := strconv.ParseFloat(r.FormValue("lon"), 64)
+	if err != nil {
+		s.httpError(w, r, fmt.Errorf("invalid lon: %w", err))
+		return
+	}
+
+	_, err = s.house.UpdateBuilding(r.Context(), &api2.UpdateBuildingRequest{
+		Id:      id,
+		Version: r.FormValue("version"),
+		Config: &api2.Building_Config{
+			Name: r.FormValue("name"),
+			Tz:   r.FormValue("tz"),
+			Lat:  lat,
+			Lon:  lon,
+		},
+	})
+	flash, isError := successOrError(err, "Building updated")
+
+	data, loadErr := s.loadBuildingPageData(r, id)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
+	}
+	s.respond(w, "building", data, flash, isError)
+}
+
 func (s *Server) handleBuildingDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	_, err := s.house.DeleteBuilding(r.Context(), &api2.DeleteBuildingRequest{Id: id})
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	_, err := s.house.DeleteBuilding(r.Context(), &api2.DeleteBuildingRequest{Id: id, Version: r.FormValue("version")})
 	if err != nil {
 		data, loadErr := s.loadBuildingPageData(r, id)
 		if loadErr != nil {

@@ -1,6 +1,21 @@
 {{define "content"}}
 <div id="page-content">
-  <h1>Buildings</h1>
+  <div class="entity-header">
+    <h1>Buildings</h1>
+    <button type="button" class="icon-btn" title="Add building" onclick="document.getElementById('add-building-dialog').showModal()">+</button>
+  </div>
+
+  <dialog id="add-building-dialog">
+    <h3>Add building</h3>
+    <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
 
   <table>
     <thead><tr><th>Name</th><th>Timezone</th></tr></thead>
@@ -12,14 +27,5 @@
     {{end}}
     </tbody>
   </table>
-
-  <div class="panel">
-    <h3>Add building</h3>
-    <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
-      <label>Name <input type="text" name="name" required></label>
-      <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
-      <button type="submit">Create</button>
-    </form>
-  </div>
 </div>
 {{end}}

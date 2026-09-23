@@ -96,6 +96,10 @@ func (s *Server) handleFloorUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFloorDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
 
 	// Needed either way: to redirect up to the right building on success, or
 	// to re-render the current floor page (still showing its child rooms) on
@@ -106,7 +110,7 @@ func (s *Server) handleFloorDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := s.house.DeleteFloor(r.Context(), &api2.DeleteFloorRequest{Id: id}); err != nil {
+	if _, err := s.house.DeleteFloor(r.Context(), &api2.DeleteFloorRequest{Id: id, Version: r.FormValue("version")}); err != nil {
 		s.respond(w, "floor", data, grpcMessage(err), true)
 		return
 	}

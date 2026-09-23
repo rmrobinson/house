@@ -1,7 +1,35 @@
 {{define "content"}}
 <div id="page-content">
-  <p class="crumbs"><a href="/buildings">Buildings</a> / <a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a> / <a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a> / {{.Room.Name}}</p>
-  <h1>{{.Room.Name}}</h1>
+  <p class="crumbs">
+    <a href="/buildings">Buildings</a> /
+    {{if .Building.ID}}<a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a>{{else}}{{.Building.Name}}{{end}} /
+    {{if .Floor.ID}}<a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a>{{else}}{{.Floor.Name}}{{end}} /
+    {{.Room.Name}}
+  </p>
+
+  <div class="entity-header">
+    <h1>{{.Room.Name}}</h1>
+    <button type="button" class="icon-btn" title="Edit room" onclick="document.getElementById('edit-room-dialog').showModal()">⚙</button>
+  </div>
+
+  <dialog id="edit-room-dialog">
+    <h3>Edit room</h3>
+    <form hx-post="/rooms/{{.Room.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+      <input type="hidden" name="version" value="{{.Room.Version}}">
+      <input type="hidden" name="type" value="{{.Room.Type}}">
+      <label>Name <input type="text" name="name" value="{{.Room.Name}}" required></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+    <div class="panel-danger">
+      <form hx-post="/rooms/{{.Room.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this room?">
+        <input type="hidden" name="version" value="{{.Room.Version}}">
+        <button type="submit" class="danger">Delete room</button>
+      </form>
+    </div>
+  </dialog>
 
   <h2>Linked devices</h2>
   <table>
@@ -25,9 +53,5 @@
   </table>
 
   <button hx-get="/rooms/{{.Room.ID}}/device-picker" hx-target="#picker" hx-swap="innerHTML">Add device</button>
-
-  <form class="inline" hx-post="/rooms/{{.Room.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this room?">
-    <button type="submit" class="danger">Delete room</button>
-  </form>
 </div>
 {{end}}

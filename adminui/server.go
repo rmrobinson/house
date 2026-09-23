@@ -34,6 +34,7 @@ func newServer(logger *zap.Logger, house api2.HouseServiceClient, bridge api2.Br
 	mux.HandleFunc("GET /buildings", s.handleBuildingsList)
 	mux.HandleFunc("POST /buildings", s.handleBuildingCreate)
 	mux.HandleFunc("GET /buildings/{id}", s.handleBuildingGet)
+	mux.HandleFunc("POST /buildings/{id}", s.handleBuildingUpdate)
 	mux.HandleFunc("POST /buildings/{id}/delete", s.handleBuildingDelete)
 	mux.HandleFunc("POST /buildings/{id}/floors", s.handleFloorCreate)
 
@@ -43,6 +44,7 @@ func newServer(logger *zap.Logger, house api2.HouseServiceClient, bridge api2.Br
 	mux.HandleFunc("POST /floors/{id}/rooms", s.handleRoomCreate)
 
 	mux.HandleFunc("GET /rooms/{id}", s.handleRoomGet)
+	mux.HandleFunc("POST /rooms/{id}", s.handleRoomUpdate)
 	mux.HandleFunc("POST /rooms/{id}/delete", s.handleRoomDelete)
 	mux.HandleFunc("GET /rooms/{id}/device-picker", s.handleRoomDevicePicker)
 	mux.HandleFunc("POST /rooms/{id}/link", s.handleRoomLinkDevice)

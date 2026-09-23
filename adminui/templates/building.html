@@ -1,7 +1,45 @@
 {{define "content"}}
 <div id="page-content">
   <p class="crumbs"><a href="/buildings">Buildings</a> / {{.Building.Name}}</p>
-  <h1>{{.Building.Name}}</h1>
+
+  <div class="entity-header">
+    <h1>{{.Building.Name}}</h1>
+    <button type="button" class="icon-btn" title="Edit building" onclick="document.getElementById('edit-building-dialog').showModal()">⚙</button>
+    <button type="button" class="icon-btn" title="Add floor" onclick="document.getElementById('add-floor-dialog').showModal()">+</button>
+  </div>
+
+  <dialog id="edit-building-dialog">
+    <h3>Edit building</h3>
+    <form hx-post="/buildings/{{.Building.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+      <input type="hidden" name="version" value="{{.Building.Version}}">
+      <input type="hidden" name="lat" value="{{.Building.Lat}}">
+      <input type="hidden" name="lon" value="{{.Building.Lon}}">
+      <label>Name <input type="text" name="name" value="{{.Building.Name}}" required></label>
+      <label>Timezone <input type="text" name="tz" value="{{.Building.TZ}}" placeholder="America/Toronto"></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+    <div class="panel-danger">
+      <form hx-post="/buildings/{{.Building.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
+        <input type="hidden" name="version" value="{{.Building.Version}}">
+        <button type="submit" class="danger">Delete building</button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="add-floor-dialog">
+    <h3>Add floor</h3>
+    <form hx-post="/buildings/{{.Building.ID}}/floors" hx-target="#page-content" hx-swap="outerHTML">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Sort order <input type="number" name="sort_order" value="0"></label>
+      <div class="dialog-actions">
+        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
 
   <h2>Floors</h2>
   <table>
@@ -14,18 +52,5 @@
     {{end}}
     </tbody>
   </table>
-
-  <div class="panel">
-    <h3>Add floor</h3>
-    <form hx-post="/buildings/{{.Building.ID}}/floors" hx-target="#page-content" hx-swap="outerHTML">
-      <label>Name <input type="text" name="name" required></label>
-      <label>Sort order <input type="number" name="sort_order" value="0"></label>
-      <button type="submit">Create</button>
-    </form>
-  </div>
-
-  <form class="inline" hx-post="/buildings/{{.Building.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
-    <button type="submit" class="danger">Delete building</button>
-  </form>
 </div>
 {{end}}
