@@ -457,18 +457,41 @@ func (db *Database) ListRooms(ctx context.Context, buildingID, floorID *string) 
 // LinkDevice upserts the device_id -> room_id mapping, keyed on deviceID, so
 // moving a device to a new room is a single call. If the device is already
 // linked, expectedVersion must match its current version - checked
-// atomically as part of the upsert's own WHERE clause below, not via a
-// separate read-then-write, which would leave a race window - or
+// atomically as part of the upsert's own WHERE clause below - or
 // ErrVersionMismatch is returned. An empty expectedVersion accepts any
 // current version, which is the only option for a device's first-ever link
 // (nothing to race against yet); it also means a race between two
 // concurrent first links of the same never-before-linked device isn't
 // caught here, same as Create* has no equivalent protection - a narrower
 // case than the stale-edit race this version check exists for.
+//
+// The read of the existing link (to report hadLink/previousRoomID) and the
+// upsert run inside one BEGIN IMMEDIATE transaction on a pinned connection,
+// so a concurrent UnlinkDevice can't delete the row in the window between
+// them - which would otherwise turn the upsert into a plain unconditional
+// INSERT with nothing to conflict against, silently bypassing
+// expectedVersion entirely.
 // previousRoomID is nil if the device wasn't previously linked to any room.
 func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID, expectedVersion string) (link *Device, previousRoomID *string, err error) {
+	conn, err := db.db.Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		db.logger.Error("unable to begin link transaction", zap.String("device_id", deviceID), zap.Error(err))
+		return nil, nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	}()
+
 	var prev sql.NullString
-	row := db.db.QueryRowContext(ctx, "SELECT room_id FROM device_room WHERE id=?", deviceID)
+	row := conn.QueryRowContext(ctx, "SELECT room_id FROM device_room WHERE id=?", deviceID)
 	if scanErr := row.Scan(&prev); scanErr != nil && scanErr != sql.ErrNoRows {
 		db.logger.Error("unable to check existing device link", zap.String("device_id", deviceID), zap.Error(scanErr))
 		return nil, nil, scanErr
@@ -476,7 +499,7 @@ func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID, expectedVe
 	hadLink := prev.Valid
 
 	newVersion := uuid.NewString()
-	res, err := db.db.ExecContext(ctx,
+	res, err := conn.ExecContext(ctx,
 		`INSERT INTO device_room (id, room_id, version) VALUES (?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET room_id=excluded.room_id, version=excluded.version
 		 WHERE ?='' OR device_room.version=?`,
@@ -497,6 +520,12 @@ func (db *Database) LinkDevice(ctx context.Context, deviceID, roomID, expectedVe
 		p := prev.String
 		previousRoomID = &p
 	}
+
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		db.logger.Error("unable to commit link transaction", zap.String("device_id", deviceID), zap.Error(err))
+		return nil, nil, err
+	}
+	committed = true
 
 	return &Device{ID: deviceID, RoomID: roomID, Version: newVersion}, previousRoomID, nil
 }

@@ -129,14 +129,13 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		deviceName = deviceDisplayName(d)
 	}
 
-	data, loadErr := s.loadDevicesPageData(r)
-	if loadErr != nil {
-		s.httpError(w, r, loadErr)
-		return
-	}
-
 	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID, Version: r.FormValue("version")})
 	if err != nil {
+		data, loadErr := s.loadDevicesPageData(r)
+		if loadErr != nil {
+			s.httpError(w, r, loadErr)
+			return
+		}
 		s.respond(w, "devices", data, grpcMessage(err), true)
 		return
 	}
@@ -159,7 +158,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 		flash = fmt.Sprintf("%s linked to %s", deviceName, newRoomLabel)
 	}
 
-	data, loadErr = s.loadDevicesPageData(r)
+	data, loadErr := s.loadDevicesPageData(r)
 	if loadErr != nil {
 		s.httpError(w, r, loadErr)
 		return

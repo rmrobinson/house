@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -15,6 +14,8 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/rmrobinson/house/backoffutil"
 )
 
 const (
@@ -116,7 +117,7 @@ func (c *Conn) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(backoffutil.Jitter(backoff)):
 		}
 
 		backoff *= 2
@@ -388,14 +389,4 @@ func readCastMessage(r io.Reader) (*CastMessage, error) {
 		return nil, err
 	}
 	return msg, nil
-}
-
-// jitter returns d randomized within +/-20%, so many devices reconnecting at
-// once don't all retry in lockstep.
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	spread := int64(d) * 2 / 5 // 40% of d, i.e. the full +/-20% range
-	return d - time.Duration(spread/2) + time.Duration(rand.Int63n(spread+1))
 }

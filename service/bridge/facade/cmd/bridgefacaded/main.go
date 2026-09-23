@@ -33,7 +33,19 @@ func main() {
 
 	port := viper.GetInt("bridge.listen_port")
 
-	cfg, err := facade.LoadConfig(logger, port)
+	// Listening before loading the facade config (rather than after) means
+	// facade.LoadConfig gets the port actually bound by the OS, not just the
+	// port that was asked for - the two only differ if bridge.listen_port is
+	// ever set to 0 for an OS-assigned ephemeral port, but deriving it from
+	// the real listener means that case can't silently advertise the wrong
+	// port instead of failing loudly.
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		logger.Fatal("error listening", zap.Error(err), zap.Int("port", port))
+	}
+	boundPort := lis.Addr().(*net.TCPAddr).Port
+
+	cfg, err := facade.LoadConfig(logger, boundPort)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
 	}
@@ -45,10 +57,6 @@ func main() {
 	defer cancel()
 
 	f := facade.NewFromConfig(ctx, logger, cfg)
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-	if err != nil {
-		logger.Fatal("error listening", zap.Error(err), zap.Int("port", port))
-	}
 
 	var opts []grpc.ServerOption
 	grpcServer := grpc.NewServer(opts...)

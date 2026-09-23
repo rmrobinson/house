@@ -7,6 +7,7 @@ go_library(
         "handlers_device.go",
         "handlers_floor.go",
         "handlers_room.go",
+        "hub.go",
         "main.go",
         "server.go",
         "sse.go",
@@ -31,6 +32,7 @@ go_library(
     deps = [
         "//api",
         "//api/device",
+        "//backoffutil",
         "//grpcutil",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//codes",

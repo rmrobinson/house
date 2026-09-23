@@ -376,7 +376,33 @@ func (s *Service) roomToAPI(ctx context.Context, room db.Room) (*api2.Room, erro
 		return nil, status.Error(codes.Internal, "unable to list room devices")
 	}
 
-	return roomDBToAPI(room, links, s.resolveDevices(ctx)), nil
+	return roomDBToAPI(room, links, s.resolveLinkedDevices(ctx, links)), nil
+}
+
+// resolveLinkedDevices fetches full Device state for exactly links via
+// individual GetDevice calls, keyed by device ID - the single-room
+// counterpart to resolveDevices, which fetches the facade's entire device
+// inventory in one call to amortize across every room in a ListRooms
+// response. A single room only ever has a handful of linked devices, so a
+// handful of GetDevice calls (served from the facade's in-memory cache) is
+// cheaper than pulling every device in the house just to resolve them.
+// Returns nil if no bridge client is configured; a link whose GetDevice
+// call fails is simply left out of the result, same as resolveDevices'
+// contract - callers fall back to an ID-only stub (see roomDBToAPI).
+func (s *Service) resolveLinkedDevices(ctx context.Context, links []db.Device) map[string]*apiDevice.Device {
+	if s.bridgeClient == nil {
+		return nil
+	}
+
+	out := make(map[string]*apiDevice.Device, len(links))
+	for _, link := range links {
+		d, err := s.bridgeClient.GetDevice(ctx, &api2.GetDeviceRequest{Id: link.ID})
+		if err != nil {
+			continue
+		}
+		out[d.GetId()] = d
+	}
+	return out
 }
 
 // roomDBToAPI converts room to its API representation, embedding full Device

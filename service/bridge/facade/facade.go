@@ -164,10 +164,14 @@ func (f *Facade) upstreamClientFor(deviceID string) (api2.BridgeServiceClient, s
 	}
 
 	uc, ok := f.byID[bridgeID]
-	if !ok || !uc.connected() {
+	if !ok {
 		return nil, bridgeID, ErrBridgeUnreachable
 	}
-	return uc.client, bridgeID, nil
+	client, live := uc.snapshot()
+	if !live {
+		return nil, bridgeID, ErrBridgeUnreachable
+	}
+	return client, bridgeID, nil
 }
 
 func (f *Facade) GetBridge(ctx context.Context, req *api2.GetBridgeRequest) (*api2.Bridge, error) {

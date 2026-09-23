@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -13,18 +14,26 @@ import (
 )
 
 // Server holds the two gRPC clients this admin UI depends on and serves
-// every route. It holds no other state - every page render reads current
-// state fresh from HouseService/BridgeService on each request, matching v1's
-// single-editor scope (see admin-ui-implementation.md).
+// every route. Every page render reads current state fresh from
+// HouseService/BridgeService on each request, matching v1's single-editor
+// scope (see admin-ui-implementation.md) - the one exception is hub, which
+// holds the single shared BridgeService.StreamUpdates subscription every
+// SSE client is fanned out from (see hub.go/sse.go).
 type Server struct {
 	logger *zap.Logger
 	house  api2.HouseServiceClient
 	bridge api2.BridgeServiceClient
+	hub    *deviceHub
 	mux    *http.ServeMux
 }
 
-func newServer(logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient) *Server {
-	s := &Server{logger: logger, house: house, bridge: bridge}
+// newServer wires up every route and starts the shared device update hub,
+// which runs for the lifetime of ctx.
+func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient) *Server {
+	hub := newDeviceHub(logger, bridge)
+	go hub.run(ctx)
+
+	s := &Server{logger: logger, house: house, bridge: bridge, hub: hub}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))

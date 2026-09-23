@@ -3,7 +3,6 @@ package facade
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +12,7 @@ import (
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/backoffutil"
 	"github.com/rmrobinson/house/grpcutil"
 )
 
@@ -73,7 +73,7 @@ func (u *upstreamConn) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(jitter(backoff)):
+		case <-time.After(backoffutil.Jitter(backoff)):
 		}
 
 		u.backoff.Store(int64(min(backoff*2, maxReconnectBackoff)))
@@ -326,15 +326,4 @@ func (f *Facade) publishDeviceUpdate(action api2.Update_Action, bridgeID, device
 			},
 		},
 	})
-}
-
-// jitter returns d randomized within +/-20%, so multiple upstream bridges
-// dropping at once (e.g. a network partition) don't all retry in lockstep -
-// mirrors bridges/lib/webosctrl/conn.go's jitter.
-func jitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	spread := int64(d) * 2 / 5 // 40% of d, i.e. the full +/-20% range
-	return d - time.Duration(spread/2) + time.Duration(rand.Int63n(spread+1))
 }

@@ -201,14 +201,13 @@ func (s *Server) handleRoomLinkDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.FormValue("device_id")
 	ctx := r.Context()
 
-	data, loadErr := s.loadRoomPageData(r, roomID)
-	if loadErr != nil {
-		s.httpError(w, r, loadErr)
-		return
-	}
-
 	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID, Version: r.FormValue("version")})
 	if err != nil {
+		data, loadErr := s.loadRoomPageData(r, roomID)
+		if loadErr != nil {
+			s.httpError(w, r, loadErr)
+			return
+		}
 		s.respond(w, "room", data, grpcMessage(err), true)
 		return
 	}
@@ -216,6 +215,12 @@ func (s *Server) handleRoomLinkDevice(w http.ResponseWriter, r *http.Request) {
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
 		deviceName = deviceDisplayName(d)
+	}
+
+	data, loadErr := s.loadRoomPageData(r, roomID)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
 	}
 
 	var flash string
@@ -230,11 +235,6 @@ func (s *Server) handleRoomLinkDevice(w http.ResponseWriter, r *http.Request) {
 		flash = fmt.Sprintf("%s linked to %s", deviceName, data.Room.Name)
 	}
 
-	data, loadErr = s.loadRoomPageData(r, roomID)
-	if loadErr != nil {
-		s.httpError(w, r, loadErr)
-		return
-	}
 	s.respond(w, "room", data, flash, false)
 }
 
@@ -252,18 +252,17 @@ func (s *Server) handleRoomUnlinkDevice(w http.ResponseWriter, r *http.Request) 
 		deviceName = deviceDisplayName(d)
 	}
 
-	data, loadErr := s.loadRoomPageData(r, roomID)
-	if loadErr != nil {
-		s.httpError(w, r, loadErr)
-		return
-	}
-
 	if _, err := s.house.UnlinkDevice(ctx, &api2.UnlinkDeviceRequest{DeviceId: deviceID}); err != nil {
+		data, loadErr := s.loadRoomPageData(r, roomID)
+		if loadErr != nil {
+			s.httpError(w, r, loadErr)
+			return
+		}
 		s.respond(w, "room", data, grpcMessage(err), true)
 		return
 	}
 
-	data, loadErr = s.loadRoomPageData(r, roomID)
+	data, loadErr := s.loadRoomPageData(r, roomID)
 	if loadErr != nil {
 		s.httpError(w, r, loadErr)
 		return

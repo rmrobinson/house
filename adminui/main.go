@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -59,7 +60,7 @@ func main() {
 	}
 	bridgeClient := api2.NewBridgeServiceClient(bridgeConn)
 
-	srv := newServer(logger, houseClient, bridgeClient)
+	srv := newServer(context.Background(), logger, houseClient, bridgeClient)
 
 	port := viper.GetInt("adminui.listen_port")
 	logger.Info("serving admin ui", zap.Int("port", port))

@@ -27,6 +27,7 @@ go_library(
     importpath = "github.com/rmrobinson/house/bridges/lib/castctrl",
     visibility = ["//visibility:public"],
     deps = [
+        "//backoffutil",
         "@org_golang_google_protobuf//proto",
         "@org_uber_go_zap//:zap",
     ],

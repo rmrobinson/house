@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -11,7 +10,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 )
 
-// handleSSE relays BridgeService.StreamUpdates as Server-Sent Events for
+// handleSSE relays the shared deviceHub's updates as Server-Sent Events for
 // htmx's SSE extension (see templates/layout.html's hx-ext="sse"). Every
 // page shows a device's name/kind/online status in a
 // <td id="device-info-<id>"> cell (see templates/partials/device_info.html),
@@ -22,6 +21,14 @@ import (
 // DOM - no page-specific subscription bookkeeping needed.
 // BridgeUpdate/CommandUpdate/InitialUpdate are not relayed: this admin UI
 // has no view of bridge-level or in-flight command state, only device info.
+//
+// One upstream BridgeService.StreamUpdates connection (see hub.go) backs
+// every open browser tab, rather than each tab opening its own - a new tab
+// simply subscribes to updates already flowing, so it doesn't pay for (or
+// need) another copy of the facade's initial-state replay: the page it just
+// loaded already rendered current state itself via its own GetDevice/
+// ListDevices call, and a DeviceUpdate here only ever swaps a cell that
+// render already produced.
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -30,11 +37,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	stream, err := s.bridge.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
-	if err != nil {
-		s.httpError(w, r, err)
-		return
-	}
+	updates, unsubscribe := s.hub.subscribe()
+	defer unsubscribe()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -43,19 +47,11 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	for {
-		update, err := stream.Recv()
-		if err != nil {
-			// ctx is r.Context(), so ctx.Err() != nil means the client
-			// itself went away (tab closed, or - since top-level navigation
-			// is a plain <a href>, not htmx-boosted, see server.go - simply
-			// navigated to the next page) and StreamUpdates was cancelled
-			// as a result. That's the expected end of every SSE connection,
-			// not a failure worth a warning, unlike the stream actually
-			// ending on the bridge-facade side.
-			if err != io.EOF && ctx.Err() == nil {
-				s.logger.Warn("bridge update stream ended", zap.Error(err))
-			}
+		var update *api2.Update
+		select {
+		case <-ctx.Done():
 			return
+		case update = <-updates:
 		}
 
 		du := update.GetDeviceUpdate()
@@ -79,10 +75,6 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		flusher.Flush()
-
-		if ctx.Err() != nil {
-			return
-		}
 	}
 }
 

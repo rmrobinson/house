@@ -21,10 +21,11 @@ import (
 )
 
 // fakeBridgeClient is a minimal api2.BridgeServiceClient stand-in - Service
-// only ever calls ListDevices (see resolveDevices), so every other method
-// panics if a test reaches it.
+// only ever calls ListDevices (see resolveDevices) and GetDevice (see
+// resolveLinkedDevices), so every other method panics if a test reaches it.
 type fakeBridgeClient struct {
 	listDevicesFn func(ctx context.Context, req *api2.ListDevicesRequest) (*api2.ListDevicesResponse, error)
+	getDeviceFn   func(ctx context.Context, req *api2.GetDeviceRequest) (*apiDevice.Device, error)
 }
 
 func (f *fakeBridgeClient) GetBridge(ctx context.Context, in *api2.GetBridgeRequest, opts ...grpc.CallOption) (*api2.Bridge, error) {
@@ -34,7 +35,7 @@ func (f *fakeBridgeClient) ListDevices(ctx context.Context, in *api2.ListDevices
 	return f.listDevicesFn(ctx, in)
 }
 func (f *fakeBridgeClient) GetDevice(ctx context.Context, in *api2.GetDeviceRequest, opts ...grpc.CallOption) (*apiDevice.Device, error) {
-	panic("not implemented in fake")
+	return f.getDeviceFn(ctx, in)
 }
 func (f *fakeBridgeClient) UpdateDeviceConfig(ctx context.Context, in *api2.UpdateDeviceConfigRequest, opts ...grpc.CallOption) (*apiDevice.Device, error) {
 	panic("not implemented in fake")
@@ -128,12 +129,9 @@ func TestResolveDevices_Success(t *testing.T) {
 
 func TestGetRoom_EmbedsResolvedDevices(t *testing.T) {
 	client := &fakeBridgeClient{
-		listDevicesFn: func(ctx context.Context, req *api2.ListDevicesRequest) (*api2.ListDevicesResponse, error) {
-			return &api2.ListDevicesResponse{
-				Devices: []*apiDevice.Device{
-					{Id: "device-1", Config: &apiDevice.Device_Config{Name: "Resolved device-1"}},
-				},
-			}, nil
+		getDeviceFn: func(ctx context.Context, req *api2.GetDeviceRequest) (*apiDevice.Device, error) {
+			require.Equal(t, "device-1", req.GetId())
+			return &apiDevice.Device{Id: "device-1", Config: &apiDevice.Device_Config{Name: "Resolved device-1"}}, nil
 		},
 	}
 	s := newTestService(t, client)

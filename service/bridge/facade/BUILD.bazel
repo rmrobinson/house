@@ -13,6 +13,7 @@ go_library(
         "//api",
         "//api/command",
         "//api/device",
+        "//backoffutil",
         "//grpcutil",
         "//service/bridge",
         "@com_github_google_uuid//:uuid",
