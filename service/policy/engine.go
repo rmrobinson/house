@@ -152,13 +152,19 @@ func (e *Engine) Bus() *Bus {
 	return e.bus
 }
 
-// UpdateDeviceState records value as entityID's last known state and
-// publishes it on the engine's bus as "device.updated.<entityID>". Whatever
-// hydrates the engine from the home's device/house gRPC streams should call
-// this on every update; the engine does not subscribe to those streams
-// itself.
-func (e *Engine) UpdateDeviceState(entityID string, value any) {
-	e.cache.set(entityID, value)
+// UpdateDeviceState records value as entityID's last known state, tagged
+// with kind, and publishes it on the engine's bus as
+// "device.updated.<entityID>". Whatever hydrates the engine from the home's
+// device/house gRPC streams should call this on every update; the engine
+// does not subscribe to those streams itself.
+//
+// kind is opaque to the engine - it imposes no schema of its own - and is
+// whatever the caller finds useful to enumerate devices by later via
+// DevicesOfKind (e.g. bridgehome derives it from device.Device's populated
+// "details" oneof branch: "light", "sensor", "ups", ...). Pass "" if the
+// caller has no meaningful kind to offer.
+func (e *Engine) UpdateDeviceState(entityID, kind string, value any) {
+	e.cache.set(entityID, kind, value)
 	e.bus.Publish(Event{Topic: "device.updated." + entityID, Payload: value})
 }
 
@@ -166,6 +172,16 @@ func (e *Engine) UpdateDeviceState(entityID string, value any) {
 // whether an entry was present.
 func (e *Engine) GetLastKnown(entityID string) (any, bool) {
 	return e.cache.get(entityID)
+}
+
+// DevicesOfKind returns the sorted IDs of every cached device tagged with
+// kind (see UpdateDeviceState). It reads the engine's local cache only - no
+// HomeAPI call, no round-trip to whatever's behind it - so it reflects
+// exactly the devices observed via the update stream so far, not
+// necessarily every device that exists. Exposed to policy scripts as
+// home.findDevices(kind) (see registerHomeTable).
+func (e *Engine) DevicesOfKind(kind string) []string {
+	return e.cache.byKind(kind)
 }
 
 // RemoveDeviceState drops entityID from the cache. Whatever hydrates the
@@ -500,7 +516,7 @@ func (e *Engine) runScript(ctx context.Context, p *Policy) {
 	defer L.Close()
 	L.SetContext(ctx)
 
-	registerHomeTable(L, e.home)
+	registerHomeTable(L, e.home, e.DevicesOfKind)
 
 	err := L.DoString(p.Script)
 	log.EndedAt = time.Now()

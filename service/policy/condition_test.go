@@ -90,6 +90,83 @@ func TestHysteresisPollingConditionBandBehaviour(t *testing.T) {
 	assert.False(t, cond.Evaluate())
 }
 
+func TestHysteresisPredicateConditionBandBehaviour(t *testing.T) {
+	bus := NewBus()
+	var value atomic.Value
+	value.Store(20.0)
+	read := func() float64 { return value.Load().(float64) }
+
+	cond := NewHysteresisPredicateCondition(bus, "topic", read, 24.0, 22.0, false)
+
+	changes := make(chan bool, 8)
+	ctx := t.Context()
+	cond.Start(ctx, func(v bool) { changes <- v })
+
+	// Baseline seed (20 < high) must not fire onChange, and must be false.
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	// An event while still inside the band must not fire.
+	value.Store(23.0)
+	bus.Publish(Event{Topic: "topic"})
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	// Crosses the high threshold: becomes true.
+	value.Store(24.0)
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+
+	// An unrelated topic must not trigger a re-evaluation.
+	value.Store(10.0)
+	bus.Publish(Event{Topic: "other-topic"})
+	assertNoChange(t, changes)
+	assert.True(t, cond.Evaluate())
+
+	// Drops to the low threshold: becomes false.
+	value.Store(22.0)
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate())
+}
+
+// TestHysteresisPredicateConditionFalling covers the mirror-image shape
+// (see hysteresisNext's falling parameter): true once the value falls
+// to/below Low, false again once it recovers to/above High.
+func TestHysteresisPredicateConditionFalling(t *testing.T) {
+	bus := NewBus()
+	var value atomic.Value
+	value.Store(0.0) // well above Low
+
+	cond := NewHysteresisPredicateCondition(bus, "topic", func() float64 { return value.Load().(float64) }, -14.0, -15.0, true)
+
+	changes := make(chan bool, 8)
+	ctx := t.Context()
+	cond.Start(ctx, func(v bool) { changes <- v })
+
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	// Staying above the recovery threshold must not fire.
+	value.Store(-10.0)
+	bus.Publish(Event{Topic: "topic"})
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	// Falls to/below Low: alarm.
+	value.Store(-16.0)
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+
+	// Recovers to/above High: clears.
+	value.Store(-14.0)
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate())
+}
+
 func TestEventConditionPulseWithNilPredicates(t *testing.T) {
 	bus := NewBus()
 	cond := NewEventCondition(bus, "sensor.motion.front", nil, nil)

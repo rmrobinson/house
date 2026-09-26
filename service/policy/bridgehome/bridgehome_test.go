@@ -103,6 +103,15 @@ func colourLightDevice(id string, red int32) *device.Device {
 	}
 }
 
+func cameraDevice(id string, motionDetected bool) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Camera{Camera: &device.Camera{
+			Presence: &trait.Presence{State: &trait.Presence_State{MotionDetected: motionDetected}},
+		}},
+	}
+}
+
 func waterSensorDevice(id string, active bool) *device.Device {
 	return &device.Device{
 		Id: id,
@@ -392,6 +401,83 @@ func TestAdapter_SetLight_PropagatesError(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.Unavailable, st.Code())
+}
+
+// TestHasMotionCoversAnyDeviceKindWithAPresenceField is finding C's
+// regression test: hasMotion must not be hardcoded to Sensor - Camera (and
+// any other kind whose details message has a "presence" field) has to work
+// too, since it now goes through the same generic resolveAttribute path
+// GetAttribute uses.
+func TestHasMotionCoversAnyDeviceKindWithAPresenceField(t *testing.T) {
+	assert.True(t, hasMotion(sensorDevice("sensor-1", true, false)))
+	assert.False(t, hasMotion(sensorDevice("sensor-1", false, false)))
+	assert.True(t, hasMotion(cameraDevice("camera-1", true)))
+	assert.False(t, hasMotion(cameraDevice("camera-1", false)))
+	assert.False(t, hasMotion(lightDevice("light-1", true)), "a kind with no presence field must not panic or false-positive")
+}
+
+func TestDeviceKind(t *testing.T) {
+	assert.Equal(t, "sensor", deviceKind(sensorDevice("sensor-1", false, false)))
+	assert.Equal(t, "light", deviceKind(lightDevice("light-1", false)))
+	assert.Equal(t, "camera", deviceKind(cameraDevice("camera-1", false)))
+	assert.Equal(t, "", deviceKind(&device.Device{Id: "no-details"}))
+}
+
+// TestAdapter_CameraMotionPublishesMotionDetected proves finding C end to
+// end: a camera-sourced motion rising edge now reaches the shared
+// "motion.detected" bus topic the same way a Sensor's does.
+func TestAdapter_CameraMotionPublishesMotionDetected(t *testing.T) {
+	updates := initialAsBulk("b1", []*device.Device{cameraDevice("camera-1", false)})
+	updates = append(updates, changedUpdate("b1", cameraDevice("camera-1", true)))
+
+	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
+
+	adapter := New(zaptest.NewLogger(t), addr)
+	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	defer engine.Close()
+
+	motionCh := engine.Bus().Subscribe("motion.detected")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	adapter.Start(ctx, engine)
+
+	select {
+	case ev := <-motionCh:
+		assert.Equal(t, "motion.detected", ev.Topic)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected a motion.detected event for camera-sourced motion")
+	}
+}
+
+// TestAdapter_UpdateDeviceStateTagsEngineCacheWithKind proves devices
+// streamed through the Adapter land in the engine's cache tagged with their
+// kind, so Engine.DevicesOfKind (and policy scripts' home.findDevices) can
+// enumerate them without any HomeAPI support for listing devices.
+func TestAdapter_UpdateDeviceStateTagsEngineCacheWithKind(t *testing.T) {
+	updates := initialAsBulk("b1", []*device.Device{
+		lightDevice("light-1", false),
+		sensorDevice("sensor-1", false, false),
+		cameraDevice("camera-1", false),
+	})
+	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
+
+	adapter := New(zaptest.NewLogger(t), addr)
+	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	adapter.Start(ctx, engine)
+
+	require.Eventually(t, func() bool {
+		return len(engine.DevicesOfKind("light")) == 1 &&
+			len(engine.DevicesOfKind("sensor")) == 1 &&
+			len(engine.DevicesOfKind("camera")) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+
+	assert.Equal(t, []string{"light-1"}, engine.DevicesOfKind("light"))
+	assert.Empty(t, engine.DevicesOfKind("ups"))
 }
 
 func TestAdapter_ErrNotReadyBeforeStart(t *testing.T) {

@@ -79,10 +79,13 @@ func asBindingError(err error) error {
 	return tag.err
 }
 
-// registerHomeTable installs the "home" global table backed by api on L.
-// A fresh LState gets a fresh table: there is no shared state between
+// registerHomeTable installs the "home" global table backed by api on L,
+// plus home.findDevices(kind) backed directly by devicesOfKind (see
+// Engine.DevicesOfKind) - a local-cache lookup, not a HomeAPI method, since
+// no HomeAPI implementation needs to support device enumeration for this to
+// work. A fresh LState gets a fresh table: there is no shared state between
 // script runs.
-func registerHomeTable(L *lua.LState, api HomeAPI) {
+func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind string) []string) {
 	fail := func(L *lua.LState, err error, format string, args ...any) {
 		raiseBindingError(L, fmt.Errorf("%s: %w", fmt.Sprintf(format, args...), err))
 	}
@@ -162,6 +165,16 @@ func registerHomeTable(L *lua.LState, api HomeAPI) {
 				return 0
 			}
 			L.Push(goToLua(L, v))
+			return 1
+		},
+		"findDevices": func(L *lua.LState) int {
+			kind := L.CheckString(1)
+			ids := devicesOfKind(kind)
+			tbl := L.NewTable()
+			for _, id := range ids {
+				tbl.Append(lua.LString(id))
+			}
+			L.Push(tbl)
 			return 1
 		},
 		"notify": func(L *lua.LState) int {

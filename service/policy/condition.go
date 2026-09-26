@@ -60,17 +60,47 @@ func (p *PollingCondition) Start(ctx context.Context, onChange func(bool)) {
 	}()
 }
 
+// hysteresisNext computes a hysteresis band's next value for a fresh
+// reading v given the band's current state, shared by
+// HysteresisPollingCondition and HysteresisPredicateCondition so both apply
+// exactly the same logic.
+//
+// falling selects which edge is the "alarm" edge: false (the default shape)
+// flips false→true once v rises to/above high and back true→false once v
+// falls to/below low - e.g. "temperature is above 25". true is the mirror
+// image, for "falls below" facts (e.g. "temperature is below −15", "battery
+// is below 5%"): it flips false→true once v falls to/below low, and back
+// true→false once v recovers to/above high.
+func hysteresisNext(current bool, v, high, low float64, falling bool) bool {
+	if falling {
+		switch {
+		case !current && v <= low:
+			return true
+		case current && v >= high:
+			return false
+		default:
+			return current
+		}
+	}
+	switch {
+	case !current && v >= high:
+		return true
+	case current && v <= low:
+		return false
+	default:
+		return current
+	}
+}
+
 // HysteresisPollingCondition wraps a func() float64 that is evaluated on a
-// fixed interval, applying a hysteresis band so a value oscillating near a
-// single threshold doesn't rapidly toggle the condition. It only flips
-// false→true once the value reaches thresholdHigh, and only flips back
-// true→false once the value drops to thresholdLow; readings strictly
-// between the two leave the current state unchanged.
+// fixed interval, applying a hysteresis band (see hysteresisNext) so a value
+// oscillating near a single threshold doesn't rapidly toggle the condition.
 type HysteresisPollingCondition struct {
 	fn            func() float64
 	thresholdHigh float64
 	thresholdLow  float64
 	interval      time.Duration
+	falling       bool
 
 	mu    sync.Mutex
 	value bool
@@ -78,13 +108,21 @@ type HysteresisPollingCondition struct {
 
 // NewHysteresisPollingCondition creates a HysteresisPollingCondition that
 // evaluates fn every interval against the [thresholdLow, thresholdHigh]
-// band.
+// band, rising-edge shaped (see hysteresisNext).
 func NewHysteresisPollingCondition(fn func() float64, thresholdHigh, thresholdLow float64, interval time.Duration) *HysteresisPollingCondition {
+	return NewDirectionalHysteresisPollingCondition(fn, thresholdHigh, thresholdLow, interval, false)
+}
+
+// NewDirectionalHysteresisPollingCondition is NewHysteresisPollingCondition
+// with control over which edge is the alarm edge - see hysteresisNext's
+// falling parameter.
+func NewDirectionalHysteresisPollingCondition(fn func() float64, thresholdHigh, thresholdLow float64, interval time.Duration, falling bool) *HysteresisPollingCondition {
 	return &HysteresisPollingCondition{
 		fn:            fn,
 		thresholdHigh: thresholdHigh,
 		thresholdLow:  thresholdLow,
 		interval:      interval,
+		falling:       falling,
 	}
 }
 
@@ -94,18 +132,8 @@ func (h *HysteresisPollingCondition) Evaluate() bool {
 	return h.value
 }
 
-// next computes the band-adjusted value for a fresh reading v, given the
-// condition's current state. It's shared by Start's baseline seed and its
-// ticker loop so both apply exactly the same band logic.
 func (h *HysteresisPollingCondition) next(current bool, v float64) bool {
-	switch {
-	case !current && v >= h.thresholdHigh:
-		return true
-	case current && v <= h.thresholdLow:
-		return false
-	default:
-		return current
-	}
+	return hysteresisNext(current, v, h.thresholdHigh, h.thresholdLow, h.falling)
 }
 
 func (h *HysteresisPollingCondition) Start(ctx context.Context, onChange func(bool)) {
@@ -129,6 +157,81 @@ func (h *HysteresisPollingCondition) Start(ctx context.Context, onChange func(bo
 					h.mu.Lock()
 					h.value = cur
 					h.mu.Unlock()
+					onChange(cur)
+				}
+			}
+		}
+	}()
+}
+
+// HysteresisPredicateCondition is HysteresisPollingCondition's band logic
+// (see hysteresisNext) driven by a Bus signal instead of a ticker - the same
+// relationship PredicateCondition has to PollingCondition. Useful for a
+// numeric fact that should react to a push-driven signal (e.g. bridgehome's
+// per-device "device.updated.<id>" event) rather than be polled on a timer.
+type HysteresisPredicateCondition struct {
+	bus           *Bus
+	topic         string
+	fn            func() float64
+	thresholdHigh float64
+	thresholdLow  float64
+	falling       bool
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewHysteresisPredicateCondition creates a HysteresisPredicateCondition
+// that re-evaluates fn against the [thresholdLow, thresholdHigh] band
+// whenever an event is published to topic on bus. See hysteresisNext's
+// falling parameter.
+func NewHysteresisPredicateCondition(bus *Bus, topic string, fn func() float64, thresholdHigh, thresholdLow float64, falling bool) *HysteresisPredicateCondition {
+	return &HysteresisPredicateCondition{
+		bus:           bus,
+		topic:         topic,
+		fn:            fn,
+		thresholdHigh: thresholdHigh,
+		thresholdLow:  thresholdLow,
+		falling:       falling,
+	}
+}
+
+func (h *HysteresisPredicateCondition) Evaluate() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.value
+}
+
+func (h *HysteresisPredicateCondition) next(current bool, v float64) bool {
+	return hysteresisNext(current, v, h.thresholdHigh, h.thresholdLow, h.falling)
+}
+
+func (h *HysteresisPredicateCondition) Start(ctx context.Context, onChange func(bool)) {
+	h.mu.Lock()
+	h.value = h.next(false, h.fn())
+	h.mu.Unlock()
+
+	ch := h.bus.Subscribe(h.topic)
+
+	go func() {
+		defer h.bus.Unsubscribe(h.topic, ch)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+
+				h.mu.Lock()
+				cur := h.next(h.value, h.fn())
+				changed := cur != h.value
+				h.value = cur
+				h.mu.Unlock()
+
+				if changed {
 					onChange(cur)
 				}
 			}

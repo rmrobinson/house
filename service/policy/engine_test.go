@@ -453,9 +453,26 @@ func TestEngineUpdateDeviceStateFeedsCache(t *testing.T) {
 	_, ok := e.GetLastKnown("sensor.temp")
 	assert.False(t, ok)
 
-	e.UpdateDeviceState("sensor.temp", 21.5)
+	e.UpdateDeviceState("sensor.temp", "sensor", 21.5)
 
 	v, ok := e.GetLastKnown("sensor.temp")
 	require.True(t, ok)
 	assert.Equal(t, 21.5, v)
+}
+
+func TestEngineDevicesOfKindReadsLocalCacheOnly(t *testing.T) {
+	e, _ := newTestEngine(t, newFakeHomeAPI())
+
+	assert.Empty(t, e.DevicesOfKind("light"))
+
+	e.UpdateDeviceState("light.kitchen", "light", true)
+	e.UpdateDeviceState("light.porch", "light", false)
+	e.UpdateDeviceState("sensor.temp", "sensor", 21.5)
+
+	assert.Equal(t, []string{"light.kitchen", "light.porch"}, e.DevicesOfKind("light"))
+	assert.Equal(t, []string{"sensor.temp"}, e.DevicesOfKind("sensor"))
+	assert.Empty(t, e.DevicesOfKind("ups"))
+
+	e.RemoveDeviceState("light.porch")
+	assert.Equal(t, []string{"light.kitchen"}, e.DevicesOfKind("light"))
 }

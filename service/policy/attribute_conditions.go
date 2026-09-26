@@ -9,26 +9,38 @@ import (
 	"go.uber.org/zap"
 )
 
-// defaultAttributePollInterval is used by "attribute.threshold" when a
-// policy doesn't specify one - short enough to feel live, long enough that
-// polling a cache read (not a network call - see GetAttribute) is free.
-const defaultAttributePollInterval = 10 * time.Second
-
 // AttributeThresholdParams parameterizes the "attribute.threshold" condition
-// type: true once home.GetAttribute(DeviceID, Key) reaches High, false again
-// once it drops to Low. Set High == Low for a plain, non-hysteresis
-// threshold (e.g. "temperature > 25").
+// type: a numeric fact over home.GetAttribute(DeviceID, Key), reacting to
+// bridgehome's per-device "device.updated.<id>" signal rather than polling.
+// Set High == Low for a plain, non-hysteresis threshold (e.g.
+// "temperature > 25").
+//
+// Falling picks which edge is the alarm edge (see hysteresisNext): false
+// (the default) is "rises to/above High, recovers at/below Low" (e.g.
+// "temperature is above 25"); true is the mirror image, "falls to/below
+// Low, recovers at/above High" (e.g. "temperature is below −15", "battery
+// is below 5%"). Getting this backwards is a common mistake, since it's
+// easy to read High/Low as "the alarm threshold/the recovery threshold" in
+// either direction - Falling exists precisely so a "falls below" fact
+// doesn't have to be faked by negating the reading.
 type AttributeThresholdParams struct {
-	DeviceID        string
-	Key             string
-	High, Low       float64
-	IntervalSeconds int
+	DeviceID  string
+	Key       string
+	High, Low float64
+	Falling   bool
 }
 
 // AttributeEqualsParams parameterizes the "attribute.equals" condition type:
 // true while home.GetAttribute(DeviceID, Key) equals Value. Reacts
 // near-instantly to bridgehome's per-device "device.updated.<id>" signal
 // rather than polling.
+//
+// Value is compared with attributeValuesEqual, not a bare reflect.DeepEqual:
+// a JSON round-trip through persistence (see store.go) turns every JSON
+// number into float64, so a Value authored as e.g. an int against an
+// int64-typed attribute would otherwise silently stop matching the moment
+// the policy is reloaded from the store. attributeValuesEqual normalizes
+// both sides numerically before comparing so that doesn't happen.
 type AttributeEqualsParams struct {
 	DeviceID string
 	Key      string
@@ -66,8 +78,16 @@ type EventIdleForParams struct {
 // doc comment (the persistence case) for when to call this.
 func RegisterBuiltinConditionTypes(e *Engine) {
 	RegisterConditionType(e.registry, "attribute.threshold", func(p AttributeThresholdParams) Condition {
+		high, low := p.High, p.Low
+		if low > high {
+			e.logger.Warn("attribute.threshold: Low > High, swapping - check the policy's params",
+				zap.String("deviceId", p.DeviceID), zap.String("key", p.Key),
+				zap.Float64("high", high), zap.Float64("low", low))
+			high, low = low, high
+		}
+
 		var mu sync.Mutex
-		last := p.Low
+		last := low
 
 		read := func() float64 {
 			v, err := e.home.GetAttribute(p.DeviceID, p.Key)
@@ -88,11 +108,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 			return last
 		}
 
-		interval := time.Duration(p.IntervalSeconds) * time.Second
-		if interval <= 0 {
-			interval = defaultAttributePollInterval
-		}
-		return NewHysteresisPollingCondition(read, p.High, p.Low, interval)
+		return NewHysteresisPredicateCondition(e.bus, "device.updated."+p.DeviceID, read, high, low, p.Falling)
 	})
 
 	RegisterConditionType(e.registry, "attribute.equals", func(p AttributeEqualsParams) Condition {
@@ -109,7 +125,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 				return last
 			}
 
-			cur := reflect.DeepEqual(v, p.Value)
+			cur := attributeValuesEqual(v, p.Value)
 			mu.Lock()
 			last = cur
 			mu.Unlock()
@@ -129,22 +145,41 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 			}
 		}
 
+		hour, minute := p.Hour, p.Minute
+		if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+			normHour := ((hour % 24) + 24) % 24
+			normMinute := ((minute % 60) + 60) % 60
+			e.logger.Warn("schedule.daily: Hour/Minute out of range, normalizing",
+				zap.Int("hour", hour), zap.Int("minute", minute),
+				zap.Int("normalizedHour", normHour), zap.Int("normalizedMinute", normMinute))
+			hour, minute = normHour, normMinute
+		}
+
 		weekdays := make([]time.Weekday, len(p.Weekdays))
 		for i, wd := range p.Weekdays {
 			weekdays[i] = time.Weekday(wd)
 		}
-		return NewScheduleCondition(loc, p.Hour, p.Minute, weekdays...)
+		return NewScheduleCondition(loc, hour, minute, weekdays...)
 	})
 
 	RegisterConditionType(e.registry, "event.idle-for", func(p EventIdleForParams) Condition {
-		return NewIdleCondition(e.bus, p.Topic, time.Duration(p.DurationSeconds)*time.Second)
+		duration := time.Duration(p.DurationSeconds) * time.Second
+		if p.DurationSeconds <= 0 {
+			e.logger.Warn("event.idle-for: DurationSeconds must be positive, defaulting to 1s",
+				zap.String("topic", p.Topic), zap.Int("durationSeconds", p.DurationSeconds))
+			duration = time.Second
+		}
+		return NewIdleCondition(e.bus, p.Topic, duration)
 	})
 }
 
 // toFloat64 coerces a HomeAPI.GetAttribute result into a float64 for
 // "attribute.threshold", accepting every numeric kind protoreflect's
 // bridgehome walker can produce (see bridgehome.scalarToGo) plus bool as
-// 0/1.
+// 0/1. The int32/uint32 cases never fire for a bridgehome-sourced value
+// (scalarToGo always returns int64/uint64 regardless of the proto field's
+// bit width) but are kept for any other HomeAPI implementation that might
+// genuinely produce them.
 func toFloat64(v any) (float64, error) {
 	switch t := v.(type) {
 	case float64:
@@ -169,4 +204,64 @@ func toFloat64(v any) (float64, error) {
 	default:
 		return 0, fmt.Errorf("policy: cannot convert %T to a numeric value", v)
 	}
+}
+
+// numericValue reports whether v is one of the numeric Go kinds
+// attributeValuesEqual normalizes before comparing, and its float64 value if
+// so. bool is deliberately excluded, unlike toFloat64: attribute.equals
+// should never treat a boolean attribute as interchangeable with a bare 0/1
+// Value, since exact-kind comparison is both more predictable for a policy
+// author and unnecessary here - unlike int/uint/enum kinds, bool survives a
+// JSON persistence round-trip exactly, so reflect.DeepEqual already handles
+// it correctly on its own.
+func numericValue(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int8:
+		return float64(t), true
+	case int16:
+		return float64(t), true
+	case int32:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case uint:
+		return float64(t), true
+	case uint8:
+		return float64(t), true
+	case uint16:
+		return float64(t), true
+	case uint32:
+		return float64(t), true
+	case uint64:
+		return float64(t), true
+	default:
+		return 0, false
+	}
+}
+
+// attributeValuesEqual compares a HomeAPI.GetAttribute result (got) against
+// an "attribute.equals" policy's configured Value (want). Plain
+// reflect.DeepEqual isn't enough: got and want routinely differ in Go
+// numeric kind even when they represent the same value - got is whatever
+// bridgehome's scalarToGo produced (int64/uint64/float64 depending on the
+// proto field's kind), while want may have been authored as a different Go
+// numeric type, and - critically - comes back as float64 for any numeric
+// value once a policy has round-tripped through JSON persistence (see
+// store.go), regardless of what it was authored as. Falling back to a
+// numeric comparison whenever both sides are some numeric kind makes
+// "attribute.equals" match consistently regardless of that history; every
+// other kind (bool, string, …) still compares with reflect.DeepEqual.
+func attributeValuesEqual(got, want any) bool {
+	if gf, ok := numericValue(got); ok {
+		if wf, ok := numericValue(want); ok {
+			return gf == wf
+		}
+	}
+	return reflect.DeepEqual(got, want)
 }
