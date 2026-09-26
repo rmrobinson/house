@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
@@ -28,6 +29,11 @@ const (
 type upstreamConn struct {
 	addr string
 	f    *Facade
+
+	// tlsCfg, if non-nil, is used to dial addr over mutual TLS instead of
+	// plaintext gRPC - copied from the owning Facade's clientTLS at Connect
+	// time.
+	tlsCfg *grpcutil.ClientTLSConfig
 
 	// backoff is nanoseconds, reset to minReconnectBackoff once the
 	// connection has actually delivered a message (see connectOnce) so a
@@ -81,7 +87,13 @@ func (u *upstreamConn) run(ctx context.Context) {
 }
 
 func (u *upstreamConn) connectOnce(ctx context.Context) error {
-	conn, err := grpcutil.DialInsecure(u.addr)
+	var conn *grpc.ClientConn
+	var err error
+	if u.tlsCfg != nil {
+		conn, err = grpcutil.DialTLS(u.addr, *u.tlsCfg)
+	} else {
+		conn, err = grpcutil.DialInsecure(u.addr)
+	}
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

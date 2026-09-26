@@ -4,6 +4,18 @@ house:
   # Only used if the facade section below is absent - dials a
   # separately-running bridgefacaded instead of embedding one here.
   bridge_facade_addr: ""
+  # Optional: mutual TLS. Leave all three blank (the default) to speak
+  # plaintext gRPC both ways. Secures this listener (HouseService, and
+  # BridgeService too if a facade is embedded below - they share one
+  # gRPC server) and every outbound dial housed itself makes (to its own
+  # embedded facade over loopback, or to house.bridge_facade_addr above) -
+  # one principal ("housed") presenting the same identity either way.
+  # client_ca_file is the CA (e.g. step-ca's root) trusted to sign an
+  # inbound caller's certificate.
+  tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""
 
 # Optional: embed a BridgeService facade in this same process, sharing
 # house.listen_port instead of running service/bridge/facade/cmd/bridgefacaded

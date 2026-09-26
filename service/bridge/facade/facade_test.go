@@ -22,7 +22,7 @@ const (
 )
 
 func newTestFacade(t *testing.T) *Facade {
-	return New(zaptest.NewLogger(t), &api2.Bridge{Id: testSelfBridgeID, IsReachable: true}, testSelfAddress)
+	return New(zaptest.NewLogger(t), &api2.Bridge{Id: testSelfBridgeID, IsReachable: true}, testSelfAddress, nil)
 }
 
 // lightDevice returns a device as an upstream bridge would report it: its

@@ -18,11 +18,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Keep in sync with images/BUILD.bazel. zwave/facade are deliberately absent —
-# see that file's "pending" section.
+# Keep in sync with images/BUILD.bazel.
 BRIDGES=(
-  plex webos cast frigate omada ecobee housed
-  esphome airthings tesla-charger
+  plex webos cast frigate omada ecobee housed facade
+  esphome airthings tesla-charger zwave zigbee
   apc-ups
 )
 

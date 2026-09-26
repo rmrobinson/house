@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/grpcutil"
 )
 
 // Config is a BridgeService facade's configuration, as read from viper by
@@ -26,6 +27,10 @@ type Config struct {
 	SelfAddress string
 	// UpstreamAddrs are the BridgeService addresses this facade aggregates.
 	UpstreamAddrs []string
+	// ClientTLS configures mutual TLS for every one of those upstream
+	// connections (see NewFromConfig -> Facade.Connect). Nil means plaintext
+	// gRPC.
+	ClientTLS *grpcutil.ClientTLSConfig
 }
 
 // LoadConfig reads a Config from viper's bridge.*/facade.bridges keys -
@@ -88,12 +93,29 @@ func LoadConfig(logger *zap.Logger, listenPort int) (*Config, error) {
 		}
 	}
 
+	var clientTLS *grpcutil.ClientTLSConfig
+	if certFile := viper.GetString("bridge.tls.cert_file"); len(certFile) > 0 {
+		// The same cert/key this facade uses to authenticate itself as a
+		// server (see cmd/bridgefacaded/main.go) doubles as its client
+		// identity here - it's one principal ("this facade") either way,
+		// and step-ca's default leaf certs carry both the serverAuth and
+		// clientAuth EKUs. client_ca_file is step-ca's root either way too:
+		// verifying an inbound caller's cert and verifying an upstream
+		// bridge's cert both chain to the same private CA.
+		clientTLS = &grpcutil.ClientTLSConfig{
+			CertFile: certFile,
+			KeyFile:  viper.GetString("bridge.tls.key_file"),
+			CAFile:   viper.GetString("bridge.tls.client_ca_file"),
+		}
+	}
+
 	return &Config{
 		BridgeID:          viper.GetString("bridge.id"),
 		BridgeName:        viper.GetString("bridge.name"),
 		BridgeDescription: viper.GetString("bridge.description"),
 		SelfAddress:       selfAddress,
 		UpstreamAddrs:     addrs,
+		ClientTLS:         clientTLS,
 	}, nil
 }
 
@@ -114,7 +136,7 @@ func NewFromConfig(ctx context.Context, logger *zap.Logger, cfg *Config) *Facade
 		},
 	}
 
-	f := New(logger, self, cfg.SelfAddress)
+	f := New(logger, self, cfg.SelfAddress, cfg.ClientTLS)
 	for _, addr := range cfg.UpstreamAddrs {
 		logger.Info("connecting to upstream bridge", zap.String("address", addr))
 		f.Connect(ctx, addr)

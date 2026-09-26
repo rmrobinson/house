@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -68,6 +69,18 @@ func main() {
 
 	_ = NewClockBridge(logger, svc, c)
 
-	s := bridge.NewServer(logger, svc)
+	var tlsCfg *grpcutil.ServerTLSConfig
+	if certFile := viper.GetString("bridge.tls.cert_file"); len(certFile) > 0 {
+		tlsCfg = &grpcutil.ServerTLSConfig{
+			CertFile:     certFile,
+			KeyFile:      viper.GetString("bridge.tls.key_file"),
+			ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
+		}
+	}
+
+	s, err := bridge.NewServer(logger, svc, tlsCfg)
+	if err != nil {
+		logger.Fatal("unable to create bridge server", zap.Error(err))
+	}
 	s.ServeOnPort(viper.GetInt("bridge.listen_port"))
 }

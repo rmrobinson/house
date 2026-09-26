@@ -6,29 +6,77 @@
 load(":defs.bzl", "bridge_image")
 
 # --- h031 ---
-bridge_image(name = "plex", binary = "//bridges/plex")
-bridge_image(name = "webos", binary = "//bridges/webos")
-bridge_image(name = "cast", binary = "//bridges/cast")
-bridge_image(name = "frigate", binary = "//bridges/frigate")
-bridge_image(name = "omada", binary = "//bridges/omada")
-bridge_image(name = "ecobee", binary = "//bridges/ecobee")
-bridge_image(name = "housed", binary = "//service/house/cmd/housed")
+bridge_image(
+    name = "plex",
+    binary = "//bridges/plex",
+)
+
+bridge_image(
+    name = "webos",
+    binary = "//bridges/webos",
+)
+
+bridge_image(
+    name = "cast",
+    binary = "//bridges/cast",
+)
+
+bridge_image(
+    name = "frigate",
+    binary = "//bridges/frigate",
+)
+
+bridge_image(
+    name = "omada",
+    binary = "//bridges/omada",
+)
+
+bridge_image(
+    name = "ecobee",
+    binary = "//bridges/ecobee",
+)
+
+bridge_image(
+    name = "housed",
+    binary = "//service/house/cmd/housed",
+)
+
+bridge_image(
+    name = "facade",
+    binary = "//service/bridge/facade/cmd/bridgefacaded",
+)
 
 # --- iot001 ---
-bridge_image(name = "esphome", binary = "//bridges/esphome")
+bridge_image(
+    name = "esphome",
+    binary = "//bridges/esphome",
+)
 
 # tinygo BLE -> cbgo -> BlueZ over D-Bus needs libdbus at runtime, which
 # distroless/base doesn't carry.
-bridge_image(name = "airthings", binary = "//bridges/airthings", base = "@debian_slim")
+bridge_image(
+    name = "airthings",
+    base = "@debian_slim",
+    binary = "//bridges/airthings",
+)
 
-bridge_image(name = "tesla-charger", binary = "//bridges/tesla-charger")
+bridge_image(
+    name = "tesla-charger",
+    binary = "//bridges/tesla-charger",
+)
+
+bridge_image(
+    name = "zwave",
+    binary = "//bridges/zwave",
+)
+
+bridge_image(
+    name = "zigbee",
+    binary = "//bridges/zigbee",
+)
 
 # --- both hosts (separate instances, one image) ---
-bridge_image(name = "apc-ups", binary = "//bridges/apc-ups")
-
-# --- pending: these packages don't exist on `main` yet ---
-# zwave needs worktree-add-zwave-bridge rebased/merged first:
-# bridge_image(name = "zwave", binary = "//bridges/zwave")
-#
-# facade needs add-bridge-configs cleaned up and merged first:
-# bridge_image(name = "facade", binary = "//service/bridge/facade/cmd/bridgefacaded")
+bridge_image(
+    name = "apc-ups",
+    binary = "//bridges/apc-ups",
+)

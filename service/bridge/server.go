@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/grpcutil"
 )
 
 // Server creates a new network server hosting the Bridge gRPC server.
@@ -18,9 +19,18 @@ type Server struct {
 }
 
 // NewServer creates a new server with an opinionated set of options set.
+// tlsCfg is optional - pass nil to serve plaintext gRPC (the historical
+// default), or a populated *grpcutil.ServerTLSConfig to require mutual TLS.
 // Once ready it is necessary to call Serve() or ServeOnPort() to expose the service.
-func NewServer(logger *zap.Logger, svc *Service) *Server {
+func NewServer(logger *zap.Logger, svc *Service, tlsCfg *grpcutil.ServerTLSConfig) (*Server, error) {
 	var opts []grpc.ServerOption
+	if tlsCfg != nil {
+		creds, err := grpcutil.ServerTLS(*tlsCfg)
+		if err != nil {
+			return nil, fmt.Errorf("configuring server TLS: %w", err)
+		}
+		opts = append(opts, creds)
+	}
 	grpcServer := grpc.NewServer(opts...)
 
 	api2.RegisterBridgeServiceServer(grpcServer, svc.API())
@@ -29,7 +39,7 @@ func NewServer(logger *zap.Logger, svc *Service) *Server {
 		logger:     logger,
 		grpcServer: grpcServer,
 		svc:        svc,
-	}
+	}, nil
 }
 
 // Serve runs the network listener on a random port.

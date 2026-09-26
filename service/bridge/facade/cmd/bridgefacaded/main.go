@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge/facade"
 )
 
@@ -59,6 +60,17 @@ func main() {
 	f := facade.NewFromConfig(ctx, logger, cfg)
 
 	var opts []grpc.ServerOption
+	if certFile := viper.GetString("bridge.tls.cert_file"); len(certFile) > 0 {
+		creds, err := grpcutil.ServerTLS(grpcutil.ServerTLSConfig{
+			CertFile:     certFile,
+			KeyFile:      viper.GetString("bridge.tls.key_file"),
+			ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
+		})
+		if err != nil {
+			logger.Fatal("unable to configure server TLS", zap.Error(err))
+		}
+		opts = append(opts, creds)
+	}
 	grpcServer := grpc.NewServer(opts...)
 	api2.RegisterBridgeServiceServer(grpcServer, f)
 

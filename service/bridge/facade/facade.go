@@ -16,6 +16,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -50,6 +51,10 @@ type Facade struct {
 
 	updates *bridge.Source
 
+	// clientTLS configures mutual TLS for every upstream connection this
+	// facade makes (see Connect). Nil means plaintext gRPC.
+	clientTLS *grpcutil.ClientTLSConfig
+
 	mu      sync.Mutex
 	bridges map[string]*api2.Bridge   // bridge_id -> last-known Bridge (includes the facade's own selfID entry)
 	devices map[string]*device.Device // device_id -> last-known Device, address/hop_count as reported upstream
@@ -65,11 +70,15 @@ type Facade struct {
 // own Bridge.Id (see cmd/bridgefacaded/main.go) - and selfAddress is the
 // network address downstream clients use to reach this facade, published as
 // every proxied Device's Address.
-func New(logger *zap.Logger, self *api2.Bridge, selfAddress string) *Facade {
+//
+// clientTLS, if non-nil, is used for every upstream connection subsequently
+// started via Connect; nil means plaintext gRPC.
+func New(logger *zap.Logger, self *api2.Bridge, selfAddress string, clientTLS *grpcutil.ClientTLSConfig) *Facade {
 	f := &Facade{
 		logger:      logger,
 		selfID:      self.GetId(),
 		selfAddress: selfAddress,
+		clientTLS:   clientTLS,
 		updates:     bridge.NewSource(logger),
 		bridges:     make(map[string]*api2.Bridge),
 		devices:     make(map[string]*device.Device),
@@ -100,8 +109,9 @@ func (f *Facade) present(d *device.Device) *device.Device {
 // runs until ctx is cancelled.
 func (f *Facade) Connect(ctx context.Context, addr string) {
 	uc := &upstreamConn{
-		addr: addr,
-		f:    f,
+		addr:   addr,
+		f:      f,
+		tlsCfg: f.clientTLS,
 	}
 	uc.backoff.Store(int64(minReconnectBackoff))
 	go uc.run(ctx)

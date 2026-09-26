@@ -6,6 +6,17 @@ bridge:
   # every device it proxies, so clients never need to dial an individual
   # upstream bridge directly.
   host: "192.168.1.5"
+  # Optional: mutual TLS. Leave all three blank (the default) to speak
+  # plaintext gRPC both ways. This facade plays two roles - a server to
+  # whatever dials it (e.g. housed), and a client to every upstream bridge
+  # in facade.bridges below - and reuses this one cert/key for both, since
+  # it's a single principal ("this facade") either way. client_ca_file is
+  # the CA (e.g. step-ca's root) trusted to sign both an inbound caller's
+  # certificate and every upstream bridge's certificate.
+  tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""
 
 facade:
   bridges:

@@ -19,6 +19,7 @@ go_library(
         "//api/device",
         "//api/trait",
         "//bridges/lib/homekitctrl",
+        "//grpcutil",
         "//service/bridge",
         "@com_github_google_uuid//:uuid",
         "@com_github_spf13_viper//:viper",

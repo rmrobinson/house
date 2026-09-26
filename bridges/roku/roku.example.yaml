@@ -1,4 +1,12 @@
 bridge:
   id: "<bridge ID>"
   listen_port: 17005
+  # Optional: mutual TLS for this bridge's gRPC server. Leave all three
+  # blank (the default) to serve plaintext gRPC. cert_file/key_file are
+  # this bridge's own identity; client_ca_file is the CA (e.g. step-ca's
+  # root) trusted to sign a connecting client's (facade's) certificate.
+  tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""
   refresh_interval: 300

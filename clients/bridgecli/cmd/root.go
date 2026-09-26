@@ -14,6 +14,9 @@ import (
 
 var (
 	bridgeAddr   string
+	tlsCertFile  string
+	tlsKeyFile   string
+	tlsCAFile    string
 	bridgeConn   *grpc.ClientConn
 	bridgeClient api2.BridgeServiceClient
 
@@ -39,6 +42,13 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&bridgeAddr, "addr", "", "bridge API address to connect to")
 	rootCmd.MarkPersistentFlagRequired("addr")
 
+	// Optional mutual TLS - all three are required together, or all left
+	// blank to dial plaintext gRPC (the default), matching how a bridge's
+	// own bridge.tls.* config works.
+	rootCmd.PersistentFlags().StringVar(&tlsCertFile, "tls-cert", "", "client certificate file for mutual TLS")
+	rootCmd.PersistentFlags().StringVar(&tlsKeyFile, "tls-key", "", "client key file for mutual TLS")
+	rootCmd.PersistentFlags().StringVar(&tlsCAFile, "tls-ca", "", "CA file trusted to verify the bridge's certificate")
+
 	device.Init(rootCmd)
 	bridge.Init(rootCmd)
 }
@@ -48,7 +58,17 @@ func initClient() {
 		return
 	}
 
-	conn, err := grpcutil.DialInsecure(bridgeAddr)
+	var conn *grpc.ClientConn
+	var err error
+	if len(tlsCertFile) > 0 {
+		conn, err = grpcutil.DialTLS(bridgeAddr, grpcutil.ClientTLSConfig{
+			CertFile: tlsCertFile,
+			KeyFile:  tlsKeyFile,
+			CAFile:   tlsCAFile,
+		})
+	} else {
+		conn, err = grpcutil.DialInsecure(bridgeAddr)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

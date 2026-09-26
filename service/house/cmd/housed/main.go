@@ -81,7 +81,27 @@ func main() {
 	}
 	boundPort := lis.Addr().(*net.TCPAddr).Port
 
+	// tlsCfg, when configured, secures both this listener (HouseService, and
+	// BridgeService if a facade is embedded below - they share one
+	// grpc.Server) and every outbound dial housed itself makes (to its own
+	// embedded facade over loopback, or to an external bridgefacaded) - one
+	// principal ("housed") presenting the same identity either way.
+	var tlsCfg *grpcutil.ServerTLSConfig
+	var clientTLS *grpcutil.ClientTLSConfig
 	var opts []grpc.ServerOption
+	if certFile := viper.GetString("house.tls.cert_file"); len(certFile) > 0 {
+		keyFile := viper.GetString("house.tls.key_file")
+		caFile := viper.GetString("house.tls.client_ca_file")
+
+		tlsCfg = &grpcutil.ServerTLSConfig{CertFile: certFile, KeyFile: keyFile, ClientCAFile: caFile}
+		creds, err := grpcutil.ServerTLS(*tlsCfg)
+		if err != nil {
+			logger.Fatal("unable to configure server TLS", zap.Error(err))
+		}
+		opts = append(opts, creds)
+
+		clientTLS = &grpcutil.ClientTLSConfig{CertFile: certFile, KeyFile: keyFile, CAFile: caFile}
+	}
 	grpcServer := grpc.NewServer(opts...)
 
 	// A BridgeService facade is optional, and reached one of two ways:
@@ -106,14 +126,14 @@ func main() {
 		api2.RegisterBridgeServiceServer(grpcServer, f)
 
 		selfAddr := fmt.Sprintf("localhost:%d", boundPort)
-		conn, err := grpcutil.DialInsecure(selfAddr)
+		conn, err := dialBridgeFacade(selfAddr, clientTLS)
 		if err != nil {
 			logger.Fatal("unable to dial embedded bridge facade", zap.String("address", selfAddr), zap.Error(err))
 		}
 		bridgeClient = api2.NewBridgeServiceClient(conn)
 	case len(viper.GetString("house.bridge_facade_addr")) > 0:
 		addr := viper.GetString("house.bridge_facade_addr")
-		conn, err := grpcutil.DialInsecure(addr)
+		conn, err := dialBridgeFacade(addr, clientTLS)
 		if err != nil {
 			logger.Fatal("unable to dial bridge facade", zap.String("address", addr), zap.Error(err))
 		}
@@ -127,4 +147,13 @@ func main() {
 
 	logger.Info("serving requests", zap.String("address", lis.Addr().String()))
 	grpcServer.Serve(lis)
+}
+
+// dialBridgeFacade dials addr over mutual TLS when tlsCfg is set, or
+// plaintext gRPC otherwise.
+func dialBridgeFacade(addr string, tlsCfg *grpcutil.ClientTLSConfig) (*grpc.ClientConn, error) {
+	if tlsCfg != nil {
+		return grpcutil.DialTLS(addr, *tlsCfg)
+	}
+	return grpcutil.DialInsecure(addr)
 }
