@@ -147,6 +147,95 @@ func TestEventConditionUnsubscribesOnCancel(t *testing.T) {
 	}, time.Second, 10*time.Millisecond, "subscriber was not removed after ctx cancellation")
 }
 
+func TestPredicateConditionFiresOnlyOnTransition(t *testing.T) {
+	bus := NewBus()
+	var value atomic.Bool
+	cond := NewPredicateCondition(bus, "topic", value.Load)
+
+	changes := make(chan bool, 8)
+	ctx := t.Context()
+	cond.Start(ctx, func(v bool) { changes <- v })
+
+	// Baseline eval on Start must not fire onChange.
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	// An event that doesn't change fn's result must not fire either.
+	bus.Publish(Event{Topic: "topic"})
+	assertNoChange(t, changes)
+
+	value.Store(true)
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+
+	// An unrelated topic must not trigger a re-evaluation.
+	value.Store(false)
+	bus.Publish(Event{Topic: "other-topic"})
+	assertNoChange(t, changes)
+	assert.True(t, cond.Evaluate())
+
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, false)
+}
+
+func TestIdleConditionFiresAfterDurationThenResetsOnEvent(t *testing.T) {
+	bus := NewBus()
+	cond := NewIdleCondition(bus, "topic", 30*time.Millisecond)
+
+	changes := make(chan bool, 8)
+	ctx := t.Context()
+	cond.Start(ctx, func(v bool) { changes <- v })
+
+	// Starts false; must not fire before the duration elapses.
+	assert.False(t, cond.Evaluate())
+	select {
+	case <-changes:
+		t.Fatal("fired before the idle duration elapsed")
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+
+	// A new event resets it to false and rearms the timer.
+	bus.Publish(Event{Topic: "topic"})
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate())
+
+	// Idle again for the full duration: fires true a second time.
+	waitForChange(t, changes, true)
+}
+
+func TestScheduleConditionFiresAtComputedInstantThenPulses(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 1, 1, 8, 59, 59, 900_000_000, loc) // 100ms before 09:00
+
+	cond := NewScheduleCondition(loc, 9, 0)
+	cond.now = func() time.Time { return now } // read once, at Start; never advances
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	waitForChange(t, changes, true)
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate(), "must pulse back to false, not stay true")
+}
+
+func TestScheduleConditionRestrictsToWeekdays(t *testing.T) {
+	loc := time.UTC
+	// 2026-01-01 is a Thursday.
+	base := time.Date(2026, 1, 1, 8, 0, 0, 0, loc)
+	// Only fire on Saturday (2026-01-03).
+	cond := NewScheduleCondition(loc, 9, 0, time.Saturday)
+
+	next := cond.next(base)
+	assert.Equal(t, time.Saturday, next.Weekday())
+	assert.Equal(t, 2026, next.Year())
+	assert.Equal(t, time.January, next.Month())
+	assert.Equal(t, 3, next.Day())
+}
+
 // manualCondition lets a test flip a boolean directly, for exercising
 // composite conditions without going through a bus or ticker.
 type manualCondition struct {

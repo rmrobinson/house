@@ -10,10 +10,13 @@ package bridgehome
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -136,6 +139,12 @@ func applyDeviceUpdate(engine *policy.Engine, id string, d *device.Device) {
 	}
 
 	engine.UpdateDeviceState(id, d)
+
+	// Trait-agnostic trigger for any condition watching this device's
+	// attributes generically (see GetAttribute) - fires on every update,
+	// including the very first one, since it's just a signal to re-check,
+	// not itself a fact.
+	engine.Bus().Publish(policy.Event{Topic: "device.updated." + id, Payload: d})
 }
 
 func hasMotion(d *device.Device) bool {
@@ -204,10 +213,94 @@ func (a *Adapter) GetSensor(id string) (float64, error) {
 	return 0, policy.ErrNotImplemented
 }
 
-// GetAttribute implements policy.HomeAPI. Deferred for the same reason as
-// GetSensor.
+// GetAttribute implements policy.HomeAPI as a generic dotted-path read over
+// id's cached last-known device state - the escape hatch GetSensor can't be
+// (see GetSensor's own doc comment: Sensor alone reports many optional
+// traits with no single "the" value). key is a literal dot-path of proto
+// field names resolved against whichever device.Device.details oneof branch
+// is populated (Light, Sensor, ...), with no implicit hops of any kind: e.g.
+// "presence.state.motion_detected" or "air_properties.state.temperature_c"
+// for a real api/trait/*.proto-backed field, "water.is_active" for a
+// Sensor-local BinarySensor field that has no State indirection at all.
+// Every current and future trait field is addressable this way without a
+// code change here.
 func (a *Adapter) GetAttribute(id, key string) (any, error) {
-	return nil, policy.ErrNotImplemented
+	d, err := a.getDevice(id)
+	if err != nil {
+		return nil, err
+	}
+	return resolveAttribute(d, key)
+}
+
+// resolveAttribute walks key's dot-separated segments as literal field names
+// starting from whichever device.Device.details oneof branch d has set,
+// descending through singular message-typed fields until a scalar value is
+// reached.
+func resolveAttribute(d *device.Device, key string) (any, error) {
+	msg := d.ProtoReflect()
+
+	oneof := msg.Descriptor().Oneofs().ByName("details")
+	if oneof == nil {
+		return nil, fmt.Errorf("bridgehome: device.Device has no %q oneof", "details")
+	}
+	fd := msg.WhichOneof(oneof)
+	if fd == nil {
+		return nil, fmt.Errorf("bridgehome: device has no details set")
+	}
+	cur := msg.Get(fd).Message()
+
+	segments := strings.Split(key, ".")
+	for i, seg := range segments {
+		fields := cur.Descriptor().Fields()
+		fieldDesc := fields.ByName(protoreflect.Name(seg))
+		if fieldDesc == nil {
+			return nil, fmt.Errorf("bridgehome: attribute %q: no field %q on %s", key, seg, cur.Descriptor().FullName())
+		}
+
+		last := i == len(segments)-1
+
+		if fieldDesc.Kind() != protoreflect.MessageKind && fieldDesc.Kind() != protoreflect.GroupKind {
+			if !last {
+				return nil, fmt.Errorf("bridgehome: attribute %q: %q is a scalar, but the path continues", key, seg)
+			}
+			return scalarToGo(cur.Get(fieldDesc), fieldDesc.Kind()), nil
+		}
+
+		if last {
+			return nil, fmt.Errorf("bridgehome: attribute %q: %q is a message, not a scalar", key, seg)
+		}
+		if fieldDesc.IsList() || fieldDesc.IsMap() {
+			return nil, fmt.Errorf("bridgehome: attribute %q: %q is a list/map, not supported", key, seg)
+		}
+		cur = cur.Get(fieldDesc).Message()
+	}
+	return nil, fmt.Errorf("bridgehome: attribute %q: empty path", key)
+}
+
+// scalarToGo converts a resolved leaf protoreflect.Value into a plain Go
+// value, matching the underlying Go kinds bindings.go's goToLua already
+// knows how to convert to Lua.
+func scalarToGo(v protoreflect.Value, kind protoreflect.Kind) any {
+	switch kind {
+	case protoreflect.BoolKind:
+		return v.Bool()
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind,
+		protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		return v.Int()
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind,
+		protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		return v.Uint()
+	case protoreflect.FloatKind, protoreflect.DoubleKind:
+		return v.Float()
+	case protoreflect.StringKind:
+		return v.String()
+	case protoreflect.EnumKind:
+		return int64(v.Enum())
+	case protoreflect.BytesKind:
+		return v.Bytes()
+	default:
+		return v.Interface()
+	}
 }
 
 // SetAttribute implements policy.HomeAPI. Deferred: command.Command has no

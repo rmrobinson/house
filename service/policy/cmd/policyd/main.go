@@ -81,6 +81,7 @@ func main() {
 	defer engine.Close()
 
 	policy.RegisterSystemConditionTypes(engine)
+	policy.RegisterBuiltinConditionTypes(engine)
 	if err := policy.LoadPersistedPolicies(engine, store); err != nil {
 		logger.Fatal("unable to load persisted policies", zap.Error(err))
 	}
