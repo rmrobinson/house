@@ -36,8 +36,8 @@ type HomeAPI interface {
 	GetLight(id string) (bool, error)
 	SetLight(id string, on bool) error
 	GetSensor(id string) (float64, error)
-	GetAttribute(id, key string) (any, error)
-	SetAttribute(id, key string, value any) error
+	GetState(id, key string) (any, error)
+	SetState(id, key string, value any) error
 
 	// House state
 	GetHouseState(key string) (any, error)
@@ -173,23 +173,23 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 			L.Push(lua.LNumber(v))
 			return 1
 		},
-		"getAttribute": func(L *lua.LState) int {
+		"getState": func(L *lua.LState) int {
 			id := L.CheckString(1)
 			key := L.CheckString(2)
-			v, err := api.GetAttribute(id, key)
+			v, err := api.GetState(id, key)
 			if err != nil {
-				fail(L, err, "home.getAttribute(%q, %q)", id, key)
+				fail(L, err, "home.getState(%q, %q)", id, key)
 				return 0
 			}
 			L.Push(goToLua(L, v))
 			return 1
 		},
-		"setAttribute": func(L *lua.LState) int {
+		"setState": func(L *lua.LState) int {
 			id := L.CheckString(1)
 			key := L.CheckString(2)
 			v := luaToGo(L.CheckAny(3))
-			if err := api.SetAttribute(id, key, v); err != nil {
-				fail(L, err, "home.setAttribute(%q, %q)", id, key)
+			if err := api.SetState(id, key, v); err != nil {
+				fail(L, err, "home.setState(%q, %q)", id, key)
 			}
 			return 0
 		},

@@ -10,7 +10,7 @@ import (
 )
 
 // AttributeThresholdParams parameterizes the "attribute.threshold" condition
-// type: a numeric fact over home.GetAttribute(DeviceID, Key), reacting to
+// type: a numeric fact over home.GetState(DeviceID, Key), reacting to
 // bridgehome's per-device "device.updated.<id>" signal rather than polling.
 // Set High == Low for a plain, non-hysteresis threshold (e.g.
 // "temperature > 25").
@@ -31,7 +31,7 @@ type AttributeThresholdParams struct {
 }
 
 // AttributeEqualsParams parameterizes the "attribute.equals" condition type:
-// true while home.GetAttribute(DeviceID, Key) equals Value. Reacts
+// true while home.GetState(DeviceID, Key) equals Value. Reacts
 // near-instantly to bridgehome's per-device "device.updated.<id>" signal
 // rather than polling.
 //
@@ -65,7 +65,7 @@ type EventIdleForParams struct {
 }
 
 // RegisterBuiltinConditionTypes registers the generic, parameterized
-// condition types built on HomeAPI.GetAttribute, the Bus, and the new
+// condition types built on HomeAPI.GetState, the Bus, and the new
 // PredicateCondition/IdleCondition/ScheduleCondition primitives:
 // "attribute.threshold", "attribute.equals", "schedule.daily", and
 // "event.idle-for". Unlike RegisterSystemConditionTypes's two hand-derived
@@ -90,7 +90,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 		last := low
 
 		read := func() float64 {
-			v, err := e.home.GetAttribute(p.DeviceID, p.Key)
+			v, err := e.home.GetState(p.DeviceID, p.Key)
 			if err == nil {
 				var f float64
 				f, err = toFloat64(v)
@@ -101,7 +101,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 					return f
 				}
 			}
-			e.logger.Warn("attribute.threshold: GetAttribute failed, holding last value",
+			e.logger.Warn("attribute.threshold: GetState failed, holding last value",
 				zap.String("deviceId", p.DeviceID), zap.String("key", p.Key), zap.Error(err))
 			mu.Lock()
 			defer mu.Unlock()
@@ -116,9 +116,9 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 		var last bool
 
 		fn := func() bool {
-			v, err := e.home.GetAttribute(p.DeviceID, p.Key)
+			v, err := e.home.GetState(p.DeviceID, p.Key)
 			if err != nil {
-				e.logger.Warn("attribute.equals: GetAttribute failed, holding last value",
+				e.logger.Warn("attribute.equals: GetState failed, holding last value",
 					zap.String("deviceId", p.DeviceID), zap.String("key", p.Key), zap.Error(err))
 				mu.Lock()
 				defer mu.Unlock()
@@ -173,7 +173,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 	})
 }
 
-// toFloat64 coerces a HomeAPI.GetAttribute result into a float64 for
+// toFloat64 coerces a HomeAPI.GetState result into a float64 for
 // "attribute.threshold", accepting every numeric kind protoreflect's
 // bridgehome walker can produce (see bridgehome.scalarToGo) plus bool as
 // 0/1. The int32/uint32 cases never fire for a bridgehome-sourced value
@@ -245,7 +245,7 @@ func numericValue(v any) (float64, bool) {
 	}
 }
 
-// attributeValuesEqual compares a HomeAPI.GetAttribute result (got) against
+// attributeValuesEqual compares a HomeAPI.GetState result (got) against
 // an "attribute.equals" policy's configured Value (want). Plain
 // reflect.DeepEqual isn't enough: got and want routinely differ in Go
 // numeric kind even when they represent the same value - got is whatever

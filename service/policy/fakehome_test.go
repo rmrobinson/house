@@ -56,13 +56,13 @@ func (f *fakeHomeAPI) GetSensor(id string) (float64, error) {
 	return f.sensors[id], nil
 }
 
-func (f *fakeHomeAPI) GetAttribute(id, key string) (any, error) {
+func (f *fakeHomeAPI) GetState(id, key string) (any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.attributes[id][key], nil
 }
 
-func (f *fakeHomeAPI) SetAttribute(id, key string, value any) error {
+func (f *fakeHomeAPI) SetState(id, key string, value any) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	attrs, ok := f.attributes[id]

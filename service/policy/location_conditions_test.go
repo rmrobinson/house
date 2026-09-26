@@ -151,7 +151,7 @@ func TestResolveTZInvalidFallsBackToLocal(t *testing.T) {
 
 // TestLocationReaderHoldsLastKnownValueOnFailedRead mirrors
 // attribute.threshold's own "hold the last value" test for a failed
-// GetAttribute: once a locationReader has a good reading, a subsequent
+// GetState: once a locationReader has a good reading, a subsequent
 // failure (here, GetHouseState answering with a non-numeric value) must not
 // zero out the sun calculation in flight.
 func TestLocationReaderHoldsLastKnownValueOnFailedRead(t *testing.T) {

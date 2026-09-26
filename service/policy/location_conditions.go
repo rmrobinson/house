@@ -56,7 +56,7 @@ type DateRangeParams struct {
 // HomeAPI.GetHouseState's "location.latitude"/"location.longitude" keys,
 // holding the last successfully read value across a failed re-read - the
 // same "hold the last known value" convention attribute.threshold's read
-// closure uses for a failed GetAttribute - so a transient error doesn't
+// closure uses for a failed GetState - so a transient error doesn't
 // zero out a sun calculation already in flight.
 type locationReader struct {
 	home   HomeAPI

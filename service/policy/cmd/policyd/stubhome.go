@@ -59,15 +59,15 @@ func (h *stubHomeAPI) GetSensor(id string) (float64, error) {
 	return v, nil
 }
 
-func (h *stubHomeAPI) GetAttribute(id, key string) (any, error) {
+func (h *stubHomeAPI) GetState(id, key string) (any, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v := h.attributes[id][key]
-	h.logger.Debug("stub home: GetAttribute", zap.String("id", id), zap.String("key", key))
+	h.logger.Debug("stub home: GetState", zap.String("id", id), zap.String("key", key))
 	return v, nil
 }
 
-func (h *stubHomeAPI) SetAttribute(id, key string, value any) error {
+func (h *stubHomeAPI) SetState(id, key string, value any) error {
 	h.mu.Lock()
 	attrs, ok := h.attributes[id]
 	if !ok {
@@ -76,7 +76,7 @@ func (h *stubHomeAPI) SetAttribute(id, key string, value any) error {
 	}
 	attrs[key] = value
 	h.mu.Unlock()
-	h.logger.Info("stub home: SetAttribute", zap.String("id", id), zap.String("key", key))
+	h.logger.Info("stub home: SetState", zap.String("id", id), zap.String("key", key))
 	return nil
 }
 

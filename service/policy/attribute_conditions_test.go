@@ -19,7 +19,7 @@ func TestRegisterBuiltinConditionTypesRegistersAllFour(t *testing.T) {
 
 func TestBuiltinConditionType_AttributeThreshold(t *testing.T) {
 	home := newFakeHomeAPI()
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", 15.0)) // below Low
+	require.NoError(t, home.SetState("sensor-1", "temp", 15.0)) // below Low
 	e, _ := newTestEngine(t, home)
 	RegisterBuiltinConditionTypes(e)
 
@@ -36,7 +36,7 @@ func TestBuiltinConditionType_AttributeThreshold(t *testing.T) {
 	// attribute.threshold is event-driven (see condition.go's
 	// HysteresisPredicateCondition), not polled: it only re-reads on the
 	// device's own "device.updated.<id>" signal.
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", 30.0)) // crosses High
+	require.NoError(t, home.SetState("sensor-1", "temp", 30.0)) // crosses High
 	e.Bus().Publish(Event{Topic: "device.updated.sensor-1"})
 
 	require.Eventually(t, func() bool {
@@ -49,7 +49,7 @@ func TestBuiltinConditionType_AttributeThreshold(t *testing.T) {
 // that's the mirror image of the default "rises above" shape.
 func TestBuiltinConditionType_AttributeThresholdFalling(t *testing.T) {
 	home := newFakeHomeAPI()
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", 0.0)) // well above Low
+	require.NoError(t, home.SetState("sensor-1", "temp", 0.0)) // well above Low
 	e, _ := newTestEngine(t, home)
 	RegisterBuiltinConditionTypes(e)
 
@@ -64,12 +64,12 @@ func TestBuiltinConditionType_AttributeThresholdFalling(t *testing.T) {
 	assert.Equal(t, 0, home.notifyCount())
 
 	// Staying above the recovery threshold must not fire.
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", -10.0))
+	require.NoError(t, home.SetState("sensor-1", "temp", -10.0))
 	e.Bus().Publish(Event{Topic: "device.updated.sensor-1"})
 	assert.Equal(t, 0, home.notifyCount())
 
 	// Falls to/below Low: this is the alarm edge when Falling is set.
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", -16.0))
+	require.NoError(t, home.SetState("sensor-1", "temp", -16.0))
 	e.Bus().Publish(Event{Topic: "device.updated.sensor-1"})
 	require.Eventually(t, func() bool {
 		return home.notifyCount() == 1
@@ -81,7 +81,7 @@ func TestBuiltinConditionType_AttributeThresholdFalling(t *testing.T) {
 // than left to silently oscillate every re-evaluation.
 func TestBuiltinConditionType_AttributeThresholdSwapsInvertedHighLow(t *testing.T) {
 	home := newFakeHomeAPI()
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", 15.0))
+	require.NoError(t, home.SetState("sensor-1", "temp", 15.0))
 	core, recorded := observer.New(zap.WarnLevel)
 	e, _ := newTestEngine(t, home)
 	e.logger = zap.New(core)
@@ -99,7 +99,7 @@ func TestBuiltinConditionType_AttributeThresholdSwapsInvertedHighLow(t *testing.
 	require.Len(t, entries, 1)
 	assert.Contains(t, entries[0].Message, "Low > High")
 
-	require.NoError(t, home.SetAttribute("sensor-1", "temp", 30.0))
+	require.NoError(t, home.SetState("sensor-1", "temp", 30.0))
 	e.Bus().Publish(Event{Topic: "device.updated.sensor-1"})
 	require.Eventually(t, func() bool {
 		return home.notifyCount() == 1
@@ -108,7 +108,7 @@ func TestBuiltinConditionType_AttributeThresholdSwapsInvertedHighLow(t *testing.
 
 func TestBuiltinConditionType_AttributeEquals(t *testing.T) {
 	home := newFakeHomeAPI()
-	require.NoError(t, home.SetAttribute("door-1", "state", "closed"))
+	require.NoError(t, home.SetState("door-1", "state", "closed"))
 	e, _ := newTestEngine(t, home)
 	RegisterBuiltinConditionTypes(e)
 
@@ -123,7 +123,7 @@ func TestBuiltinConditionType_AttributeEquals(t *testing.T) {
 	assert.Equal(t, 0, home.notifyCount())
 
 	// Simulates bridgehome.applyDeviceUpdate's generic per-device signal.
-	require.NoError(t, home.SetAttribute("door-1", "state", "open"))
+	require.NoError(t, home.SetState("door-1", "state", "open"))
 	e.Bus().Publish(Event{Topic: "device.updated.door-1"})
 
 	require.Eventually(t, func() bool {
@@ -139,7 +139,7 @@ func TestBuiltinConditionType_AttributeEquals(t *testing.T) {
 // float64.
 func TestBuiltinConditionType_AttributeEqualsSurvivesPersistenceRoundTripForNumericValue(t *testing.T) {
 	home := newFakeHomeAPI()
-	require.NoError(t, home.SetAttribute("thermostat-1", "mode", int64(1))) // not yet HEAT
+	require.NoError(t, home.SetState("thermostat-1", "mode", int64(1))) // not yet HEAT
 	e, r := newTestEngine(t, home)
 	RegisterBuiltinConditionTypes(e)
 
@@ -160,7 +160,7 @@ func TestBuiltinConditionType_AttributeEqualsSurvivesPersistenceRoundTripForNume
 
 	assert.Equal(t, 0, home.notifyCount())
 
-	require.NoError(t, home.SetAttribute("thermostat-1", "mode", int64(2)))
+	require.NoError(t, home.SetState("thermostat-1", "mode", int64(2)))
 	e.Bus().Publish(Event{Topic: "device.updated.thermostat-1"})
 	require.Eventually(t, func() bool {
 		return home.notifyCount() == 1
