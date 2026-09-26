@@ -313,6 +313,157 @@ func TestScheduleConditionRestrictsToWeekdays(t *testing.T) {
 	assert.Equal(t, 3, next.Day())
 }
 
+func TestSunEventConditionFiresAtComputedInstantThenPulses(t *testing.T) {
+	const lat, lon = 43.7, -79.4 // Toronto-ish
+	loc, err := time.LoadLocation("America/Toronto")
+	require.NoError(t, err)
+
+	day := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
+	_, sunset, solved, _ := sunTimesUTC(day, lat, lon)
+	require.True(t, solved)
+
+	now := sunset.Add(-100 * time.Millisecond)
+	// loc must be the location the coordinates actually sit in, not an
+	// arbitrary reporting zone: sunTimesUTC's "day" is a UTC-clock label
+	// that, for a longitude west of Greenwich, rolls the evening's sunset
+	// into the next UTC calendar day (see day/sunset above) - next() derives
+	// "today" from from.In(loc), so a loc that doesn't match the
+	// coordinates' own civil day (e.g. plain UTC here) would bucket this
+	// instant into the wrong day and search a whole day too far ahead.
+	cond := NewSunEventCondition(loc, true, 0, func() (float64, float64, bool) { return lat, lon, true })
+	cond.now = func() time.Time { return now }
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	waitForChange(t, changes, true)
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate(), "must pulse back to false, not stay true")
+}
+
+func TestSunEventConditionNextAppliesOffset(t *testing.T) {
+	const lat, lon = 43.7, -79.4
+	day := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
+	_, sunset, solved, _ := sunTimesUTC(day, lat, lon)
+	require.True(t, solved)
+
+	cond := NewSunEventCondition(time.UTC, true, -30*time.Minute, func() (float64, float64, bool) { return lat, lon, true })
+	next := cond.next(day)
+	assert.WithinDuration(t, sunset.Add(-30*time.Minute), next, time.Second)
+}
+
+func TestSunEventConditionRetriesWhenLocationUnavailable(t *testing.T) {
+	cond := NewSunEventCondition(time.UTC, false, 0, func() (float64, float64, bool) { return 0, 0, false })
+	from := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, from.Add(sunLocationRetryInterval), cond.next(from))
+}
+
+func TestSunWindowConditionStateReflectsSunriseSunset(t *testing.T) {
+	const lat, lon = 43.7, -79.4
+	loc, err := time.LoadLocation("America/Toronto")
+	require.NoError(t, err)
+
+	day := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC) // sunTimesUTC only reads Y/M/D
+	sunrise, sunset, solved, _ := sunTimesUTC(day, lat, lon)
+	require.True(t, solved)
+
+	// See TestSunEventConditionFiresAtComputedInstantThenPulses for why loc
+	// must match the coordinates' own civil day, not plain UTC. For the same
+	// reason, "midnight" for state() must be midnight in loc, not UTC
+	// midnight - which is still the evening of June 20 in Toronto.
+	midnightLocal := time.Date(2026, 6, 21, 0, 0, 0, 0, loc)
+
+	cond := NewSunWindowCondition(loc, func() (float64, float64, bool) { return lat, lon, true })
+
+	upAtMidnight, nextFromMidnight := cond.state(midnightLocal)
+	assert.False(t, upAtMidnight)
+	assert.WithinDuration(t, sunrise, nextFromMidnight, time.Second)
+
+	upAtNoon, nextFromNoon := cond.state(sunrise.Add(time.Hour))
+	assert.True(t, upAtNoon)
+	assert.WithinDuration(t, sunset, nextFromNoon, time.Second)
+
+	upAfterSunset, nextAfterSunset := cond.state(sunset.Add(time.Hour))
+	assert.False(t, upAfterSunset)
+	tomorrowSunrise, _, tomorrowSolved, _ := sunTimesUTC(day.AddDate(0, 0, 1), lat, lon)
+	require.True(t, tomorrowSolved)
+	assert.WithinDuration(t, tomorrowSunrise, nextAfterSunset, time.Second)
+}
+
+func TestSunWindowConditionPolarDayIsAlwaysUp(t *testing.T) {
+	const lat, lon = 78.0, 15.0 // well inside the Arctic Circle
+	day := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
+
+	cond := NewSunWindowCondition(time.UTC, func() (float64, float64, bool) { return lat, lon, true })
+	up, next := cond.state(day)
+	assert.True(t, up)
+	assert.Equal(t, day.Add(24*time.Hour), next)
+}
+
+// TestSunWindowConditionStartFiresOnSunriseTransition drives "now" off real
+// elapsed wall-clock time (rather than a single fixed instant, as
+// TestScheduleConditionFiresAtComputedInstantThenPulses does): unlike
+// ScheduleCondition's pulse, SunWindowCondition re-reads "now" on every
+// wake to decide its new level value, so a fixed clock would recompute the
+// exact same pre-sunrise answer forever and never observe the transition.
+func TestSunWindowConditionStartFiresOnSunriseTransition(t *testing.T) {
+	const lat, lon = 43.7, -79.4
+	day := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
+	sunrise, _, solved, _ := sunTimesUTC(day, lat, lon)
+	require.True(t, solved)
+
+	base := sunrise.Add(-100 * time.Millisecond)
+	wallStart := time.Now()
+	cond := NewSunWindowCondition(time.UTC, func() (float64, float64, bool) { return lat, lon, true })
+	cond.now = func() time.Time { return base.Add(time.Since(wallStart)) }
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	assert.False(t, cond.Evaluate())
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+}
+
+func TestDateRangeConditionMatchesNonWrappingRange(t *testing.T) {
+	cond := NewDateRangeCondition(time.UTC, 12, 1, 12, 31) // December
+	assert.True(t, cond.matches(time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)))
+	assert.False(t, cond.matches(time.Date(2026, 11, 30, 0, 0, 0, 0, time.UTC)))
+	assert.False(t, cond.matches(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)))
+}
+
+func TestDateRangeConditionMatchesSingleDay(t *testing.T) {
+	cond := NewDateRangeCondition(time.UTC, 12, 25, 12, 25) // Christmas, every year
+	assert.True(t, cond.matches(time.Date(2026, 12, 25, 23, 59, 0, 0, time.UTC)))
+	assert.False(t, cond.matches(time.Date(2026, 12, 24, 0, 0, 0, 0, time.UTC)))
+	assert.False(t, cond.matches(time.Date(2026, 12, 26, 0, 0, 0, 0, time.UTC)))
+}
+
+func TestDateRangeConditionWrapsAcrossNewYear(t *testing.T) {
+	cond := NewDateRangeCondition(time.UTC, 12, 20, 1, 5) // Dec 20 - Jan 5
+	assert.True(t, cond.matches(time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)))
+	assert.True(t, cond.matches(time.Date(2027, 1, 3, 0, 0, 0, 0, time.UTC)))
+	assert.False(t, cond.matches(time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)))
+}
+
+// TestDateRangeConditionStartFiresAtLocalMidnight uses the same
+// elapsed-wall-clock "now" as TestSunWindowConditionStartFiresOnSunriseTransition,
+// for the same reason: the fire branch re-reads "now" to decide the new
+// value.
+func TestDateRangeConditionStartFiresAtLocalMidnight(t *testing.T) {
+	base := time.Date(2026, 12, 24, 23, 59, 59, 900_000_000, time.UTC)
+	wallStart := time.Now()
+	cond := NewDateRangeCondition(time.UTC, 12, 25, 12, 25)
+	cond.now = func() time.Time { return base.Add(time.Since(wallStart)) }
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	assert.False(t, cond.Evaluate())
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+}
+
 // manualCondition lets a test flip a boolean directly, for exercising
 // composite conditions without going through a bus or ticker.
 type manualCondition struct {
@@ -400,6 +551,107 @@ func TestNotCondition(t *testing.T) {
 
 	a.set(true)
 	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate())
+}
+
+func TestHeldForConditionFiresAfterDurationThenResetsOnChildFalse(t *testing.T) {
+	child := &manualCondition{}
+	cond := NewHeldForCondition(child, 30*time.Millisecond)
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	assert.False(t, cond.Evaluate())
+
+	child.set(true)
+	// Must not fire before the duration elapses.
+	assertNoChange(t, changes)
+	assert.False(t, cond.Evaluate())
+
+	waitForChange(t, changes, true)
+	assert.True(t, cond.Evaluate())
+
+	// Child going false resets immediately, regardless of how long it had
+	// been held true.
+	child.set(false)
+	waitForChange(t, changes, false)
+	assert.False(t, cond.Evaluate())
+}
+
+// TestHeldForConditionResetsBeforeDurationElapses covers the countdown being
+// cancelled, not merely ignored: a child that goes false partway through the
+// duration must not still fire true once the original duration would have
+// elapsed.
+func TestHeldForConditionResetsBeforeDurationElapses(t *testing.T) {
+	child := &manualCondition{}
+	cond := NewHeldForCondition(child, 30*time.Millisecond)
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	child.set(true)
+	time.Sleep(10 * time.Millisecond)
+	child.set(false) // well before the 30ms duration elapses
+
+	select {
+	case v := <-changes:
+		t.Fatalf("unexpected onChange(%v): countdown should have been cancelled", v)
+	case <-time.After(50 * time.Millisecond):
+	}
+	assert.False(t, cond.Evaluate())
+}
+
+// TestHeldForConditionRepeatedTrueDoesNotRestartCountdown covers apply's "a
+// further true while one is already pending is a no-op" rule: a child that
+// re-fires true (e.g. a level condition re-publishing the same value) must
+// not push the countdown's deadline back out.
+func TestHeldForConditionRepeatedTrueDoesNotRestartCountdown(t *testing.T) {
+	child := &manualCondition{}
+	cond := NewHeldForCondition(child, 30*time.Millisecond)
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	child.set(true)
+	time.Sleep(20 * time.Millisecond)
+	child.set(true) // re-fire true; must not restart the 30ms countdown
+
+	waitForChange(t, changes, true) // fires ~10ms later, not ~30ms after the re-fire
+}
+
+// TestHeldForConditionStartPicksUpAlreadyTrueChild covers a child that's
+// already true when Start runs (e.g. a light already on when the engine
+// boots): the countdown must begin immediately, not wait for a transition
+// that may never come.
+func TestHeldForConditionStartPicksUpAlreadyTrueChild(t *testing.T) {
+	child := &manualCondition{value: true}
+	cond := NewHeldForCondition(child, 20*time.Millisecond)
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	waitForChange(t, changes, true)
+}
+
+// TestHeldForConditionStopsCountdownOnCancel covers the context.AfterFunc
+// cleanup: cancelling ctx while a countdown is pending must stop the timer,
+// not merely leave it to fire into a torn-down onChange later.
+func TestHeldForConditionStopsCountdownOnCancel(t *testing.T) {
+	child := &manualCondition{}
+	cond := NewHeldForCondition(child, 20*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	changes := make(chan bool, 8)
+	cond.Start(ctx, func(v bool) { changes <- v })
+
+	child.set(true)
+	cancel()
+
+	select {
+	case v := <-changes:
+		t.Fatalf("unexpected onChange(%v) after cancellation", v)
+	case <-time.After(50 * time.Millisecond):
+	}
 	assert.False(t, cond.Evaluate())
 }
 

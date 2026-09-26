@@ -144,6 +144,33 @@ func (e *notExpr) conditionTypeNames(out map[string]struct{}) {
 	e.expr.conditionTypeNames(out)
 }
 
+type heldForExpr struct {
+	expr     ConditionExpr
+	duration time.Duration
+}
+
+// ExprHeldFor returns a ConditionExpr that becomes true once expr has been
+// continuously true for at least duration, resetting the instant expr goes
+// false again - see HeldForCondition. It's how a "still true after N
+// minutes" policy is expressed - e.g. "if this light is still on after 5
+// minutes, turn it off" - a shape ExprAnd/ExprOr/ExprNot alone can't
+// produce, since none of them reason about how long a fact has held.
+func ExprHeldFor(expr ConditionExpr, duration time.Duration) ConditionExpr {
+	return &heldForExpr{expr: expr, duration: duration}
+}
+
+func (e *heldForExpr) build(r *ConditionRegistry) (Condition, error) {
+	child, err := e.expr.build(r)
+	if err != nil {
+		return nil, err
+	}
+	return NewHeldForCondition(child, e.duration), nil
+}
+
+func (e *heldForExpr) conditionTypeNames(out map[string]struct{}) {
+	e.expr.conditionTypeNames(out)
+}
+
 func buildAll(r *ConditionRegistry, exprs []ConditionExpr) ([]Condition, error) {
 	conds := make([]Condition, 0, len(exprs))
 	for _, expr := range exprs {
@@ -158,12 +185,14 @@ func buildAll(r *ConditionRegistry, exprs []ConditionExpr) ([]Condition, error) 
 
 // conditionExprJSON is the wire format a ConditionExpr tree is persisted as.
 // Type is a discriminator: "use" nodes carry Name/Params, "and"/"or" carry
-// Children, and "not" carries a single-element Children.
+// Children, "not" and "held-for" each carry a single-element Children, and
+// "held-for" additionally carries DurationMS.
 type conditionExprJSON struct {
-	Type     string              `json:"type"`
-	Name     string              `json:"name,omitempty"`
-	Params   json.RawMessage     `json:"params,omitempty"`
-	Children []conditionExprJSON `json:"children,omitempty"`
+	Type       string              `json:"type"`
+	Name       string              `json:"name,omitempty"`
+	Params     json.RawMessage     `json:"params,omitempty"`
+	Children   []conditionExprJSON `json:"children,omitempty"`
+	DurationMS int64               `json:"durationMs,omitempty"` // "held-for" only
 }
 
 // MarshalConditionExpr serialises expr to JSON for persistence. See
@@ -202,6 +231,12 @@ func marshalConditionExprNode(expr ConditionExpr) (conditionExprJSON, error) {
 			return conditionExprJSON{}, err
 		}
 		return conditionExprJSON{Type: "not", Children: []conditionExprJSON{child}}, nil
+	case *heldForExpr:
+		child, err := marshalConditionExprNode(e.expr)
+		if err != nil {
+			return conditionExprJSON{}, err
+		}
+		return conditionExprJSON{Type: "held-for", Children: []conditionExprJSON{child}, DurationMS: e.duration.Milliseconds()}, nil
 	default:
 		return conditionExprJSON{}, fmt.Errorf("policy: cannot marshal condition expression of type %T", expr)
 	}
@@ -261,6 +296,15 @@ func unmarshalConditionExprNode(node conditionExprJSON, r *ConditionRegistry) (C
 			return nil, err
 		}
 		return &notExpr{expr: child}, nil
+	case "held-for":
+		if len(node.Children) != 1 {
+			return nil, fmt.Errorf("policy: \"held-for\" condition expression must have exactly one child, got %d", len(node.Children))
+		}
+		child, err := unmarshalConditionExprNode(node.Children[0], r)
+		if err != nil {
+			return nil, err
+		}
+		return &heldForExpr{expr: child, duration: time.Duration(node.DurationMS) * time.Millisecond}, nil
 	default:
 		return nil, fmt.Errorf("policy: unknown condition expression type %q", node.Type)
 	}

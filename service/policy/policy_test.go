@@ -97,11 +97,64 @@ func TestUnmarshalConditionExprErrors(t *testing.T) {
 	_, err = UnmarshalConditionExpr([]byte(`{"type": "not", "children": []}`), r)
 	assert.Error(t, err)
 
+	_, err = UnmarshalConditionExpr([]byte(`{"type": "held-for", "children": []}`), r)
+	assert.Error(t, err)
+
 	_, err = UnmarshalConditionExpr([]byte(`{"type": "use", "name": "does-not-exist"}`), r)
 	assert.Error(t, err)
 
 	_, err = UnmarshalConditionExpr([]byte(`not json`), r)
 	assert.Error(t, err)
+}
+
+func TestExprHeldForBuildsAHeldForCondition(t *testing.T) {
+	r := NewConditionRegistry()
+	staticConditionType(r, "true-cond", true)
+
+	cond, err := ExprHeldFor(Use("true-cond", struct{}{}), 5*time.Minute).build(r)
+	require.NoError(t, err)
+
+	hf, ok := cond.(*HeldForCondition)
+	require.True(t, ok)
+	assert.Equal(t, 5*time.Minute, hf.duration)
+}
+
+func TestExprHeldForBuildErrorPropagates(t *testing.T) {
+	r := NewConditionRegistry()
+	_, err := ExprHeldFor(Use("unregistered", struct{}{}), time.Minute).build(r)
+	assert.Error(t, err)
+}
+
+// TestExprHeldForJSONRoundTrip covers persistence: MarshalConditionExpr then
+// UnmarshalConditionExpr must preserve both the wrapped expression and the
+// duration.
+func TestExprHeldForJSONRoundTrip(t *testing.T) {
+	type onOffParams struct {
+		DeviceID string
+	}
+
+	r := NewConditionRegistry()
+	var gotDeviceID string
+	RegisterConditionType(r, "is-on", func(p onOffParams) Condition {
+		gotDeviceID = p.DeviceID
+		return NewPollingCondition(func() bool { return true }, time.Hour)
+	})
+
+	expr := ExprHeldFor(Use("is-on", onOffParams{DeviceID: "light.kitchen"}), 5*time.Minute)
+
+	data, err := MarshalConditionExpr(expr)
+	require.NoError(t, err)
+
+	restored, err := UnmarshalConditionExpr(data, r)
+	require.NoError(t, err)
+
+	cond, err := restored.build(r)
+	require.NoError(t, err)
+
+	assert.Equal(t, "light.kitchen", gotDeviceID)
+	hf, ok := cond.(*HeldForCondition)
+	require.True(t, ok)
+	assert.Equal(t, 5*time.Minute, hf.duration)
 }
 
 func TestConditionExprNestedComposite(t *testing.T) {

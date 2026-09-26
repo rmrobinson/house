@@ -21,17 +21,31 @@ func TestLoadSystemPoliciesOccupancyOnMotion(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestLoadSystemPoliciesPowerRestore covers sys.power-restore's loop over
+// every enumerated "light" device (see home.findDevices in bindings.go):
+// two lights in different prior states, both simulated as having powered
+// back on by themselves (a common firmware default), plus a non-light
+// device that findDevices("light") must exclude.
 func TestLoadSystemPoliciesPowerRestore(t *testing.T) {
 	home := newFakeHomeAPI()
-	home.setLastKnown("light.living_room", true)
 	e, _ := newTestEngine(t, home)
 
+	e.UpdateDeviceState("light.living_room", "light", nil)
+	home.setLastKnown("light.living_room", true)
+	e.UpdateDeviceState("light.porch", "light", nil)
+	home.setLastKnown("light.porch", false)
+	e.UpdateDeviceState("sensor.hallway", "sensor", nil)
+	home.setLastKnown("sensor.hallway", true)
+
 	require.NoError(t, LoadSystemPolicies(e))
+
+	require.NoError(t, home.SetLight("light.living_room", true))
+	require.NoError(t, home.SetLight("light.porch", true))
 
 	e.Bus().Publish(Event{Topic: "power.restored"})
 
 	require.Eventually(t, func() bool {
-		return home.getLight("light.living_room")
+		return home.getLight("light.living_room") && !home.getLight("light.porch")
 	}, time.Second, 10*time.Millisecond)
 }
 

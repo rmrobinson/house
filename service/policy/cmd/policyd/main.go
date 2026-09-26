@@ -8,6 +8,13 @@
 // placeholder (see stubhome.go) that logs every call instead of touching
 // real device/house state, so the engine and its UI stay runnable and
 // visually verifiable with no bridge configured.
+//
+// With --lat/--lon (and optionally --location-tz), whichever HomeAPI that
+// resolves to is further wrapped in policy.LocationHomeAPI, so the
+// schedule.sun-event/schedule.daylight/schedule.date-range condition types
+// have a location to compute sunrise/sunset/calendar-date facts from - see
+// LocationHomeAPI's doc comment for why this is a static stand-in rather
+// than a house-service lookup.
 package main
 
 import (
@@ -32,6 +39,9 @@ var (
 	dbPath     = flag.String("db", "policy.db", "Path to the SQLite database to use")
 	addr       = flag.String("addr", "localhost:8080", "Address for the HTTP UI to listen on")
 	bridgeAddr = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
+	lat        = flag.Float64("lat", 0, "Building latitude in degrees, for the schedule.sun-event/schedule.daylight condition types; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
+	lon        = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
+	locationTZ = flag.String("location-tz", "", "IANA timezone for the schedule.sun-event/schedule.daylight/schedule.date-range condition types (e.g. America/Toronto); defaults to the engine process's local zone")
 )
 
 func main() {
@@ -77,11 +87,16 @@ func main() {
 		home = newStubHomeAPI(logger)
 	}
 
+	if *lat != 0 || *lon != 0 || *locationTZ != "" {
+		home = policy.NewLocationHomeAPI(home, *lat, *lon, *locationTZ)
+	}
+
 	engine := policy.NewEngine(home, registry, logger, policy.WithStore(store))
 	defer engine.Close()
 
 	policy.RegisterSystemConditionTypes(engine)
 	policy.RegisterBuiltinConditionTypes(engine)
+	policy.RegisterLocationConditionTypes(engine)
 	if err := policy.LoadPersistedPolicies(engine, store); err != nil {
 		logger.Fatal("unable to load persisted policies", zap.Error(err))
 	}
