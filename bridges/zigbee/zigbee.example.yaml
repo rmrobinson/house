@@ -1,0 +1,27 @@
+bridge:
+  id: "<bridge ID>"
+  listen_port: 17015
+
+zigbee:
+  mqtt:
+    broker_url: "tcp://localhost:1883" # or "ssl://host:8883" for TLS
+    client_id: "house-zigbee-bridge"
+    username: ""
+    password: ""
+    # ca_cert_file: "/etc/house/zigbee-mqtt-ca.pem"  # only needed for a self-signed broker cert
+    # insecure_skip_verify: false
+
+    # zigbee2mqtt's configured MQTT base topic (its "mqtt.base_topic" setting, "zigbee2mqtt" by
+    # default).
+    base_topic: "zigbee2mqtt"
+
+  # Per-physical-device overrides, keyed by ieee_address (zigbee2mqtt's stable identifier for a
+  # device - unlike friendly_name, which a user can rename at any time). Every field is optional;
+  # omit an override entirely for a device the default id assignment already handles fine.
+  # Unlike bridges/zwave's per-product-model overrides, this bridge needs far less config-override
+  # machinery - zigbee2mqtt's exposes API already resolves a device model's actual capabilities for
+  # every device, so these entries are purely cosmetic/identity overrides, never required to make a
+  # device buildable at all. See README.md.
+  devices:
+    - ieee_address: "0x00124b0018f4d1a2"
+      id: kitchen-plug

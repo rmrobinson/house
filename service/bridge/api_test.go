@@ -70,6 +70,20 @@ func lightDevice(id string) *device.Device {
 	}
 }
 
+func fanDevice(id string) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Fan{
+			Fan: &device.Fan{
+				OnOff:   &trait.OnOff{},
+				Speed:   &trait.Speed{},
+				Mode:    &trait.Mode{},
+				Toggles: &trait.Toggle{},
+			},
+		},
+	}
+}
+
 func newTestService(t *testing.T, h *fakeHandler) *Service {
 	svc := NewService(zaptest.NewLogger(t))
 	svc.RegisterHandler(h, &api2.Bridge{Id: "test-bridge"})
@@ -185,6 +199,39 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			name: "light app launch not supported when scene field unset",
 			d:    lightDevice("d1"),
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_AppLaunch{AppLaunch: &command.AppLaunch{ApplicationId: "Nemo"}}},
+			want: false,
+		},
+		{
+			name: "fan onoff supported",
+			d:    fanDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_OnOff{OnOff: &command.OnOff{On: true}}},
+			want: true,
+		},
+		{
+			// Fan.Speed is always read-only telemetry in this repo's one producer (bridges/zigbee's
+			// fanBuilder) - no branch here claims otherwise, even when the trait is present, unlike
+			// the other Fan sub-traits below. See service/bridge/api.go's Fan branch doc comment.
+			name: "fan speed never supported (read-only telemetry)",
+			d:    fanDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Speed{Speed: &command.Speed{Value: 5}}},
+			want: false,
+		},
+		{
+			name: "fan mode supported",
+			d:    fanDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Mode{Mode: &command.Mode{Value: "auto"}}},
+			want: true,
+		},
+		{
+			name: "fan toggle supported",
+			d:    fanDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Toggle{Toggle: &command.Toggle{Settings: map[string]bool{"led_enable": true}}}},
+			want: true,
+		},
+		{
+			name: "fan volume not supported",
+			d:    fanDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: 10}}},
 			want: false,
 		},
 	}
