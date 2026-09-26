@@ -69,17 +69,20 @@ func LoadDefaultSystemPolicies(e *Engine) error {
 }
 
 // LoadSystemPolicies registers the system condition types, the generic
-// builtin condition types (see RegisterBuiltinConditionTypes), and the
+// builtin and location-based condition types (see
+// RegisterBuiltinConditionTypes, RegisterLocationConditionTypes), and the
 // default system policies built from the former. They use the same Register
 // path as user policies, so a user policy can override any of them by
 // re-registering the same ID.
 //
 // This is the entry point for the no-persistence case. A caller that also
-// loads persisted policies should instead call RegisterSystemConditionTypes
-// and RegisterBuiltinConditionTypes, then LoadPersistedPolicies, then
-// LoadDefaultSystemPolicies, in that order — see LoadPersistedPolicies.
+// loads persisted policies should instead call RegisterSystemConditionTypes,
+// RegisterBuiltinConditionTypes and RegisterLocationConditionTypes, then
+// LoadPersistedPolicies, then LoadDefaultSystemPolicies, in that order — see
+// LoadPersistedPolicies.
 func LoadSystemPolicies(e *Engine) error {
 	RegisterSystemConditionTypes(e)
 	RegisterBuiltinConditionTypes(e)
+	RegisterLocationConditionTypes(e)
 	return LoadDefaultSystemPolicies(e)
 }

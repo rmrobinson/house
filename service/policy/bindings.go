@@ -22,6 +22,15 @@ var ErrNotImplemented = errors.New("policy: not implemented")
 // plan, but that stream doesn't exist in this codebase yet: a concrete
 // HomeAPI implementation should return ErrNotImplemented for both until it
 // does, the same way service/house handles unbuilt RPCs.
+//
+// Three GetHouseState keys are reserved, well-known house properties rather
+// than arbitrary state: "location.latitude" and "location.longitude"
+// (float64, degrees, positive north/east) and "location.timezone" (string,
+// an IANA zone name e.g. "America/Toronto"). RegisterLocationConditionTypes's
+// "schedule.sun-event"/"schedule.daylight"/"schedule.date-range" condition
+// types read them to compute sunrise/sunset and calendar-date facts for the
+// house's own location; see LocationHomeAPI for a ready way to answer them
+// without a full house-state stream.
 type HomeAPI interface {
 	// Device state
 	GetLight(id string) (bool, error)
@@ -39,6 +48,51 @@ type HomeAPI interface {
 
 	// Notifications
 	Notify(event string, payload map[string]any) error
+}
+
+// LocationHomeAPI wraps another HomeAPI, answering GetHouseState's
+// "location.latitude"/"location.longitude"/"location.timezone" keys (see
+// HomeAPI's doc comment) from a fixed lat/lon/tz configured at construction
+// time, and delegating every other call - including any other
+// GetHouseState key - unchanged to the wrapped HomeAPI.
+//
+// It exists because no HomeAPI implementation in this codebase backs those
+// three keys from a real source yet (bridgehome's GetHouseState is
+// unconditionally ErrNotImplemented, staying strictly scoped to
+// bridge.proto's contract - see its own doc comment): wrapping a
+// deployment's HomeAPI with this makes the location-based condition types
+// usable today from static configuration, with no change to them needed
+// later once a house-service-backed GetHouseState replaces this static
+// answer.
+type LocationHomeAPI struct {
+	HomeAPI
+	lat, lon float64
+	tz       string
+}
+
+// NewLocationHomeAPI wraps home, answering "location.latitude"/
+// "location.longitude" with lat/lon (degrees) and "location.timezone" with
+// tz (an IANA zone name, e.g. "America/Toronto"; empty leaves
+// "location.timezone" to fall through to home, e.g. if home has some other
+// way to answer it).
+func NewLocationHomeAPI(home HomeAPI, lat, lon float64, tz string) *LocationHomeAPI {
+	return &LocationHomeAPI{HomeAPI: home, lat: lat, lon: lon, tz: tz}
+}
+
+// GetHouseState implements policy.HomeAPI, answering the three location
+// keys locally and delegating everything else to the wrapped HomeAPI.
+func (l *LocationHomeAPI) GetHouseState(key string) (any, error) {
+	switch key {
+	case "location.latitude":
+		return l.lat, nil
+	case "location.longitude":
+		return l.lon, nil
+	case "location.timezone":
+		if l.tz != "" {
+			return l.tz, nil
+		}
+	}
+	return l.HomeAPI.GetHouseState(key)
 }
 
 // bindingErrorTag marks a Lua error as having originated from a HomeAPI

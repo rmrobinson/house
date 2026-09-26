@@ -460,6 +460,100 @@ func (i *IdleCondition) Start(ctx context.Context, onChange func(bool)) {
 	}()
 }
 
+// HeldForCondition is true once child has been continuously true for at
+// least duration, and resets to false - cancelling any pending countdown -
+// the instant child goes false. It's IdleCondition's mirror image, but keyed
+// off a child Condition's own true/false transitions instead of a bus
+// topic's mere presence of events: IdleCondition answers "nothing has
+// happened for a while" (silence); this answers "something has stayed true
+// for a while" (a held level) - the shape a "if this light is still on
+// after 5 minutes, turn it off" policy needs, which idle-for's
+// silence-based reasoning doesn't fit (a light staying on need not publish
+// any further events at all).
+type HeldForCondition struct {
+	child    Condition
+	duration time.Duration
+
+	mu    sync.Mutex
+	timer *time.Timer
+	value bool
+}
+
+// NewHeldForCondition creates a HeldForCondition that becomes true once
+// child has held true continuously for duration.
+func NewHeldForCondition(child Condition, duration time.Duration) *HeldForCondition {
+	return &HeldForCondition{child: child, duration: duration}
+}
+
+func (h *HeldForCondition) Evaluate() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.value
+}
+
+// fire applies v as the current value if it's a real transition, calling
+// onChange exactly once for it. Called both from the countdown's own timer
+// (child has been true for the full duration) and directly, from apply
+// (child went false).
+func (h *HeldForCondition) fire(onChange func(bool), v bool) {
+	h.mu.Lock()
+	changed := v != h.value
+	h.value = v
+	h.mu.Unlock()
+	if changed {
+		onChange(v)
+	}
+}
+
+// apply reacts to child's current value: true arms a duration countdown (a
+// further true while one is already pending is a no-op - the countdown
+// doesn't restart, since child never stopped being true); false cancels any
+// pending countdown and, if this condition had already become true, fires
+// it straight back to false.
+func (h *HeldForCondition) apply(onChange func(bool), childValue bool) {
+	h.mu.Lock()
+	if childValue {
+		if h.timer != nil {
+			h.mu.Unlock()
+			return
+		}
+		h.timer = time.AfterFunc(h.duration, func() { h.fire(onChange, true) })
+		h.mu.Unlock()
+		return
+	}
+
+	if h.timer != nil {
+		h.timer.Stop()
+		h.timer = nil
+	}
+	h.mu.Unlock()
+	h.fire(onChange, false)
+}
+
+func (h *HeldForCondition) Start(ctx context.Context, onChange func(bool)) {
+	h.child.Start(ctx, func(childValue bool) { h.apply(onChange, childValue) })
+
+	// Pick up a child that's already true when Start runs (e.g. a light
+	// already on when the engine boots): Start doesn't fire onChange for a
+	// child's own baseline value (see e.g. PollingCondition's doc comment),
+	// so without this the countdown would never begin until the child's
+	// next transition - which, for an already-true fact, might never come.
+	h.apply(onChange, h.child.Evaluate())
+
+	// time.AfterFunc's timer runs independently of ctx, unlike every other
+	// Condition here (each of which blocks on ctx.Done() in its own
+	// goroutine): stop a still-pending countdown on cancellation so it
+	// doesn't leak past this policy's teardown.
+	context.AfterFunc(ctx, func() {
+		h.mu.Lock()
+		if h.timer != nil {
+			h.timer.Stop()
+			h.timer = nil
+		}
+		h.mu.Unlock()
+	})
+}
+
 // ScheduleCondition fires once at a specific wall-clock time each day, or
 // only on specific weekdays if any are given, pulsing onChange(true) then
 // immediately onChange(false) - mirroring EventCondition's
@@ -539,6 +633,301 @@ func (s *ScheduleCondition) Start(ctx context.Context, onChange func(bool)) {
 				s.value = false
 				s.mu.Unlock()
 				onChange(false)
+			}
+		}
+	}()
+}
+
+// sunLocationRetryInterval is how long SunEventCondition/SunWindowCondition
+// wait before checking again when locate reports the observer's location
+// isn't available yet - a fixed backoff rather than the "hold the last
+// value" convention numeric readers use, since there's no prior sun
+// computation to fall back on the first time this happens.
+const sunLocationRetryInterval = time.Hour
+
+// SunEventCondition fires once each day at the computed sunrise or sunset
+// for a location supplied by locate (degrees; ok=false defers to
+// sunLocationRetryInterval), offset by offset, pulsing onChange(true) then
+// onChange(false) exactly like ScheduleCondition - "at sunset" is a
+// momentary event, not a state that stays true. locate is called fresh on
+// every reschedule, so a location that becomes available (or changes) after
+// Start is picked up without a restart.
+type SunEventCondition struct {
+	locate func() (lat, lon float64, ok bool)
+	loc    *time.Location
+	sunset bool // true selects sunset, false selects sunrise
+	offset time.Duration
+
+	now func() time.Time // overridable in tests
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewSunEventCondition creates a SunEventCondition. sunset selects sunset
+// over sunrise; offset shifts the trigger from the exact instant (negative
+// fires earlier, positive later).
+func NewSunEventCondition(loc *time.Location, sunset bool, offset time.Duration, locate func() (lat, lon float64, ok bool)) *SunEventCondition {
+	return &SunEventCondition{loc: loc, sunset: sunset, offset: offset, locate: locate, now: time.Now}
+}
+
+func (s *SunEventCondition) Evaluate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.value
+}
+
+// next returns the next instant strictly after from at which this condition
+// should fire: the next day (starting with from's own calendar day) whose
+// computed sunrise/sunset+offset falls after from, or a retry instant if
+// the location isn't available or no solution turns up within a year (deep
+// polar latitudes).
+func (s *SunEventCondition) next(from time.Time) time.Time {
+	lat, lon, ok := s.locate()
+	if !ok {
+		return from.Add(sunLocationRetryInterval)
+	}
+
+	local := from.In(s.loc)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+
+	for range 366 {
+		sunrise, sunset, solved, _ := sunTimesUTC(day, lat, lon)
+		if solved {
+			target := sunrise
+			if s.sunset {
+				target = sunset
+			}
+			target = target.Add(s.offset)
+			if target.After(from) {
+				return target
+			}
+		}
+		day = day.AddDate(0, 0, 1)
+	}
+	return from.Add(sunLocationRetryInterval)
+}
+
+func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
+	go func() {
+		for {
+			now := s.now()
+			timer := time.NewTimer(s.next(now).Sub(now))
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				s.mu.Lock()
+				s.value = true
+				s.mu.Unlock()
+				onChange(true)
+
+				s.mu.Lock()
+				s.value = false
+				s.mu.Unlock()
+				onChange(false)
+			}
+		}
+	}()
+}
+
+// SunWindowCondition is true while the current time is between today's
+// sunrise and sunset for a location supplied by locate, recomputing at each
+// transition (or retrying after sunLocationRetryInterval if the location
+// isn't available) so it stays correct as sunrise/sunset drift day to day.
+// Wrap with Not for "is it dark"/"is it night".
+type SunWindowCondition struct {
+	locate func() (lat, lon float64, ok bool)
+	loc    *time.Location
+
+	now func() time.Time // overridable in tests
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewSunWindowCondition creates a SunWindowCondition for a location supplied
+// by locate.
+func NewSunWindowCondition(loc *time.Location, locate func() (lat, lon float64, ok bool)) *SunWindowCondition {
+	return &SunWindowCondition{loc: loc, locate: locate, now: time.Now}
+}
+
+func (w *SunWindowCondition) Evaluate() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.value
+}
+
+// state reports whether the sun is up at t, and the next instant (strictly
+// after t) at which that answer could change.
+func (w *SunWindowCondition) state(t time.Time) (up bool, next time.Time) {
+	lat, lon, ok := w.locate()
+	if !ok {
+		return false, t.Add(sunLocationRetryInterval)
+	}
+
+	local := t.In(w.loc)
+	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+
+	sunrise, sunset, solved, alwaysUp := sunTimesUTC(day, lat, lon)
+	if !solved {
+		return alwaysUp, t.Add(24 * time.Hour)
+	}
+	if t.Before(sunrise) {
+		return false, sunrise
+	}
+	if t.Before(sunset) {
+		return true, sunset
+	}
+
+	// Past today's sunset: down until tomorrow's sunrise.
+	tomorrow := day.AddDate(0, 0, 1)
+	nextSunrise, _, tomorrowSolved, tomorrowAlwaysUp := sunTimesUTC(tomorrow, lat, lon)
+	if !tomorrowSolved {
+		return tomorrowAlwaysUp, t.Add(24 * time.Hour)
+	}
+	return false, nextSunrise
+}
+
+func (w *SunWindowCondition) Start(ctx context.Context, onChange func(bool)) {
+	// Baseline established synchronously, before the goroutine below runs -
+	// the same convention PollingCondition/PredicateCondition use - so a
+	// caller that reads Evaluate() (or wraps this in HeldForCondition)
+	// immediately after Start sees the real current answer, not a
+	// zero-value placeholder waiting on a goroutine that hasn't run yet.
+	now := w.now()
+	up, next := w.state(now)
+	w.mu.Lock()
+	w.value = up
+	w.mu.Unlock()
+
+	go func() {
+		for {
+			timer := time.NewTimer(next.Sub(now))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				now = w.now()
+				up, next = w.state(now)
+
+				w.mu.Lock()
+				changed := up != w.value
+				w.value = up
+				w.mu.Unlock()
+
+				if changed {
+					onChange(up)
+				}
+			}
+		}
+	}()
+}
+
+// monthDay is a year-independent (month, day) pair, ordered lexically by
+// month then day - Go doesn't support ordering operators on array/struct
+// types directly, hence the explicit helpers below.
+type monthDay struct{ month, day int }
+
+func monthDayLess(a, b monthDay) bool {
+	if a.month != b.month {
+		return a.month < b.month
+	}
+	return a.day < b.day
+}
+
+func monthDayLessEq(a, b monthDay) bool {
+	return a == b || monthDayLess(a, b)
+}
+
+// nextLocalMidnight returns the next local midnight, in loc, strictly after
+// from.
+func nextLocalMidnight(from time.Time, loc *time.Location) time.Time {
+	local := from.In(loc)
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	if !midnight.After(local) {
+		midnight = midnight.AddDate(0, 0, 1)
+	}
+	return midnight
+}
+
+// DateRangeCondition is true while today's (month, day), in loc's timezone,
+// falls within [start, end] inclusive - year-independent, so it recurs every
+// year. A range whose end sorts before its start wraps across New Year's
+// (e.g. December 20 - January 5); a single-day range (start == end) is
+// exactly "on this calendar date every year" (e.g. Christmas: {12, 25} to
+// {12, 25}). It rechecks once at every local midnight - the one instant its
+// membership can change - like ScheduleCondition but level instead of pulse.
+type DateRangeCondition struct {
+	loc        *time.Location
+	start, end monthDay
+
+	now func() time.Time // overridable in tests
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewDateRangeCondition creates a DateRangeCondition for [startMonth,startDay]
+// through [endMonth,endDay] inclusive, evaluated in loc.
+func NewDateRangeCondition(loc *time.Location, startMonth, startDay, endMonth, endDay int) *DateRangeCondition {
+	return &DateRangeCondition{
+		loc:   loc,
+		start: monthDay{startMonth, startDay},
+		end:   monthDay{endMonth, endDay},
+		now:   time.Now,
+	}
+}
+
+func (d *DateRangeCondition) Evaluate() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.value
+}
+
+func (d *DateRangeCondition) matches(t time.Time) bool {
+	local := t.In(d.loc)
+	cur := monthDay{int(local.Month()), local.Day()}
+
+	if !monthDayLess(d.end, d.start) { // start <= end: a normal, non-wrapping range
+		return monthDayLessEq(d.start, cur) && monthDayLessEq(cur, d.end)
+	}
+	// end < start: wraps across New Year's.
+	return monthDayLessEq(d.start, cur) || monthDayLessEq(cur, d.end)
+}
+
+func (d *DateRangeCondition) Start(ctx context.Context, onChange func(bool)) {
+	// Baseline established synchronously - see SunWindowCondition.Start's
+	// identical comment for why.
+	now := d.now()
+	d.mu.Lock()
+	d.value = d.matches(now)
+	d.mu.Unlock()
+
+	go func() {
+		for {
+			next := nextLocalMidnight(now, d.loc)
+			timer := time.NewTimer(next.Sub(now))
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				now = d.now()
+				newVal := d.matches(now)
+
+				d.mu.Lock()
+				changed := newVal != d.value
+				d.value = newVal
+				d.mu.Unlock()
+
+				if changed {
+					onChange(newVal)
+				}
 			}
 		}
 	}()

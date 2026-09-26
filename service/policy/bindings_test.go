@@ -192,3 +192,40 @@ func TestBindingsFindDevicesReturnsCacheBackedList(t *testing.T) {
 		assert(#sensors == 0)
 	`))
 }
+
+func TestLocationHomeAPIAnswersLocationKeysAndDelegatesOthers(t *testing.T) {
+	inner := newFakeHomeAPI()
+	require.NoError(t, inner.SetHouseState("occupancy", "away"))
+
+	home := NewLocationHomeAPI(inner, 43.7, -79.4, "America/Toronto")
+
+	lat, err := home.GetHouseState("location.latitude")
+	require.NoError(t, err)
+	assert.Equal(t, 43.7, lat)
+
+	lon, err := home.GetHouseState("location.longitude")
+	require.NoError(t, err)
+	assert.Equal(t, -79.4, lon)
+
+	tz, err := home.GetHouseState("location.timezone")
+	require.NoError(t, err)
+	assert.Equal(t, "America/Toronto", tz)
+
+	// Any other key falls through to the wrapped HomeAPI unchanged.
+	occupancy, err := home.GetHouseState("occupancy")
+	require.NoError(t, err)
+	assert.Equal(t, "away", occupancy)
+}
+
+// TestLocationHomeAPIEmptyTZFallsThroughToWrapped covers an empty tz
+// argument: "location.timezone" isn't answered locally, so whatever the
+// wrapped HomeAPI has for that key (nothing, for fakeHomeAPI) comes back
+// instead - not an empty string masquerading as a real answer.
+func TestLocationHomeAPIEmptyTZFallsThroughToWrapped(t *testing.T) {
+	inner := newFakeHomeAPI()
+	home := NewLocationHomeAPI(inner, 43.7, -79.4, "")
+
+	tz, err := home.GetHouseState("location.timezone")
+	require.NoError(t, err)
+	assert.Nil(t, tz)
+}
