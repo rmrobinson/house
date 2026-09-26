@@ -40,15 +40,15 @@ func TestBindingsLightRoundTrip(t *testing.T) {
 	assert.True(t, home.getLight("light.kitchen"))
 }
 
-func TestBindingsAttributeRoundTrip(t *testing.T) {
+func TestBindingsStateRoundTrip(t *testing.T) {
 	home := newFakeHomeAPI()
 
 	require.NoError(t, runScriptForTest(t, home, `
-		home.setAttribute("thermostat.hall", "mode", "heat")
-		assert(home.getAttribute("thermostat.hall", "mode") == "heat")
+		home.setState("thermostat.hall", "mode", "heat")
+		assert(home.getState("thermostat.hall", "mode") == "heat")
 	`))
 
-	v, err := home.GetAttribute("thermostat.hall", "mode")
+	v, err := home.GetState("thermostat.hall", "mode")
 	require.NoError(t, err)
 	assert.Equal(t, "heat", v)
 }
@@ -134,7 +134,7 @@ func TestBindingsScriptErrorAfterRecoveredBindingErrorIsNotMisattributed(t *test
 	assert.Contains(t, err.Error(), "my own bug")
 }
 
-func TestBindingsGetAttributeConvertsNumericAndTimeTypes(t *testing.T) {
+func TestBindingsGetStateConvertsNumericAndTimeTypes(t *testing.T) {
 	home := newFakeHomeAPI()
 	home.attributes["thermostat.hall"] = map[string]any{
 		"code":      int32(7),
@@ -142,19 +142,19 @@ func TestBindingsGetAttributeConvertsNumericAndTimeTypes(t *testing.T) {
 	}
 
 	require.NoError(t, runScriptForTest(t, home, `
-		assert(home.getAttribute("thermostat.hall", "code") > 5)
-		assert(home.getAttribute("thermostat.hall", "timestamp") == "2026-01-02T03:04:05Z")
+		assert(home.getState("thermostat.hall", "code") > 5)
+		assert(home.getState("thermostat.hall", "timestamp") == "2026-01-02T03:04:05Z")
 	`))
 }
 
-func TestBindingsGetAttributeUnconvertibleTypeRaisesCatchableError(t *testing.T) {
+func TestBindingsGetStateUnconvertibleTypeRaisesCatchableError(t *testing.T) {
 	home := newFakeHomeAPI()
 	home.attributes["thermostat.hall"] = map[string]any{
 		"callback": func() {},
 	}
 
 	err := runScriptForTest(t, home, `
-		local ok, err = pcall(function() return home.getAttribute("thermostat.hall", "callback") end)
+		local ok, err = pcall(function() return home.getState("thermostat.hall", "callback") end)
 		assert(ok == false)
 	`)
 	assert.NoError(t, err, "script pcalls around the unconvertible value, so DoString itself should succeed")

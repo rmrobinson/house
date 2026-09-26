@@ -163,7 +163,7 @@ func changedUpdate(bridgeID string, d *device.Device) *api2.Update {
 	}
 }
 
-func TestResolveAttribute(t *testing.T) {
+func TestResolveState(t *testing.T) {
 	sensor := sensorDevice("sensor-1", true, false)
 	light := colourLightDevice("light-1", 200)
 	water := waterSensorDevice("water-1", true)
@@ -185,7 +185,7 @@ func TestResolveAttribute(t *testing.T) {
 		{"path continues past a scalar", sensor, "presence.state.motion_detected.extra", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveAttribute(tc.device, tc.key)
+			got, err := resolveState(tc.device, tc.key)
 			if tc.wantErr {
 				assert.Error(t, err)
 				return
@@ -403,11 +403,134 @@ func TestAdapter_SetLight_PropagatesError(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, st.Code())
 }
 
+// newStartedAdapter is a small helper for the SetState tests below: it
+// starts an Adapter against srv and waits for its connection to come up, so
+// each test can focus on the SetState call itself.
+func newStartedAdapter(t *testing.T, srv *fakeBridgeServer) (*Adapter, *policy.Engine) {
+	t.Helper()
+
+	addr := startFakeServer(t, srv)
+	adapter := New(zaptest.NewLogger(t), addr)
+	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	t.Cleanup(engine.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	adapter.Start(ctx, engine)
+
+	require.Eventually(t, func() bool {
+		return adapter.conn.Client() != nil
+	}, 2*time.Second, 10*time.Millisecond)
+
+	return adapter, engine
+}
+
+func TestAdapter_SetState_ScalarField(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("light-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("light-1", "brightness_absolute", map[string]any{
+		"brightness_percent": float64(75),
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 1)
+	assert.Equal(t, "light-1", cmds[0].GetDeviceId())
+	require.NotNil(t, cmds[0].GetBrightnessAbsolute())
+	assert.EqualValues(t, 75, cmds[0].GetBrightnessAbsolute().GetBrightnessPercent())
+}
+
+func TestAdapter_SetState_NestedMessageField(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("light-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("light-1", "colour", map[string]any{
+		"rgb": map[string]any{
+			"red":   float64(255),
+			"green": float64(10),
+			"blue":  float64(0),
+		},
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 1)
+	rgb := cmds[0].GetColour().GetRgb()
+	require.NotNil(t, rgb)
+	assert.EqualValues(t, 255, rgb.GetRed())
+	assert.EqualValues(t, 10, rgb.GetGreen())
+	assert.EqualValues(t, 0, rgb.GetBlue())
+}
+
+func TestAdapter_SetState_EnumField(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("thermo-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("thermo-1", "set_thermostat_mode", map[string]any{
+		"mode": "HEAT",
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 1)
+	require.NotNil(t, cmds[0].GetSetThermostatMode())
+	assert.Equal(t, trait.Thermostat_HEAT, cmds[0].GetSetThermostatMode().GetMode())
+}
+
+func TestAdapter_SetState_MapField(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("switch-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("switch-1", "toggle", map[string]any{
+		"settings": map[string]any{
+			"child_lock": true,
+		},
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 1)
+	assert.Equal(t, map[string]bool{"child_lock": true}, cmds[0].GetToggle().GetSettings())
+}
+
+func TestAdapter_SetState_UnknownCommand(t *testing.T) {
+	srv := &fakeBridgeServer{}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	err := adapter.SetState("light-1", "not_a_real_command", map[string]any{})
+	require.Error(t, err)
+	assert.Empty(t, srv.recordedCommands())
+}
+
+// TestAdapter_SetState_RejectsNonDetailsFields checks that key can't be
+// used to smuggle a write to Command's own device_id/id/version fields -
+// only Command.details' oneof members are valid commands.
+func TestAdapter_SetState_RejectsNonDetailsFields(t *testing.T) {
+	srv := &fakeBridgeServer{}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	err := adapter.SetState("light-1", "device_id", map[string]any{})
+	require.Error(t, err)
+	assert.Empty(t, srv.recordedCommands())
+}
+
+func TestAdapter_SetState_ValueMustBeATable(t *testing.T) {
+	srv := &fakeBridgeServer{}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	err := adapter.SetState("light-1", "brightness_absolute", 75)
+	require.Error(t, err)
+	assert.Empty(t, srv.recordedCommands())
+}
+
+func TestAdapter_SetState_ErrNotReadyBeforeStart(t *testing.T) {
+	adapter := New(zaptest.NewLogger(t), "127.0.0.1:0")
+	err := adapter.SetState("light-1", "brightness_absolute", map[string]any{"brightness_percent": float64(50)})
+	assert.ErrorIs(t, err, ErrNotReady)
+}
+
 // TestHasMotionCoversAnyDeviceKindWithAPresenceField is finding C's
 // regression test: hasMotion must not be hardcoded to Sensor - Camera (and
 // any other kind whose details message has a "presence" field) has to work
-// too, since it now goes through the same generic resolveAttribute path
-// GetAttribute uses.
+// too, since it now goes through the same generic resolveState path
+// GetState uses.
 func TestHasMotionCoversAnyDeviceKindWithAPresenceField(t *testing.T) {
 	assert.True(t, hasMotion(sensorDevice("sensor-1", true, false)))
 	assert.False(t, hasMotion(sensorDevice("sensor-1", false, false)))
