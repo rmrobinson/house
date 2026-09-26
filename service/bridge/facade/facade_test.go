@@ -64,7 +64,7 @@ func TestIngestInitial_SeedsCacheAndPublishesAdded(t *testing.T) {
 	sink := f.updates.NewSink()
 	defer sink.Close()
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true)},
@@ -102,7 +102,7 @@ func TestIngestInitial_SeedsCacheAndPublishesAdded(t *testing.T) {
 func TestPresent_RewritesAddressIncrementsHopCountKeepsOriginalCached(t *testing.T) {
 	f := newTestFacade(t)
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true)},
@@ -135,7 +135,7 @@ func TestGetBridge_ReturnsSelf(t *testing.T) {
 func TestIngestInitial_ReconcilesDeviceSetOnReconnect(t *testing.T) {
 	f := newTestFacade(t)
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true), lightDevice("d2", true)},
@@ -175,7 +175,7 @@ func TestIngestInitial_ReconcilesDeviceSetOnReconnect(t *testing.T) {
 func TestIngestPassthrough_DeviceUpdate_RewritesAddressButKeepsOwnerAndBridgeID(t *testing.T) {
 	f := newTestFacade(t)
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true)},
@@ -223,7 +223,7 @@ func TestIngestPassthrough_DeviceUpdate_RewritesAddressButKeepsOwnerAndBridgeID(
 func TestMarkUnreachable_FlagsBridgeAndDevicesWithoutDroppingThem(t *testing.T) {
 	f := newTestFacade(t)
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true)},
@@ -263,7 +263,7 @@ func TestExecuteCommand_UnknownDeviceReturnsNotFound(t *testing.T) {
 func TestExecuteCommand_KnownDeviceUnreachableBridge(t *testing.T) {
 	f := newTestFacade(t)
 
-	uc := &upstreamConn{addr: "bridge-1:1234", f: f}
+	uc := newUpstreamConn(f, "bridge-1:1234")
 	f.ingestInitial(uc, &api2.InitialUpdate{
 		Bridge:  testBridge("b1", true),
 		Devices: []*device.Device{lightDevice("d1", true)},

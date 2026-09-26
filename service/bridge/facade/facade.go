@@ -99,11 +99,7 @@ func (f *Facade) present(d *device.Device) *device.Device {
 // connection is established and streamed in a background goroutine that
 // runs until ctx is cancelled.
 func (f *Facade) Connect(ctx context.Context, addr string) {
-	uc := &upstreamConn{
-		addr: addr,
-		f:    f,
-	}
-	uc.backoff.Store(int64(minReconnectBackoff))
+	uc := newUpstreamConn(f, addr)
 	go uc.run(ctx)
 }
 
