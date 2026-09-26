@@ -13,6 +13,7 @@ go_library(
         "//api",
         "//api/command",
         "//api/device",
+        "//bridgeconn",
         "//service/bridge",
         "//service/lib/backoffutil",
         "//service/lib/configutil",
