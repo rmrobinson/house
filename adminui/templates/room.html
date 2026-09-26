@@ -1,14 +1,12 @@
 {{define "content"}}
 <div id="page-content">
-  <p class="crumbs">
-    <a href="/buildings">Buildings</a> /
-    {{if .Building.ID}}<a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a>{{else}}{{.Building.Name}}{{end}} /
-    {{if .Floor.ID}}<a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a>{{else}}{{.Floor.Name}}{{end}} /
-    {{.Room.Name}}
-  </p>
-
   <div class="entity-header">
-    <h1>{{.Room.Name}}</h1>
+    <p class="crumbs">
+      <a href="/buildings">Buildings</a> /
+      {{if .Building.ID}}<a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a>{{else}}{{.Building.Name}}{{end}} /
+      {{if .Floor.ID}}<a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a>{{else}}{{.Floor.Name}}{{end}} /
+      <strong>{{.Room.Name}}</strong>
+    </p>
     <button type="button" class="icon-btn" title="Edit room" onclick="document.getElementById('edit-room-dialog').showModal()">⚙</button>
   </div>
 
@@ -31,7 +29,6 @@
     </div>
   </dialog>
 
-  <h2>Linked devices</h2>
   <table>
     <thead><tr><th colspan="2">Device</th><th></th></tr></thead>
     <tbody>

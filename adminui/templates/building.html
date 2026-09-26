@@ -1,9 +1,7 @@
 {{define "content"}}
 <div id="page-content">
-  <p class="crumbs"><a href="/buildings">Buildings</a> / {{.Building.Name}}</p>
-
   <div class="entity-header">
-    <h1>{{.Building.Name}}</h1>
+    <p class="crumbs"><a href="/buildings">Buildings</a> / <strong>{{.Building.Name}}</strong></p>
     <button type="button" class="icon-btn" title="Edit building" onclick="document.getElementById('edit-building-dialog').showModal()">⚙</button>
     <button type="button" class="icon-btn" title="Add floor" onclick="document.getElementById('add-floor-dialog').showModal()">+</button>
   </div>
@@ -41,16 +39,40 @@
     </form>
   </dialog>
 
-  <h2>Floors</h2>
   <table>
-    <thead><tr><th>Name</th><th>Sort order</th></tr></thead>
+    <thead><tr><th>Name</th><th>Sort order</th><th></th></tr></thead>
     <tbody>
     {{range .Floors}}
-      <tr><td><a href="/floors/{{.ID}}">{{.Name}}</a></td><td>{{.SortOrder}}</td></tr>
+      <tr>
+        <td><a href="/floors/{{.ID}}">{{.Name}}</a></td>
+        <td>{{.SortOrder}}</td>
+        <td><button type="button" class="link-btn" onclick="document.getElementById('edit-floor-dialog-{{.ID}}').showModal()">edit</button></td>
+      </tr>
     {{else}}
-      <tr><td colspan="2">No floors yet.</td></tr>
+      <tr><td colspan="3">No floors yet.</td></tr>
     {{end}}
     </tbody>
   </table>
+
+  {{range .Floors}}
+  <dialog id="edit-floor-dialog-{{.ID}}">
+    <h3>Edit floor</h3>
+    <form hx-post="/floors/{{.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+      <input type="hidden" name="version" value="{{.Version}}">
+      <label>Name <input type="text" name="name" value="{{.Name}}" required></label>
+      <label>Sort order <input type="number" name="sort_order" value="{{.SortOrder}}"></label>
+      <div class="dialog-actions">
+        <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+    <div class="panel-danger">
+      <form hx-post="/floors/{{.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this floor?">
+        <input type="hidden" name="version" value="{{.Version}}">
+        <button type="submit" class="danger">Delete floor</button>
+      </form>
+    </div>
+  </dialog>
+  {{end}}
 </div>
 {{end}}

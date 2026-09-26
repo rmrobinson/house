@@ -16,8 +16,8 @@
   nav { background: #202124; padding: 0.75rem 1.5rem; }
   nav a { color: #e8e8e8; text-decoration: none; margin-right: 1.5rem; font-weight: 600; }
   nav a:hover { color: #fff; }
+  nav a.active { color: #fff; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
   main { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
-  h1 { font-size: 1.4rem; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
   th { background: #fafafa; }
@@ -42,16 +42,25 @@
   .btn-secondary { background: #fff; color: #333; border: 1px solid #ccc; }
   .btn-secondary:hover { background: #f0f0f0; }
   .danger { background: #a3231c; }
-  .crumbs { color: #666; margin-bottom: 0.5rem; }
+  /* A row-level "edit" action styled to read as a plain link (matching the
+     Name-column links and the policy engine UI's own "edit" link) rather
+     than a button - it's a <button>, not an <a href>, because it opens that
+     row's own dialog in place and must never navigate or leave a URL
+     fragment behind. */
+  .link-btn { display: inline; padding: 0; border: none; background: none; font: inherit; font-weight: normal; color: #1a5fb4; text-decoration: underline; cursor: pointer; }
+  .link-btn:hover { color: #0d3f80; }
+  .crumbs { color: #666; margin: 0; }
   .crumbs a { color: #666; }
+  .crumbs strong { color: #1a1a1a; }
+  .toolbar { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
   /* Gear (edit+delete) / plus (add child) icon buttons beside an entity's
-     h1 - see building.html/floor.html/room.html. Each opens a <dialog> (see
-     the showModal()/close() calls inline on the buttons and inside the
-     dialog itself, and the backdrop-click handler at the bottom of this
-     file) rather than expanding inline, so the form gets real overlay
-     styling instead of competing for space with the page underneath it. */
-  .entity-header { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.5rem; }
-  .entity-header h1 { margin: 0; }
+     breadcrumb - see building.html/floor.html/room.html. Each opens a
+     <dialog> (see the showModal()/close() calls inline on the buttons and
+     inside the dialog itself, and the backdrop-click handler at the bottom
+     of this file) rather than expanding inline, so the form gets real
+     overlay styling instead of competing for space with the page underneath
+     it. */
+  .entity-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
   .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border: 1px solid #ccc; border-radius: 50%; background: #fff; color: #555; font-size: 1rem; cursor: pointer; padding: 0; }
   .icon-btn:hover { background: #f0f0f0; }
   dialog { border: none; border-radius: 0.5rem; padding: 1.25rem 1.5rem; min-width: 20rem; max-width: min(28rem, 90vw); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); }
@@ -84,6 +93,21 @@ document.addEventListener('click', function (e) {
     e.target.close();
   }
 });
+
+// Buildings/Floors/Rooms have no top-level nav link of their own - they're
+// all reached through /buildings, so that link is the one to mark active
+// for any of the three. There's no server-side "current section" concept
+// to hook this into (see server.go's renderPage), so it's done client-side
+// off the URL instead.
+(function () {
+  var section = /^\/(buildings|floors|rooms)(\/|$)/.test(location.pathname) ? '/buildings'
+    : /^\/devices(\/|$)/.test(location.pathname) ? '/devices'
+    : null;
+  if (section) {
+    var link = document.querySelector('nav a[href="' + section + '"]');
+    if (link) link.classList.add('active');
+  }
+})();
 </script>
 </body>
 </html>

@@ -1,8 +1,7 @@
 {{define "content"}}
 <div id="page-content">
-  <div class="entity-header">
-    <h1>Buildings</h1>
-    <button type="button" class="icon-btn" title="Add building" onclick="document.getElementById('add-building-dialog').showModal()">+</button>
+  <div class="toolbar">
+    <button type="button" onclick="document.getElementById('add-building-dialog').showModal()">+ New Building</button>
   </div>
 
   <dialog id="add-building-dialog">
@@ -18,14 +17,41 @@
   </dialog>
 
   <table>
-    <thead><tr><th>Name</th><th>Timezone</th></tr></thead>
+    <thead><tr><th>Name</th><th>Timezone</th><th></th></tr></thead>
     <tbody>
     {{range .Buildings}}
-      <tr><td><a href="/buildings/{{.ID}}">{{.Name}}</a></td><td>{{.TZ}}</td></tr>
+      <tr>
+        <td><a href="/buildings/{{.ID}}">{{.Name}}</a></td>
+        <td>{{.TZ}}</td>
+        <td><button type="button" class="link-btn" onclick="document.getElementById('edit-building-dialog-{{.ID}}').showModal()">edit</button></td>
+      </tr>
     {{else}}
-      <tr><td colspan="2">No buildings yet.</td></tr>
+      <tr><td colspan="3">No buildings yet.</td></tr>
     {{end}}
     </tbody>
   </table>
+
+  {{range .Buildings}}
+  <dialog id="edit-building-dialog-{{.ID}}">
+    <h3>Edit building</h3>
+    <form hx-post="/buildings/{{.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+      <input type="hidden" name="version" value="{{.Version}}">
+      <input type="hidden" name="lat" value="{{.Lat}}">
+      <input type="hidden" name="lon" value="{{.Lon}}">
+      <label>Name <input type="text" name="name" value="{{.Name}}" required></label>
+      <label>Timezone <input type="text" name="tz" value="{{.TZ}}" placeholder="America/Toronto"></label>
+      <div class="dialog-actions">
+        <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit">Save</button>
+      </div>
+    </form>
+    <div class="panel-danger">
+      <form hx-post="/buildings/{{.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
+        <input type="hidden" name="version" value="{{.Version}}">
+        <button type="submit" class="danger">Delete building</button>
+      </form>
+    </div>
+  </dialog>
+  {{end}}
 </div>
 {{end}}
