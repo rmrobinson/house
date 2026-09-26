@@ -11,11 +11,21 @@ import (
 
 func runScriptForTest(t *testing.T, home HomeAPI, script string) error {
 	t.Helper()
+	return runScriptForTestWithDevices(t, home, nil, script)
+}
+
+// runScriptForTestWithDevices is runScriptForTest with control over
+// home.findDevices' backing data, for tests that exercise it directly.
+func runScriptForTestWithDevices(t *testing.T, home HomeAPI, devicesOfKind func(kind string) []string, script string) error {
+	t.Helper()
 
 	L := lua.NewState()
 	defer L.Close()
 
-	registerHomeTable(L, home)
+	if devicesOfKind == nil {
+		devicesOfKind = func(string) []string { return nil }
+	}
+	registerHomeTable(L, home, devicesOfKind)
 
 	return L.DoString(script)
 }
@@ -161,4 +171,24 @@ func TestBindingsNotifySequenceTablePayloadStaysArray(t *testing.T) {
 	items, ok := home.notifications[0].payload["items"].([]any)
 	require.True(t, ok, "a Lua sequence table must convert to a Go slice, not a map")
 	assert.Equal(t, []any{1.0, 2.0, 3.0}, items)
+}
+
+func TestBindingsFindDevicesReturnsCacheBackedList(t *testing.T) {
+	home := newFakeHomeAPI()
+	devicesOfKind := func(kind string) []string {
+		if kind == "light" {
+			return []string{"light.kitchen", "light.porch"}
+		}
+		return nil
+	}
+
+	require.NoError(t, runScriptForTestWithDevices(t, home, devicesOfKind, `
+		local lights = home.findDevices("light")
+		assert(#lights == 2)
+		assert(lights[1] == "light.kitchen")
+		assert(lights[2] == "light.porch")
+
+		local sensors = home.findDevices("sensor")
+		assert(#sensors == 0)
+	`))
 }

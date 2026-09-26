@@ -138,7 +138,7 @@ func applyDeviceUpdate(engine *policy.Engine, id string, d *device.Device) {
 		}
 	}
 
-	engine.UpdateDeviceState(id, d)
+	engine.UpdateDeviceState(id, deviceKind(d), d)
 
 	// Trait-agnostic trigger for any condition watching this device's
 	// attributes generically (see GetAttribute) - fires on every update,
@@ -147,8 +147,19 @@ func applyDeviceUpdate(engine *policy.Engine, id string, d *device.Device) {
 	engine.Bus().Publish(policy.Event{Topic: "device.updated." + id, Payload: d})
 }
 
+// hasMotion reports whether d's presence trait, wherever it lives, currently
+// reports motion. It goes through resolveAttribute rather than a hardcoded
+// d.GetSensor().GetPresence() chain, so it works for any device kind whose
+// details message happens to have a "presence" field - Sensor, Camera and
+// Thermostat all do today - without a per-kind branch here, and without
+// missing whichever kind adds one next.
 func hasMotion(d *device.Device) bool {
-	return d.GetSensor().GetPresence().GetState().GetMotionDetected()
+	v, err := resolveAttribute(d, "presence.state.motion_detected")
+	if err != nil {
+		return false
+	}
+	motion, _ := v.(bool)
+	return motion
 }
 
 func isDischarging(d *device.Device) bool {
@@ -200,7 +211,7 @@ func (a *Adapter) SetLight(id string, on bool) error {
 	// consistency for a script calling home.setLight() then home.getLight()
 	// in the same run. The later stream CHANGED update for the same change is
 	// a harmless duplicate UpdateDeviceState call.
-	engine.UpdateDeviceState(id, d)
+	engine.UpdateDeviceState(id, deviceKind(d), d)
 	return nil
 }
 
@@ -232,22 +243,48 @@ func (a *Adapter) GetAttribute(id, key string) (any, error) {
 	return resolveAttribute(d, key)
 }
 
+// detailsMessage returns d's populated device.Device.details oneof branch
+// (Light, Sensor, Camera, ...) as a protoreflect.Message, and that branch
+// field's name ("light", "sensor", "camera", ...), or ok=false if d has no
+// details set. Shared by resolveAttribute (which descends into the message)
+// and deviceKind (which only wants the branch name).
+func detailsMessage(d *device.Device) (msg protoreflect.Message, name protoreflect.Name, ok bool) {
+	m := d.ProtoReflect()
+
+	oneof := m.Descriptor().Oneofs().ByName("details")
+	if oneof == nil {
+		return nil, "", false
+	}
+	fd := m.WhichOneof(oneof)
+	if fd == nil {
+		return nil, "", false
+	}
+	return m.Get(fd).Message(), fd.Name(), true
+}
+
+// deviceKind returns the name of d's populated details oneof branch
+// ("light", "sensor", "ups", "camera", ...), or "" if none is set. Passed to
+// policy.Engine.UpdateDeviceState as the opaque "kind" tag policy scripts
+// can later enumerate devices by via home.findDevices(kind) - the engine
+// itself has no notion of device.Device's schema, this is just the most
+// natural string bridgehome has on hand to tag devices with.
+func deviceKind(d *device.Device) string {
+	_, name, ok := detailsMessage(d)
+	if !ok {
+		return ""
+	}
+	return string(name)
+}
+
 // resolveAttribute walks key's dot-separated segments as literal field names
 // starting from whichever device.Device.details oneof branch d has set,
 // descending through singular message-typed fields until a scalar value is
 // reached.
 func resolveAttribute(d *device.Device, key string) (any, error) {
-	msg := d.ProtoReflect()
-
-	oneof := msg.Descriptor().Oneofs().ByName("details")
-	if oneof == nil {
-		return nil, fmt.Errorf("bridgehome: device.Device has no %q oneof", "details")
-	}
-	fd := msg.WhichOneof(oneof)
-	if fd == nil {
+	cur, _, ok := detailsMessage(d)
+	if !ok {
 		return nil, fmt.Errorf("bridgehome: device has no details set")
 	}
-	cur := msg.Get(fd).Message()
 
 	segments := strings.Split(key, ".")
 	for i, seg := range segments {
