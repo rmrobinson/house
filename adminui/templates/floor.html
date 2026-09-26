@@ -15,7 +15,7 @@
       <label>Name <input type="text" name="name" value="{{.Floor.Name}}" required></label>
       <label>Sort order <input type="number" name="sort_order" value="{{.Floor.SortOrder}}"></label>
       <div class="dialog-actions">
-        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Save</button>
       </div>
     </form>
@@ -32,7 +32,7 @@
     <form hx-post="/floors/{{.Floor.ID}}/rooms" hx-target="#page-content" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" required></label>
       <div class="dialog-actions">
-        <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Create</button>
       </div>
     </form>

@@ -7,33 +7,41 @@
 <script src="/static/htmx.min.js"></script>
 <script src="/static/htmx-sse.js"></script>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 60rem; margin: 0 auto; padding: 1rem; color: #1a1a1a; }
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f7f7f8; color: #1a1a1a; }
   /* Every link here is internal navigation within one user's own data, not a
      list of external links worth distinguishing by visited/unvisited - so
      visited never changes color, unlike the browser default. */
   a, a:visited { color: #1a5fb4; }
-  nav { display: flex; gap: 1rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #ccc; }
-  nav a { text-decoration: none; color: #1a5fb4; font-weight: 600; }
-  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; }
-  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid #e0e0e0; }
-  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 1rem; font-size: 0.8rem; background: #e0e0e0; }
-  .badge-online { background: #d4edda; color: #155724; }
-  .badge-offline { background: #f8d7da; color: #721c24; }
+  nav { background: #202124; padding: 0.75rem 1.5rem; }
+  nav a { color: #e8e8e8; text-decoration: none; margin-right: 1.5rem; font-weight: 600; }
+  nav a:hover { color: #fff; }
+  main { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
+  h1 { font-size: 1.4rem; }
+  table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  th { background: #fafafa; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: #eee; color: #666; }
+  .badge-online { background: #d1f4dd; color: #146c2e; }
+  .badge-offline { background: #fde2e1; color: #a3231c; }
   form.inline { display: inline; }
   /* Every create/edit form here is <label>Field <input ...></label> pairs
      with no wrapping markup of their own - label is inline by default, so
      with no rule like this they'd just run together on one line rather than
      one field per row. form.inline forms (Unlink, Delete, per-row picker
      buttons) have no <label> in them, so this doesn't affect those. */
-  form label { display: block; margin-bottom: 0.6rem; }
-  form label input[type=text], form label input[type=number] { display: block; width: 100%; margin-top: 0.25rem; box-sizing: border-box; }
-  .panel { border: 1px solid #ddd; border-radius: 0.4rem; padding: 0.75rem 1rem; margin: 0.75rem 0; }
-  #flash { margin: 0.75rem 0; }
-  .flash { padding: 0.5rem 0.75rem; border-radius: 0.3rem; background: #d4edda; color: #155724; }
+  form label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 0.6rem; }
+  form label input[type=text], form label input[type=number] { display: block; width: 100%; margin-top: 0.25rem; box-sizing: border-box; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
+  .panel { background: #fff; padding: 1.2rem; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin: 0.75rem 0; }
+  #flash { margin: 1rem 1.5rem 0; }
+  .flash { padding: 0.5rem 0.75rem; border-radius: 4px; background: #d4edda; color: #155724; max-width: 1000px; margin: 0 auto; }
   .flash-error { background: #f8d7da; color: #721c24; }
   .flash:empty { display: none; }
-  button, input[type=submit] { cursor: pointer; }
-  .danger { color: #a00; }
+  #picker { max-width: 1000px; margin: 0 auto; padding: 0 1.5rem; box-sizing: border-box; }
+  button, input[type=submit] { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: none; background: #202124; color: #fff; font-weight: 600; font-size: 0.9rem; font-family: inherit; cursor: pointer; }
+  .btn-secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+  .btn-secondary:hover { background: #f0f0f0; }
+  .danger { background: #a3231c; }
   .crumbs { color: #666; margin-bottom: 0.5rem; }
   .crumbs a { color: #666; }
   /* Gear (edit+delete) / plus (add child) icon buttons beside an entity's
