@@ -93,6 +93,26 @@ func lightDevice(id string, on bool) *device.Device {
 	}
 }
 
+func colourLightDevice(id string, red int32) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Light{Light: &device.Light{
+			OnOff:  &trait.OnOff{State: &trait.OnOff_State{}},
+			Colour: &trait.Colour{State: &trait.Colour_State{Rgb: &trait.Colour_State_RGB{Red: red}}},
+		}},
+	}
+}
+
+func waterSensorDevice(id string, active bool) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Sensor{Sensor: &device.Sensor{
+			Water:    &device.Sensor_BinarySensor{IsActive: active},
+			Metadata: &device.Sensor_Metadata{LowBattery: true},
+		}},
+	}
+}
+
 // initialAsBulk builds the INITIAL shape an individual bridge's own server
 // sends: one Update carrying every device at once (service/bridge/api.go).
 func initialAsBulk(bridgeID string, devices []*device.Device) []*api2.Update {
@@ -131,6 +151,39 @@ func changedUpdate(bridgeID string, d *device.Device) *api2.Update {
 			BridgeId: bridgeID,
 			Device:   d,
 		}},
+	}
+}
+
+func TestResolveAttribute(t *testing.T) {
+	sensor := sensorDevice("sensor-1", true, false)
+	light := colourLightDevice("light-1", 200)
+	water := waterSensorDevice("water-1", true)
+
+	for _, tc := range []struct {
+		name    string
+		device  *device.Device
+		key     string
+		want    any
+		wantErr bool
+	}{
+		{"trait-shaped path", sensor, "presence.state.motion_detected", true, false},
+		{"multi-segment trait path", light, "colour.state.rgb.red", int64(200), false},
+		{"BinarySensor path, no .state hop", water, "water.is_active", true, false},
+		{"Metadata path, no .state hop", water, "metadata.low_battery", true, false},
+		{"unknown top-level segment", sensor, "no_such_trait.state.value", nil, true},
+		{"unknown leaf segment", sensor, "presence.state.no_such_field", nil, true},
+		{"path ends on a message, not a scalar", sensor, "battery", nil, true},
+		{"path continues past a scalar", sensor, "presence.state.motion_detected.extra", nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveAttribute(tc.device, tc.key)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }
 

@@ -12,6 +12,7 @@ go_library(
         "//bridgeconn",
         "//service/bridge",
         "//service/policy",
+        "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_uber_go_zap//:zap",
     ],
 )

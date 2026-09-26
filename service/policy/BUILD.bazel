@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "policy",
     srcs = [
+        "attribute_conditions.go",
         "bindings.go",
         "bus.go",
         "cache.go",
@@ -44,6 +45,7 @@ go_library(
 go_test(
     name = "policy_test",
     srcs = [
+        "attribute_conditions_test.go",
         "bindings_test.go",
         "bus_test.go",
         "condition_test.go",

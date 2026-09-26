@@ -218,6 +218,229 @@ func (e *EventCondition) Start(ctx context.Context, onChange func(bool)) {
 	}()
 }
 
+// PredicateCondition wraps a func() bool that is re-evaluated once
+// immediately on Start (a baseline, without treating that first read as a
+// transition - same convention as PollingCondition) and again every time an
+// event is published to a Bus topic, rather than on a fixed interval.
+// onChange fires only when a re-evaluation's result differs from the
+// previous one. This is PollingCondition's shape driven by a signal instead
+// of a ticker - for a "level" fact (unlike EventCondition's pulse/predicate
+// shape) that should react to some other event rather than be polled on a
+// timer.
+type PredicateCondition struct {
+	bus   *Bus
+	topic string
+	fn    func() bool
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewPredicateCondition creates a PredicateCondition that re-evaluates fn
+// whenever an event is published to topic on bus.
+func NewPredicateCondition(bus *Bus, topic string, fn func() bool) *PredicateCondition {
+	return &PredicateCondition{bus: bus, topic: topic, fn: fn}
+}
+
+func (p *PredicateCondition) Evaluate() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.value
+}
+
+func (p *PredicateCondition) Start(ctx context.Context, onChange func(bool)) {
+	p.mu.Lock()
+	p.value = p.fn()
+	p.mu.Unlock()
+
+	ch := p.bus.Subscribe(p.topic)
+
+	go func() {
+		defer p.bus.Unsubscribe(p.topic, ch)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+
+				cur := p.fn()
+
+				p.mu.Lock()
+				changed := cur != p.value
+				p.value = cur
+				p.mu.Unlock()
+
+				if changed {
+					onChange(cur)
+				}
+			}
+		}
+	}()
+}
+
+// IdleCondition is true once no event has been published to a Bus topic for
+// at least duration, and flips back to false - rearming the timer - the
+// instant a new event arrives. It needs no trueFn/falseFn the way
+// EventCondition does: the passage of time itself, uninterrupted by an
+// event, is what flips it true. Useful for "no motion for 30 minutes" or
+// "device hasn't reported in 5 minutes" style facts.
+type IdleCondition struct {
+	bus      *Bus
+	topic    string
+	duration time.Duration
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewIdleCondition creates an IdleCondition that becomes true once duration
+// passes with no event published to topic on bus.
+func NewIdleCondition(bus *Bus, topic string, duration time.Duration) *IdleCondition {
+	return &IdleCondition{bus: bus, topic: topic, duration: duration}
+}
+
+func (i *IdleCondition) Evaluate() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.value
+}
+
+func (i *IdleCondition) Start(ctx context.Context, onChange func(bool)) {
+	ch := i.bus.Subscribe(i.topic)
+	timer := time.NewTimer(i.duration)
+
+	go func() {
+		defer i.bus.Unsubscribe(i.topic, ch)
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				i.mu.Lock()
+				changed := !i.value
+				i.value = true
+				i.mu.Unlock()
+				if changed {
+					onChange(true)
+				}
+			case _, ok := <-ch:
+				if !ok {
+					return
+				}
+
+				// Reset requires a stopped-or-drained timer: Stop can race
+				// with an already-fired timer whose value nobody has read
+				// yet, so drain it non-blockingly before rearming.
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(i.duration)
+
+				i.mu.Lock()
+				changed := i.value
+				i.value = false
+				i.mu.Unlock()
+				if changed {
+					onChange(false)
+				}
+			}
+		}
+	}()
+}
+
+// ScheduleCondition fires once at a specific wall-clock time each day, or
+// only on specific weekdays if any are given, pulsing onChange(true) then
+// immediately onChange(false) - mirroring EventCondition's
+// pulse-when-falseFn-nil convention, since "fire at 9am" is a momentary
+// event, not a state that stays true - then reschedules for the next
+// matching occurrence.
+type ScheduleCondition struct {
+	loc      *time.Location
+	hour     int
+	minute   int
+	weekdays map[time.Weekday]bool // nil/empty: every day
+
+	now func() time.Time // overridable in tests
+
+	mu    sync.Mutex
+	value bool
+}
+
+// NewScheduleCondition creates a ScheduleCondition that fires at
+// hour:minute, loc's wall clock, every day, or only on the given weekdays if
+// any are provided.
+func NewScheduleCondition(loc *time.Location, hour, minute int, weekdays ...time.Weekday) *ScheduleCondition {
+	s := &ScheduleCondition{loc: loc, hour: hour, minute: minute, now: time.Now}
+	if len(weekdays) > 0 {
+		s.weekdays = make(map[time.Weekday]bool, len(weekdays))
+		for _, wd := range weekdays {
+			s.weekdays[wd] = true
+		}
+	}
+	return s
+}
+
+func (s *ScheduleCondition) Evaluate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.value
+}
+
+func (s *ScheduleCondition) matchesDay(t time.Time) bool {
+	if len(s.weekdays) == 0 {
+		return true
+	}
+	return s.weekdays[t.Weekday()]
+}
+
+// next returns the next instant strictly after from that is hour:minute on a
+// matching weekday.
+func (s *ScheduleCondition) next(from time.Time) time.Time {
+	from = from.In(s.loc)
+	candidate := time.Date(from.Year(), from.Month(), from.Day(), s.hour, s.minute, 0, 0, s.loc)
+	if !candidate.After(from) {
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	for !s.matchesDay(candidate) {
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	return candidate
+}
+
+func (s *ScheduleCondition) Start(ctx context.Context, onChange func(bool)) {
+	go func() {
+		for {
+			now := s.now()
+			timer := time.NewTimer(s.next(now).Sub(now))
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				s.mu.Lock()
+				s.value = true
+				s.mu.Unlock()
+				onChange(true)
+
+				s.mu.Lock()
+				s.value = false
+				s.mu.Unlock()
+				onChange(false)
+			}
+		}
+	}()
+}
+
 type compositeOp int
 
 const (

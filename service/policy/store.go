@@ -215,9 +215,10 @@ func (s *SQLiteStore) GetLogs(policyID string, limit int) ([]ExecutionLog, error
 // LoadPersistedPolicies loads every policy previously saved to store and
 // registers it on e.
 //
-// Startup order matters here: call RegisterSystemConditionTypes(e), then
-// this, then LoadDefaultSystemPolicies(e) — never LoadSystemPolicies, which
-// would re-register the shipped defaults unconditionally and, since
+// Startup order matters here: call RegisterSystemConditionTypes(e) and
+// RegisterBuiltinConditionTypes(e), then this, then
+// LoadDefaultSystemPolicies(e) — never LoadSystemPolicies, which would
+// re-register the shipped defaults unconditionally and, since
 // Register persists to store whenever one is configured, silently
 // overwrite a persisted override in the database before it's ever read
 // back. LoadDefaultSystemPolicies skips any ID this step already
