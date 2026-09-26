@@ -31,3 +31,9 @@ func (c *stateCache) get(entityID string) (any, bool) {
 	v, ok := c.values[entityID]
 	return v, ok
 }
+
+func (c *stateCache) delete(entityID string) {
+	c.mu.Lock()
+	delete(c.values, entityID)
+	c.mu.Unlock()
+}

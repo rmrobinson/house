@@ -1,12 +1,17 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
 )
+
+// ErrNotImplemented is returned by a HomeAPI implementation for a method it
+// doesn't back yet, the same way service/house handles unbuilt RPCs.
+var ErrNotImplemented = errors.New("policy: not implemented")
 
 // HomeAPI is the surface a policy script can call into. It covers
 // device-backed state and commands, the engine's state cache, and

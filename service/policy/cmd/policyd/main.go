@@ -1,13 +1,13 @@
 // policyd runs the policy execution engine's HTTP UI as a standalone
 // daemon.
 //
-// It is not yet wired to a real house: its HomeAPI is stubHomeAPI, an
-// in-memory placeholder (see stubhome.go) that logs every call instead of
-// touching real device/house state via bridge gRPC clients. That real
-// HomeAPI adapter is separate follow-up work (Phase C in the policy engine
-// plan) — this binary exists to make the engine and its UI runnable and
-// visually verifiable before that adapter lands, and shouldn't need
-// changes beyond swapping stubHomeAPI out once it does.
+// With --bridge-addr, its HomeAPI is bridgehome.Adapter, wired to a real
+// BridgeService endpoint (a single bridge, a standalone bridgefacaded, or a
+// housed process with the facade embedded — policyd doesn't distinguish).
+// With no --bridge-addr, it falls back to stubHomeAPI, an in-memory
+// placeholder (see stubhome.go) that logs every call instead of touching
+// real device/house state, so the engine and its UI stay runnable and
+// visually verifiable with no bridge configured.
 package main
 
 import (
@@ -24,12 +24,14 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rmrobinson/house/service/policy"
+	"github.com/rmrobinson/house/service/policy/bridgehome"
 	"go.uber.org/zap"
 )
 
 var (
-	dbPath = flag.String("db", "policy.db", "Path to the SQLite database to use")
-	addr   = flag.String("addr", "localhost:8080", "Address for the HTTP UI to listen on")
+	dbPath     = flag.String("db", "policy.db", "Path to the SQLite database to use")
+	addr       = flag.String("addr", "localhost:8080", "Address for the HTTP UI to listen on")
+	bridgeAddr = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
 )
 
 func main() {
@@ -62,8 +64,18 @@ func main() {
 		logger.Fatal("unable to initialize store", zap.Error(err))
 	}
 
-	logger.Warn("using stub HomeAPI: no real device/house integration yet, see stubhome.go")
-	home := newStubHomeAPI(logger)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var home policy.HomeAPI
+	var adapter *bridgehome.Adapter
+	if *bridgeAddr != "" {
+		adapter = bridgehome.New(logger, *bridgeAddr)
+		home = adapter
+	} else {
+		logger.Warn("using stub HomeAPI: no real device/house integration yet, see stubhome.go")
+		home = newStubHomeAPI(logger)
+	}
 
 	engine := policy.NewEngine(home, registry, logger, policy.WithStore(store))
 	defer engine.Close()
@@ -76,14 +88,18 @@ func main() {
 		logger.Fatal("unable to load default system policies", zap.Error(err))
 	}
 
+	// Started only once persisted/default policies are already registered
+	// (and their conditions Start()ed and subscribed), so the stream can't
+	// publish anything a condition would need to catch before it's listening.
+	if adapter != nil {
+		adapter.Start(ctx, engine)
+	}
+
 	server := policy.NewServer(engine, registry, logger)
 	httpServer := &http.Server{
 		Addr:    *addr,
 		Handler: server.Handler(),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		logger.Info("serving policy UI", zap.String("address", *addr))

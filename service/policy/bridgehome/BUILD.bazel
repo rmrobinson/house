@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bridgehome",
+    srcs = ["bridgehome.go"],
+    importpath = "github.com/rmrobinson/house/service/policy/bridgehome",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//bridgeconn",
+        "//service/bridge",
+        "//service/policy",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "bridgehome_test",
+    srcs = ["bridgehome_test.go"],
+    embed = [":bridgehome"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/policy",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

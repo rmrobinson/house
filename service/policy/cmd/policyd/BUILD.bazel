@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//service/policy",
+        "//service/policy/bridgehome",
         "@com_github_mattn_go_sqlite3//:go-sqlite3",
         "@org_uber_go_zap//:zap",
     ],

@@ -168,6 +168,14 @@ func (e *Engine) GetLastKnown(entityID string) (any, bool) {
 	return e.cache.get(entityID)
 }
 
+// RemoveDeviceState drops entityID from the cache. Whatever hydrates the
+// engine from the home's device/house gRPC streams should call this when a
+// device is reported removed; no bus topic is published for it, since
+// nothing subscribes to removal today.
+func (e *Engine) RemoveDeviceState(entityID string) {
+	e.cache.delete(entityID)
+}
+
 // Register validates p, compiles its script, builds its condition tree, and
 // starts evaluating it. If a policy with the same ID is already registered,
 // it is replaced: the old policy's condition evaluation is cancelled, and
