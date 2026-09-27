@@ -33,11 +33,16 @@ import (
 // policy script's goroutine forever.
 const commandTimeout = 10 * time.Second
 
-// ErrNotReady is returned by GetLight, SetLight, SetState and
-// GetLastKnown when called before Start has run or while the connection to
-// addr is down. GetSensor, GetHouseState and SetHouseState remain
-// unconditionally unimplemented - see their own doc comments - and always
-// return policy.ErrNotImplemented regardless.
+// ErrNotReady is returned by SetLight and SetState - which must reach the
+// connected endpoint to execute a command - when called before Start has
+// run or while the connection to addr is down. GetLight and GetLastKnown
+// only ever consult the engine's own cache, so they return ErrNotReady
+// solely for the before-Start case: once populated, cached state remains
+// readable through a later disconnect, which is exactly the point of
+// reading from a cache rather than the live connection. GetSensor,
+// GetHouseState and SetHouseState remain unconditionally unimplemented -
+// see their own doc comments - and always return policy.ErrNotImplemented
+// regardless.
 var ErrNotReady = errors.New("bridgehome: adapter not started")
 
 // commandDescriptor is command.Command's own message descriptor, used to
@@ -56,6 +61,11 @@ type Adapter struct {
 	mu     sync.Mutex
 	ctx    context.Context
 	engine *policy.Engine
+	// live is true once the connection has actually delivered an Update, and
+	// false again once it drops (see handleUpdate/onDrop) - a.conn.Client()
+	// alone goes non-nil as soon as the dial succeeds, before the upstream
+	// has confirmed it's actually there to talk to.
+	live bool
 }
 
 // New creates an Adapter that will connect to addr once Start is called.
@@ -77,7 +87,24 @@ func (a *Adapter) Start(ctx context.Context, engine *policy.Engine) {
 	a.engine = engine
 	a.mu.Unlock()
 
-	go a.conn.Run(ctx, a.handleUpdate, nil)
+	go a.conn.Run(ctx, a.handleUpdate, a.onDrop)
+}
+
+// onDrop marks the connection no longer live. Called once each time the
+// underlying connection is lost, including on shutdown while connected (see
+// bridgeconn.Conn.Run).
+func (a *Adapter) onDrop() {
+	a.mu.Lock()
+	a.live = false
+	a.mu.Unlock()
+}
+
+// isLive reports whether the connection has delivered at least one Update
+// since it last came up (see handleUpdate/onDrop).
+func (a *Adapter) isLive() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.live
 }
 
 // handleUpdate applies u to the engine's cache/bus. It handles every shape
@@ -90,6 +117,7 @@ func (a *Adapter) Start(ctx context.Context, engine *policy.Engine) {
 func (a *Adapter) handleUpdate(u *api2.Update) {
 	a.mu.Lock()
 	engine := a.engine
+	a.live = true
 	a.mu.Unlock()
 	if engine == nil {
 		return
@@ -144,13 +172,12 @@ func applyDeviceUpdate(engine *policy.Engine, id string, d *device.Device) {
 		}
 	}
 
+	// UpdateDeviceState itself publishes "device.updated.<id>" - the
+	// trait-agnostic trigger for any condition watching this device's
+	// attributes generically (see GetState) - on every update, including
+	// the very first one, since it's just a signal to re-check, not itself
+	// a fact.
 	engine.UpdateDeviceState(id, deviceKind(d), d)
-
-	// Trait-agnostic trigger for any condition watching this device's
-	// attributes generically (see GetState) - fires on every update,
-	// including the very first one, since it's just a signal to re-check,
-	// not itself a fact.
-	engine.Bus().Publish(policy.Event{Topic: "device.updated." + id, Payload: d})
 }
 
 // hasMotion reports whether d's presence trait, wherever it lives, currently
@@ -168,11 +195,18 @@ func hasMotion(d *device.Device) bool {
 	return motion
 }
 
+// isDischarging reports whether d's battery trait, wherever it lives,
+// currently reports discharging. Like hasMotion, it goes through
+// resolveState rather than a hardcoded per-kind chain, so it also covers a
+// Generic device's optional battery trait (device/generic.proto), not just
+// Sensor and Ups.
 func isDischarging(d *device.Device) bool {
-	// A Device is exactly one of Sensor/Ups (device.proto's details oneof),
-	// so at most one of these chains is ever non-default.
-	return d.GetSensor().GetBattery().GetState().GetDischarging() ||
-		d.GetUps().GetBattery().GetState().GetDischarging()
+	v, err := resolveState(d, "battery.state.discharging")
+	if err != nil {
+		return false
+	}
+	discharging, _ := v.(bool)
+	return discharging
 }
 
 // GetLight implements policy.HomeAPI.
@@ -206,10 +240,15 @@ func (a *Adapter) runCommand(cmd *command.Command) error {
 	a.mu.Lock()
 	ctx := a.ctx
 	engine := a.engine
+	live := a.live
 	a.mu.Unlock()
 
+	if !live || engine == nil {
+		return ErrNotReady
+	}
+
 	client := a.conn.Client()
-	if client == nil || engine == nil {
+	if client == nil {
 		return ErrNotReady
 	}
 

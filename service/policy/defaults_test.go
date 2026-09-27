@@ -31,11 +31,10 @@ func TestLoadSystemPoliciesPowerRestore(t *testing.T) {
 	e, _ := newTestEngine(t, home)
 
 	e.UpdateDeviceState("light.living_room", "light", nil)
-	home.setLastKnown("light.living_room", true)
+	require.NoError(t, home.SetState("light.living_room", "light.on_off.state.is_on", true))
 	e.UpdateDeviceState("light.porch", "light", nil)
-	home.setLastKnown("light.porch", false)
+	require.NoError(t, home.SetState("light.porch", "light.on_off.state.is_on", false))
 	e.UpdateDeviceState("sensor.hallway", "sensor", nil)
-	home.setLastKnown("sensor.hallway", true)
 
 	require.NoError(t, LoadSystemPolicies(e))
 

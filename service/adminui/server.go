@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"html/template"
 	"net/http"
 
 	"go.uber.org/zap"
@@ -11,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/htmxutil"
 )
 
 // Server holds the two gRPC clients this admin UI depends on and serves
@@ -94,7 +94,7 @@ func (s *Server) respond(w http.ResponseWriter, page string, data any, flash str
 	if err := pages[page].ExecuteTemplate(w, "content", data); err != nil {
 		s.logger.Error("template render failed", zap.String("page", page), zap.Error(err))
 	}
-	s.writeFlash(w, flash, isError)
+	htmxutil.WriteFlash(w, flash, isError)
 	s.clearPicker(w)
 }
 
@@ -109,14 +109,6 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 	if err := fragments[name].ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Error("template render failed", zap.String("fragment", name), zap.Error(err))
 	}
-}
-
-func (s *Server) writeFlash(w http.ResponseWriter, msg string, isError bool) {
-	class := "flash"
-	if isError {
-		class = "flash flash-error"
-	}
-	fmt.Fprintf(w, `<div id="flash" hx-swap-oob="true" class="%s">%s</div>`, class, template.HTMLEscapeString(msg))
 }
 
 // clearPicker closes any open device/room picker after an action completes,

@@ -32,6 +32,7 @@ go_library(
     deps = [
         "//api",
         "//api/device",
+        "//htmxutil",
         "//service/lib/backoffutil",
         "//service/lib/configutil",
         "//service/lib/grpcutil",
