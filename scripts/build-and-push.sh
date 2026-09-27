@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# Build (via Bazel, cross-compiling for both h031/amd64 and iot001/arm64 —
-# see //images/README.md) and push every deployable bridge/service image to
-# the self-hosted registry.
+# Build (via Bazel, cross-compiling for both amd64 and arm64 — see
+# //images/README.md) and push every deployable bridge/service image to
+# a registry.
 #
 # Usage:
-#   scripts/build-and-push.sh [bridge...]
+#   HOUSE_REGISTRY=<registry-host> scripts/build-and-push.sh [bridge...]
 #
-# With no arguments, builds/pushes every image in BRIDGES below. Pass one or
-# more names (matching //images:<name>_push) to push a subset, e.g.:
-#   scripts/build-and-push.sh plex housed
+# HOUSE_REGISTRY is required (e.g. "registry.example.com" or
+# "index.docker.io/<user>") — this repo has no default registry baked in;
+# see //images/README.md. Images are pushed to
+# "$HOUSE_REGISTRY/house/<bridge>".
 #
-# The registry is fronted by Caddy terminating real TLS from step-ca, so
-# pushing just needs this machine to trust step-ca's root in its OS
-# certificate store — see house-config/docker-compose/README.md for the
-# registry's own setup and what each pulling host still needs configured.
+# With no positional arguments, builds/pushes every image in BRIDGES below.
+# Pass one or more names (matching //images:<name>_push) to push a subset,
+# e.g.:
+#   HOUSE_REGISTRY=registry.example.com scripts/build-and-push.sh plex housed
+#
+# Whatever fronts your registry needs to be trusted by this machine
+# (standard `docker login`/OS cert-store trust, depending on setup) — that's
+# entirely deployment-specific and not this repo's concern.
 set -euo pipefail
+
+: "${HOUSE_REGISTRY:?set HOUSE_REGISTRY to the registry host to push images to, e.g. HOUSE_REGISTRY=registry.example.com $0}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -34,6 +41,7 @@ fi
 TAG="$(git rev-parse --short HEAD)"
 
 for name in "${TARGETS[@]}"; do
-  echo "==> //images:${name}_push"
-  bazel run "//images:${name}_push" -- --tag "$TAG" --tag latest
+  echo "==> //images:${name}_push -> $HOUSE_REGISTRY/house/${name}"
+  bazel run "//images:${name}_push" -- \
+    --repository "$HOUSE_REGISTRY/house/${name}" --tag "$TAG" --tag latest
 done

@@ -1,11 +1,12 @@
 # OCI images for house-config's docker-compose deploys. See README.md.
 #
 # Not gazelle-managed (no .go files here) — bridge_image() calls are added and
-# maintained by hand as bridges get onboarded to deployment.
+# maintained by hand as bridges get onboarded to deployment. Which host runs
+# which of these images is a deployment decision that lives entirely in
+# house-config's docker-compose files, not here.
 
 load(":defs.bzl", "bridge_image")
 
-# --- h031 ---
 bridge_image(
     name = "plex",
     binary = "//bridges/plex",
@@ -50,7 +51,6 @@ bridge_image(
     binary = "//service/bridge/facade/cmd/bridgefacaded",
 )
 
-# --- iot001 ---
 bridge_image(
     name = "esphome",
     binary = "//bridges/esphome",
@@ -79,7 +79,6 @@ bridge_image(
     binary = "//bridges/zigbee",
 )
 
-# --- both hosts (separate instances, one image) ---
 bridge_image(
     name = "apc-ups",
     binary = "//bridges/apc-ups",

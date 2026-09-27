@@ -19,7 +19,7 @@ house:
     # Required (only) when TLS above is configured AND the facade section
     # below is used to embed a facade in this process: housed dials that
     # facade at "localhost", but its certificate was issued for its real
-    # hostname (e.g. "housed.h031.house.internal" per cert-agent's SAN
+    # hostname (e.g. "housed.myhost.house.internal" per cert-agent's SAN
     # convention) - server_name tells the self-dial's TLS verification
     # which hostname to actually check the certificate against.
     server_name: ""

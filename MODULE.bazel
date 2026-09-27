@@ -81,8 +81,8 @@ use_repo(
 )
 
 # hermetic, Zig-based C/C++ cross-toolchain — lets CGO bridges (airthings
-# today) and housed (CGO via mattn/go-sqlite3) cross-compile for iot001's
-# arm64 without a hand-maintained sysroot. libc_aware/glibc variants chosen
+# today) and housed (CGO via mattn/go-sqlite3) cross-compile for arm64
+# without a hand-maintained sysroot. libc_aware/glibc variants chosen
 # to match the glibc-based runtime base images in //images.
 cc_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
 use_repo(cc_toolchains, "zig_sdk")

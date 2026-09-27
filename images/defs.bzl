@@ -1,10 +1,9 @@
 """Macro for packaging a house go_binary as a multi-arch OCI image and pushing it
-to the self-hosted registry. See README.md for the overall approach.
+to a caller-specified registry. See README.md for the overall approach.
 """
 
 load("@rules_oci//oci:defs.bzl", "oci_image", "oci_image_index", "oci_push")
 load("@rules_pkg//pkg:tar.bzl", "pkg_tar")
-load(":registry.bzl", "REGISTRY")
 load(":transition.bzl", "multi_arch")
 
 _PLATFORMS = [
@@ -47,8 +46,11 @@ def bridge_image(name, binary, base = "@distroless_base"):
         images = [":" + name + "_platform_images"],
     )
 
+    # No `repository` set here on purpose: this repo doesn't hardcode a
+    # registry address. oci_push requires `--repository <host>/house/<name>`
+    # at `bazel run` time instead (see README.md) — scripts/build-and-push.sh
+    # supplies it from the required HOUSE_REGISTRY env var.
     oci_push(
         name = name + "_push",
         image = ":" + name + "_index",
-        repository = REGISTRY + "/house/" + name,
     )

@@ -133,7 +133,7 @@ func main() {
 		// Dialing "localhost" needs its own TLS config: grpc verifies the
 		// peer's certificate against the dial target's hostname by default,
 		// which would be "localhost" here - not the hostname housed's own
-		// certificate was actually issued for (e.g. "housed.h031.house.
+		// certificate was actually issued for (e.g. "housed.myhost.house.
 		// internal", per cert-agent's SAN convention). house.tls.server_name
 		// overrides that check to the name the cert really carries.
 		selfAddr := fmt.Sprintf("localhost:%d", boundPort)

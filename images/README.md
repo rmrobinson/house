@@ -1,8 +1,8 @@
 # images
 
-Packages `house` binaries as multi-arch OCI images and pushes them to the
-self-hosted registry used by `house-config`'s docker-compose deploys
-(`registry.ktc1.net.faltung.ca`, see that repo's `docker-compose/README.md`).
+Packages `house` binaries as multi-arch OCI images and pushes them to
+whatever registry the caller specifies — this repo has no registry address
+baked in; see "Building and pushing" below.
 
 Each bridge/service gets one `bridge_image(name, binary)` call in
 `BUILD.bazel` (see `defs.bzl`), which produces:
@@ -15,7 +15,11 @@ Each bridge/service gets one `bridge_image(name, binary)` call in
   `examples/multi_architecture_image` — rules_oci doesn't ship this as a rule,
   it's the documented pattern for consumers), combined into one
   `oci_image_index` manifest list.
-- `<name>_push` — pushes that index to `registry.ktc1.net.faltung.ca/house/<name>`.
+- `<name>_push` — pushes that index to `<registry>/house/<name>`, where
+  `<registry>` must be supplied at `bazel run` time (see below) — `defs.bzl`
+  deliberately leaves `oci_push`'s `repository` attribute unset, which is
+  rules_oci's own supported way to require the caller to pass
+  `--repository` rather than bake in a default.
 
 ## Cross-compilation
 
@@ -35,7 +39,11 @@ carry.
 ## Building and pushing
 
 Use `scripts/build-and-push.sh` from the repo root rather than calling Bazel
-directly — see that script for the exact commands. The registry is fronted by
-Caddy terminating real TLS from step-ca (see `house-config`'s
-`docker-compose/README.md`), so pushing just needs the pushing machine to
-trust step-ca's root in its OS certificate store — no `--insecure` flag.
+directly — it requires a `HOUSE_REGISTRY` env var (no default) and passes it
+to each `<name>_push` target as `--repository "$HOUSE_REGISTRY/house/<name>"`;
+see that script's header for usage. Calling `bazel run //images:<name>_push`
+directly works the same way — pass `-- --repository <host>/house/<name>`.
+
+Whatever fronts your registry (real TLS, `--insecure`, registry auth, etc.)
+is entirely deployment-specific and outside this repo's concern — configure
+your own trust/auth however your registry needs it.
