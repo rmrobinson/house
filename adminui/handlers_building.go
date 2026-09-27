@@ -40,10 +40,23 @@ func (s *Server) handleBuildingCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.FormValue("name")
-	_, err := s.house.CreateBuilding(r.Context(), &api2.CreateBuildingRequest{
+	lat, err := parseOptionalFloat(r.FormValue("lat"))
+	if err != nil {
+		s.httpError(w, r, fmt.Errorf("invalid lat: %w", err))
+		return
+	}
+	lon, err := parseOptionalFloat(r.FormValue("lon"))
+	if err != nil {
+		s.httpError(w, r, fmt.Errorf("invalid lon: %w", err))
+		return
+	}
+
+	_, err = s.house.CreateBuilding(r.Context(), &api2.CreateBuildingRequest{
 		Config: &api2.Building_Config{
 			Name: name,
 			Tz:   r.FormValue("tz"),
+			Lat:  lat,
+			Lon:  lon,
 		},
 	})
 
@@ -96,17 +109,12 @@ func (s *Server) handleBuildingUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// lat/lon aren't editable here - see buildingView - so they arrive as
-	// hidden fields round-tripping the current value rather than typed
-	// input. A malformed value here means the request didn't actually come
-	// from this form as rendered, so reject it rather than silently writing
-	// 0,0 over whatever the building's coordinates actually were.
-	lat, err := strconv.ParseFloat(r.FormValue("lat"), 64)
+	lat, err := parseOptionalFloat(r.FormValue("lat"))
 	if err != nil {
 		s.httpError(w, r, fmt.Errorf("invalid lat: %w", err))
 		return
 	}
-	lon, err := strconv.ParseFloat(r.FormValue("lon"), 64)
+	lon, err := parseOptionalFloat(r.FormValue("lon"))
 	if err != nil {
 		s.httpError(w, r, fmt.Errorf("invalid lon: %w", err))
 		return
@@ -150,6 +158,15 @@ func (s *Server) handleBuildingDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirectAfterDelete(w, "/buildings")
+}
+
+// parseOptionalFloat treats a blank form value (an unset lat/lon field) as 0,
+// while still rejecting a non-numeric value someone typed in.
+func parseOptionalFloat(s string) (float64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	return strconv.ParseFloat(s, 64)
 }
 
 // successOrError is the common "call the RPC, decide the flash message"
