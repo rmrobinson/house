@@ -9,12 +9,15 @@
 // real device/house state, so the engine and its UI stay runnable and
 // visually verifiable with no bridge configured.
 //
-// With --lat/--lon (and optionally --location-tz), whichever HomeAPI that
-// resolves to is further wrapped in policy.LocationHomeAPI, so the
-// schedule.sun-event/schedule.daylight/schedule.date-range condition types
-// have a location to compute sunrise/sunset/calendar-date facts from - see
-// LocationHomeAPI's doc comment for why this is a static stand-in rather
-// than a house-service lookup.
+// With --house-addr and --building-id, the schedule.sun-event/
+// schedule.daylight/schedule.date-range condition types' location is
+// fetched once at startup from that building's HouseService Config (lat/
+// lon/tz) via policy.NewLocationHomeAPI - a building's location is static
+// configuration, not live state, so there's no need to poll or hold a
+// connection open the way bridgehome does for device state. --lat/--lon/
+// --location-tz remain as a fallback for running with no house service
+// configured (e.g. local testing); --house-addr takes precedence over them
+// when both are set.
 package main
 
 import (
@@ -30,18 +33,23 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"go.uber.org/zap"
+
+	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
 	"github.com/rmrobinson/house/service/policy/bridgehome"
-	"go.uber.org/zap"
 )
 
 var (
 	dbPath     = flag.String("db", "policy.db", "Path to the SQLite database to use")
 	addr       = flag.String("addr", "localhost:8080", "Address for the HTTP UI to listen on")
 	bridgeAddr = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
-	lat        = flag.Float64("lat", 0, "Building latitude in degrees, for the schedule.sun-event/schedule.daylight condition types; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
+	houseAddr  = flag.String("house-addr", "", "HouseService address to fetch --building-id's location (lat/lon/tz) from at startup, for the schedule.sun-event/schedule.daylight/schedule.date-range condition types; if empty, falls back to --lat/--lon/--location-tz")
+	buildingID = flag.String("building-id", "", "Building ID to fetch location from; required if --house-addr is set")
+	lat        = flag.Float64("lat", 0, "Building latitude in degrees, used if --house-addr is empty; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
 	lon        = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
-	locationTZ = flag.String("location-tz", "", "IANA timezone for the schedule.sun-event/schedule.daylight/schedule.date-range condition types (e.g. America/Toronto); defaults to the engine process's local zone")
+	locationTZ = flag.String("location-tz", "", "IANA timezone (e.g. America/Toronto), used if --house-addr is empty; defaults to the engine process's local zone")
 )
 
 func main() {
@@ -87,8 +95,31 @@ func main() {
 		home = newStubHomeAPI(logger)
 	}
 
-	if *lat != 0 || *lon != 0 || *locationTZ != "" {
-		home = policy.NewLocationHomeAPI(home, *lat, *lon, *locationTZ)
+	loc := buildingLocation{lat: *lat, lon: *lon, tz: *locationTZ}
+	if *houseAddr != "" {
+		if *buildingID == "" {
+			logger.Fatal("--building-id is required when --house-addr is set")
+		}
+
+		houseConn, err := grpcutil.DialInsecure(*houseAddr)
+		if err != nil {
+			logger.Fatal("unable to dial house service", zap.String("address", *houseAddr), zap.Error(err))
+		}
+		defer houseConn.Close()
+		houseClient := api2.NewHouseServiceClient(houseConn)
+
+		fetchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		loc, err = fetchBuildingLocation(fetchCtx, houseClient, *buildingID)
+		cancel()
+		if err != nil {
+			logger.Fatal("unable to fetch building location", zap.Error(err))
+		}
+		logger.Info("using location from house service",
+			zap.String("building_id", *buildingID), zap.Float64("lat", loc.lat), zap.Float64("lon", loc.lon), zap.String("tz", loc.tz))
+	}
+
+	if loc.lat != 0 || loc.lon != 0 || loc.tz != "" {
+		home = policy.NewLocationHomeAPI(home, loc.lat, loc.lon, loc.tz)
 	}
 
 	engine := policy.NewEngine(home, registry, logger, policy.WithStore(store))

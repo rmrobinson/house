@@ -1,14 +1,17 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "policyd_lib",
     srcs = [
+        "housestate.go",
         "main.go",
         "stubhome.go",
     ],
     importpath = "github.com/rmrobinson/house/service/policy/cmd/policyd",
     visibility = ["//visibility:private"],
     deps = [
+        "//api",
+        "//grpcutil",
         "//service/policy",
         "//service/policy/bridgehome",
         "@com_github_mattn_go_sqlite3//:go-sqlite3",
@@ -20,4 +23,18 @@ go_binary(
     name = "policyd",
     embed = [":policyd_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "policyd_test",
+    srcs = ["housestate_test.go"],
+    embed = [":policyd_lib"],
+    deps = [
+        "//api",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
 )
