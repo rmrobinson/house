@@ -16,6 +16,13 @@ house:
     cert_file: ""
     key_file: ""
     client_ca_file: ""
+    # Required (only) when TLS above is configured AND the facade section
+    # below is used to embed a facade in this process: housed dials that
+    # facade at "localhost", but its certificate was issued for its real
+    # hostname (e.g. "housed.h031.house.internal" per cert-agent's SAN
+    # convention) - server_name tells the self-dial's TLS verification
+    # which hostname to actually check the certificate against.
+    server_name: ""
 
 # Optional: embed a BridgeService facade in this same process, sharing
 # house.listen_port instead of running service/bridge/facade/cmd/bridgefacaded
@@ -33,4 +40,4 @@ bridge:
 facade:
   bridges:
     - "192.168.1.50:17010" # esphome bridge
-    - "192.168.1.51:17011" # cast bridge
+    - "192.168.1.51:17021" # cast bridge

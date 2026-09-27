@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
@@ -87,13 +86,7 @@ func (u *upstreamConn) run(ctx context.Context) {
 }
 
 func (u *upstreamConn) connectOnce(ctx context.Context) error {
-	var conn *grpc.ClientConn
-	var err error
-	if u.tlsCfg != nil {
-		conn, err = grpcutil.DialTLS(u.addr, *u.tlsCfg)
-	} else {
-		conn, err = grpcutil.DialInsecure(u.addr)
-	}
+	conn, err := grpcutil.Dial(u.addr, u.tlsCfg)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

@@ -125,15 +125,31 @@ func main() {
 		f := facade.NewFromConfig(ctx, logger, facadeCfg)
 		api2.RegisterBridgeServiceServer(grpcServer, f)
 
+		// Dialing "localhost" needs its own TLS config: grpc verifies the
+		// peer's certificate against the dial target's hostname by default,
+		// which would be "localhost" here - not the hostname housed's own
+		// certificate was actually issued for (e.g. "housed.h031.house.
+		// internal", per cert-agent's SAN convention). house.tls.server_name
+		// overrides that check to the name the cert really carries.
 		selfAddr := fmt.Sprintf("localhost:%d", boundPort)
-		conn, err := dialBridgeFacade(selfAddr, clientTLS)
+		selfTLS := clientTLS
+		if selfTLS != nil {
+			serverName := viper.GetString("house.tls.server_name")
+			if len(serverName) < 1 {
+				logger.Fatal("house.tls.server_name is required when house.tls.* and an embedded facade are both configured - it must match the hostname housed's own certificate was issued for, since dialing \"localhost\" would otherwise fail certificate verification")
+			}
+			override := *selfTLS
+			override.ServerName = serverName
+			selfTLS = &override
+		}
+		conn, err := grpcutil.Dial(selfAddr, selfTLS)
 		if err != nil {
 			logger.Fatal("unable to dial embedded bridge facade", zap.String("address", selfAddr), zap.Error(err))
 		}
 		bridgeClient = api2.NewBridgeServiceClient(conn)
 	case len(viper.GetString("house.bridge_facade_addr")) > 0:
 		addr := viper.GetString("house.bridge_facade_addr")
-		conn, err := dialBridgeFacade(addr, clientTLS)
+		conn, err := grpcutil.Dial(addr, clientTLS)
 		if err != nil {
 			logger.Fatal("unable to dial bridge facade", zap.String("address", addr), zap.Error(err))
 		}
@@ -147,13 +163,4 @@ func main() {
 
 	logger.Info("serving requests", zap.String("address", lis.Addr().String()))
 	grpcServer.Serve(lis)
-}
-
-// dialBridgeFacade dials addr over mutual TLS when tlsCfg is set, or
-// plaintext gRPC otherwise.
-func dialBridgeFacade(addr string, tlsCfg *grpcutil.ClientTLSConfig) (*grpc.ClientConn, error) {
-	if tlsCfg != nil {
-		return grpcutil.DialTLS(addr, *tlsCfg)
-	}
-	return grpcutil.DialInsecure(addr)
 }

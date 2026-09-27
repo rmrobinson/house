@@ -13,7 +13,6 @@ go_library(
         "//api/command",
         "//api/device",
         "//api/trait",
-        "//grpcutil",
         "//service/bridge",
         "@com_github_google_uuid//:uuid",
         "@com_github_spf13_viper//:viper",

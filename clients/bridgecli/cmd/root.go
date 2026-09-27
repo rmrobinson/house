@@ -58,17 +58,25 @@ func initClient() {
 		return
 	}
 
-	var conn *grpc.ClientConn
-	var err error
-	if len(tlsCertFile) > 0 {
-		conn, err = grpcutil.DialTLS(bridgeAddr, grpcutil.ClientTLSConfig{
-			CertFile: tlsCertFile,
-			KeyFile:  tlsKeyFile,
-			CAFile:   tlsCAFile,
-		})
-	} else {
-		conn, err = grpcutil.DialInsecure(bridgeAddr)
+	set := 0
+	for _, f := range []string{tlsCertFile, tlsKeyFile, tlsCAFile} {
+		if len(f) > 0 {
+			set++
+		}
 	}
+
+	var tlsCfg *grpcutil.ClientTLSConfig
+	switch set {
+	case 0:
+		// plaintext gRPC - the default
+	case 3:
+		tlsCfg = &grpcutil.ClientTLSConfig{CertFile: tlsCertFile, KeyFile: tlsKeyFile, CAFile: tlsCAFile}
+	default:
+		fmt.Fprintln(os.Stderr, "--tls-cert, --tls-key, and --tls-ca are required together - only some of them were set")
+		os.Exit(1)
+	}
+
+	conn, err := grpcutil.Dial(bridgeAddr, tlsCfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

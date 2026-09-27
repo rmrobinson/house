@@ -131,10 +131,10 @@ bazel-bin/bridges/cast/cast_/cast   # run from the directory containing your con
 Then, using `bridgecli` (`bazel build //clients/bridgecli`):
 
 ```sh
-bridgecli --addr 127.0.0.1:17011 bridge --bridgeID <bridge ID> listDevices
-bridgecli --addr 127.0.0.1:17011 device --deviceID <cast uuid> volume --delta -1
-bridgecli --addr 127.0.0.1:17011 device --deviceID <cast uuid> mute --muted=true
-bridgecli --addr 127.0.0.1:17011 device --deviceID <cast uuid> app launch --appID 233637DE
+bridgecli --addr 127.0.0.1:17021 bridge --bridgeID <bridge ID> listDevices
+bridgecli --addr 127.0.0.1:17021 device --deviceID <cast uuid> volume --delta -1
+bridgecli --addr 127.0.0.1:17021 device --deviceID <cast uuid> mute --muted=true
+bridgecli --addr 127.0.0.1:17021 device --deviceID <cast uuid> app launch --appID 233637DE
 ```
 
 Confirm the command actually reached the device (not just that the bridge's own optimistic state

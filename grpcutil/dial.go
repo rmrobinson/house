@@ -27,6 +27,24 @@ type ClientTLSConfig struct {
 	CertFile string
 	KeyFile  string
 	CAFile   string
+	// ServerName overrides the hostname DialTLS verifies the server's
+	// certificate against. Leave empty for the common case - dialing a
+	// server by the same name its certificate was actually issued for -
+	// where grpc's default (derived from addr) is already correct. Only
+	// needed when addr isn't that name, e.g. a process dialing itself over
+	// "localhost" while its certificate was issued for its real hostname.
+	ServerName string
+}
+
+// Dial dials addr over mutual TLS when cfg is non-nil, or plaintext gRPC
+// (DialInsecure) otherwise - the dispatch every TLS-aware client in this
+// repo needs, centralized so it's made consistently rather than reimplemented
+// per call site.
+func Dial(addr string, cfg *ClientTLSConfig) (*grpc.ClientConn, error) {
+	if cfg != nil {
+		return DialTLS(addr, *cfg)
+	}
+	return DialInsecure(addr)
 }
 
 // DialTLS dials addr over mutual TLS using cfg: it verifies the server's
@@ -39,7 +57,8 @@ func DialTLS(addr string, cfg ClientTLSConfig) (*grpc.ClientConn, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		RootCAs: rootCAs,
+		RootCAs:    rootCAs,
+		ServerName: cfg.ServerName,
 		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
 			if err != nil {

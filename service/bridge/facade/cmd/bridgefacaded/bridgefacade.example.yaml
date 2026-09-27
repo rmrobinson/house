@@ -21,4 +21,4 @@ bridge:
 facade:
   bridges:
     - "192.168.1.50:17010" # esphome bridge
-    - "192.168.1.51:17011" # cast bridge
+    - "192.168.1.51:17021" # cast bridge

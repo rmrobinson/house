@@ -4,12 +4,31 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/grpcutil"
 )
+
+// TLSConfigFromViper reads bridge.tls.{cert,key,client_ca}_file from viper
+// (the config already loaded by the caller's main.go) and returns a
+// *grpcutil.ServerTLSConfig, or nil if bridge.tls.cert_file is unset -
+// TLS stays opt-in per bridge. Centralized here so every bridge main.go
+// reads this the same way instead of repeating the same three GetString
+// calls and nil check.
+func TLSConfigFromViper() *grpcutil.ServerTLSConfig {
+	certFile := viper.GetString("bridge.tls.cert_file")
+	if len(certFile) < 1 {
+		return nil
+	}
+	return &grpcutil.ServerTLSConfig{
+		CertFile:     certFile,
+		KeyFile:      viper.GetString("bridge.tls.key_file"),
+		ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
+	}
+}
 
 // Server creates a new network server hosting the Bridge gRPC server.
 type Server struct {

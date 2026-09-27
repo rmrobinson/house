@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
-	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -59,16 +58,7 @@ func main() {
 
 	eb.Start(ctx)
 
-	var tlsCfg *grpcutil.ServerTLSConfig
-	if certFile := viper.GetString("bridge.tls.cert_file"); len(certFile) > 0 {
-		tlsCfg = &grpcutil.ServerTLSConfig{
-			CertFile:     certFile,
-			KeyFile:      viper.GetString("bridge.tls.key_file"),
-			ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
-		}
-	}
-
-	s, err := bridge.NewServer(logger, svc, tlsCfg)
+	s, err := bridge.NewServer(logger, svc, bridge.TLSConfigFromViper())
 	if err != nil {
 		logger.Fatal("unable to create bridge server", zap.Error(err))
 	}

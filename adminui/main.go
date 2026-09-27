@@ -48,13 +48,25 @@ func main() {
 		bridgeFacadeAddr = houseAddr
 	}
 
-	houseConn, err := grpcutil.DialInsecure(houseAddr)
+	// Optional mutual TLS - blank (the default) dials plaintext gRPC, same
+	// as every other client in this repo. One cert/key for adminui as a
+	// single principal talking to both housed and (if separate) the facade.
+	var tlsCfg *grpcutil.ClientTLSConfig
+	if certFile := viper.GetString("adminui.tls.cert_file"); len(certFile) > 0 {
+		tlsCfg = &grpcutil.ClientTLSConfig{
+			CertFile: certFile,
+			KeyFile:  viper.GetString("adminui.tls.key_file"),
+			CAFile:   viper.GetString("adminui.tls.ca_file"),
+		}
+	}
+
+	houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to dial house service", zap.String("address", houseAddr), zap.Error(err))
 	}
 	houseClient := api2.NewHouseServiceClient(houseConn)
 
-	bridgeConn, err := grpcutil.DialInsecure(bridgeFacadeAddr)
+	bridgeConn, err := grpcutil.Dial(bridgeFacadeAddr, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to dial bridge facade", zap.String("address", bridgeFacadeAddr), zap.Error(err))
 	}

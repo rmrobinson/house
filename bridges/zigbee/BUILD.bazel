@@ -18,7 +18,6 @@ go_library(
         "//api/command",
         "//api/device",
         "//api/trait",
-        "//grpcutil",
         "//service/bridge",
         "@com_github_eclipse_paho_mqtt_golang//:paho_mqtt_golang",
         "@com_github_google_uuid//:uuid",

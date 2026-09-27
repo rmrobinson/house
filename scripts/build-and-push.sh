@@ -21,7 +21,7 @@ cd "$REPO_ROOT"
 
 # Keep in sync with images/BUILD.bazel.
 BRIDGES=(
-  plex webos cast frigate omada ecobee housed facade
+  plex webos cast frigate omada ecobee housed bridgefacaded
   esphome airthings tesla-charger zwave zigbee
   apc-ups
 )

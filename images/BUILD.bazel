@@ -42,7 +42,11 @@ bridge_image(
 )
 
 bridge_image(
-    name = "facade",
+    # Must match the go_binary's own name (bridgefacaded, not "facade") -
+    # defs.bzl derives the container entrypoint from this name, and the
+    # actual binary in the layer is named after the go_binary target, not
+    # this macro call.
+    name = "bridgefacaded",
     binary = "//service/bridge/facade/cmd/bridgefacaded",
 )
 
