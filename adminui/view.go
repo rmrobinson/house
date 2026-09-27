@@ -23,12 +23,8 @@ type buildingView struct {
 	Name    string
 	TZ      string
 	Version string
-	// Lat/Lon aren't exposed as editable fields anywhere in this app (see
-	// buildings.html/building.html) - carried through only so an edit form
-	// can round-trip them via hidden inputs instead of silently zeroing
-	// them out on save.
-	Lat float64
-	Lon float64
+	Lat     float64
+	Lon     float64
 }
 
 type floorView struct {

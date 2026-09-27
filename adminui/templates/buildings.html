@@ -9,6 +9,8 @@
     <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" required></label>
       <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
+      <label>Latitude <input type="number" step="any" min="-90" max="90" name="lat" placeholder="43.6532"></label>
+      <label>Longitude <input type="number" step="any" min="-180" max="180" name="lon" placeholder="-79.3832"></label>
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Create</button>
@@ -36,10 +38,10 @@
     <h3>Edit building</h3>
     <form hx-post="/buildings/{{.ID}}" hx-target="#page-content" hx-swap="outerHTML">
       <input type="hidden" name="version" value="{{.Version}}">
-      <input type="hidden" name="lat" value="{{.Lat}}">
-      <input type="hidden" name="lon" value="{{.Lon}}">
       <label>Name <input type="text" name="name" value="{{.Name}}" required></label>
       <label>Timezone <input type="text" name="tz" value="{{.TZ}}" placeholder="America/Toronto"></label>
+      <label>Latitude <input type="number" step="any" min="-90" max="90" name="lat" value="{{.Lat}}"></label>
+      <label>Longitude <input type="number" step="any" min="-180" max="180" name="lon" value="{{.Lon}}"></label>
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Save</button>
