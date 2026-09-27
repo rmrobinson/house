@@ -2,7 +2,7 @@
 
 Packages `house` binaries as multi-arch OCI images and pushes them to the
 self-hosted registry used by `house-config`'s docker-compose deploys
-(`h031:5000`, see that repo's `docker-compose/README.md`).
+(`registry.ktc1.net.faltung.ca`, see that repo's `docker-compose/README.md`).
 
 Each bridge/service gets one `bridge_image(name, binary)` call in
 `BUILD.bazel` (see `defs.bzl`), which produces:
@@ -15,7 +15,7 @@ Each bridge/service gets one `bridge_image(name, binary)` call in
   `examples/multi_architecture_image` — rules_oci doesn't ship this as a rule,
   it's the documented pattern for consumers), combined into one
   `oci_image_index` manifest list.
-- `<name>_push` — pushes that index to `h031:5000/house/<name>`.
+- `<name>_push` — pushes that index to `registry.ktc1.net.faltung.ca/house/<name>`.
 
 ## Cross-compilation
 
@@ -35,12 +35,7 @@ carry.
 ## Building and pushing
 
 Use `scripts/build-and-push.sh` from the repo root rather than calling Bazel
-directly — see that script for the exact commands. It pushes with `--insecure`
-since the registry is plain HTTP.
-
-## Pending
-
-`zwave` and `facade` aren't wired up here yet — see the commented-out entries
-at the bottom of `BUILD.bazel`. Both reference packages that only exist on
-unmerged branches (`worktree-add-zwave-bridge`, `add-bridge-configs`); uncomment
-once those land on `main`.
+directly — see that script for the exact commands. The registry is fronted by
+Caddy terminating real TLS from step-ca (see `house-config`'s
+`docker-compose/README.md`), so pushing just needs the pushing machine to
+trust step-ca's root in its OS certificate store — no `--insecure` flag.

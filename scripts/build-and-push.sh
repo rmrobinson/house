@@ -10,9 +10,10 @@
 # more names (matching //images:<name>_push) to push a subset, e.g.:
 #   scripts/build-and-push.sh plex housed
 #
-# Pushes with --insecure since the registry (h031:5000) is plain HTTP — see
-# house-config/docker-compose/README.md for the registry's own setup and the
-# insecure-registries daemon config each pulling host needs.
+# The registry is fronted by Caddy terminating real TLS from step-ca, so
+# pushing just needs this machine to trust step-ca's root in its OS
+# certificate store — see house-config/docker-compose/README.md for the
+# registry's own setup and what each pulling host still needs configured.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,5 +35,5 @@ TAG="$(git rev-parse --short HEAD)"
 
 for name in "${TARGETS[@]}"; do
   echo "==> //images:${name}_push"
-  bazel run "//images:${name}_push" -- --insecure --tag "$TAG" --tag latest
+  bazel run "//images:${name}_push" -- --tag "$TAG" --tag latest
 done
