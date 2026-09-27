@@ -34,6 +34,7 @@ go_library(
         "//api/device",
         "//backoffutil",
         "//grpcutil",
+        "//htmxutil",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",

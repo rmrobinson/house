@@ -201,6 +201,14 @@ func (e *Engine) RemoveDeviceState(entityID string) {
 // Register stores a copy of p's fields, not p itself: mutating the *Policy
 // you passed in after Register returns has no effect on what's registered.
 func (e *Engine) Register(p *Policy) error {
+	return e.register(p, true)
+}
+
+// register is Register's implementation, with persist controlling whether
+// it also writes p to e.store. LoadPersistedPolicies passes false: p was
+// just read from that same store, so writing it straight back would be a
+// redundant no-op write on every single policy at every startup.
+func (e *Engine) register(p *Policy, persist bool) error {
 	if p == nil {
 		return fmt.Errorf("policy: nil policy")
 	}
@@ -223,7 +231,7 @@ func (e *Engine) Register(p *Policy) error {
 		return fmt.Errorf("policy %q: %w", p.ID, err)
 	}
 
-	if e.store != nil {
+	if persist && e.store != nil {
 		if err := e.store.SavePolicy(p); err != nil {
 			return fmt.Errorf("policy %q: persisting: %w", p.ID, err)
 		}
@@ -452,6 +460,22 @@ func (e *Engine) LogsForPolicy(policyID string) []ExecutionLog {
 		if l.PolicyID == policyID {
 			out = append(out, l)
 		}
+	}
+	return out
+}
+
+// LastLogs returns the most recent ExecutionLog for every policy that has
+// at least one, keyed by policy ID, in a single pass over the log history -
+// for a caller (e.g. the policies list page) that wants every policy's last
+// log at once, which would otherwise cost one LogsForPolicy scan of the
+// entire history per policy rendered.
+func (e *Engine) LastLogs() map[string]ExecutionLog {
+	e.logsMu.Lock()
+	defer e.logsMu.Unlock()
+
+	out := make(map[string]ExecutionLog)
+	for _, l := range e.logs {
+		out[l.PolicyID] = l
 	}
 	return out
 }

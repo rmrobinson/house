@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/rmrobinson/house/htmxutil"
 )
 
 //go:embed templates/*.html
@@ -154,7 +156,7 @@ func (s *Server) respond(w http.ResponseWriter, name string, data any, flash str
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Error("template render failed", zap.String("template", name), zap.Error(err))
 	}
-	s.writeFlash(w, flash, isError)
+	htmxutil.WriteFlash(w, flash, isError)
 }
 
 // renderFragment renders a standalone fragment with no flash OOB swap —
@@ -165,14 +167,6 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.logger.Error("template render failed", zap.String("template", name), zap.Error(err))
 	}
-}
-
-func (s *Server) writeFlash(w http.ResponseWriter, msg string, isError bool) {
-	class := "flash"
-	if isError {
-		class = "flash flash-error"
-	}
-	fmt.Fprintf(w, `<div id="flash" hx-swap-oob="true" class="%s">%s</div>`, class, template.HTMLEscapeString(msg))
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -191,26 +185,44 @@ type policyRow struct {
 	LastLog          *ExecutionLog
 }
 
-func (s *Server) policyRowFor(info PolicyInfo) policyRow {
-	row := policyRow{
+// policyRowWithLastLog builds a policyRow from info, using last as-is for
+// LastLog instead of querying the engine for it - for a caller that already
+// has the exact log in hand (a LastLogs() lookup, or a uiLogAppendedTopic
+// event's own payload) and so has no reason to pay for re-deriving it.
+func policyRowWithLastLog(info PolicyInfo, last *ExecutionLog) policyRow {
+	return policyRow{
 		ID:               info.ID,
 		ConditionExpr:    info.ConditionExpr,
 		Script:           info.Script,
 		OnConditionFalse: info.OnConditionFalse,
 		Active:           info.Active,
+		LastLog:          last,
 	}
-	if logs := s.engine.LogsForPolicy(info.ID); len(logs) > 0 {
-		last := logs[len(logs)-1]
-		row.LastLog = &last
-	}
-	return row
 }
 
+func (s *Server) policyRowFor(info PolicyInfo) policyRow {
+	var last *ExecutionLog
+	if logs := s.engine.LogsForPolicy(info.ID); len(logs) > 0 {
+		l := logs[len(logs)-1]
+		last = &l
+	}
+	return policyRowWithLastLog(info, last)
+}
+
+// buildPolicyRows renders every policy's row for the list page. It fetches
+// every policy's last log with a single LastLogs() pass over the whole log
+// history, rather than policyRowFor's own per-policy LogsForPolicy scan run
+// once per policy - the latter would cost O(policies x total logs) here.
 func (s *Server) buildPolicyRows() []policyRow {
 	infos := s.engine.Policies()
+	lastLogs := s.engine.LastLogs()
 	rows := make([]policyRow, 0, len(infos))
 	for _, info := range infos {
-		rows = append(rows, s.policyRowFor(info))
+		var last *ExecutionLog
+		if l, ok := lastLogs[info.ID]; ok {
+			last = &l
+		}
+		rows = append(rows, policyRowWithLastLog(info, last))
 	}
 	return rows
 }
@@ -488,7 +500,7 @@ func (s *Server) pushLogAppended(w http.ResponseWriter, payload any) bool {
 
 	var frag bytes.Buffer
 	if info, found := s.engine.Policy(l.PolicyID); found {
-		if err := s.tmpl.ExecuteTemplate(&frag, "policy_status_cell_oob", s.policyRowFor(info)); err != nil {
+		if err := s.tmpl.ExecuteTemplate(&frag, "policy_status_cell_oob", policyRowWithLastLog(info, &l)); err != nil {
 			s.logger.Error("template render failed", zap.String("template", "policy_status_cell_oob"), zap.Error(err))
 		}
 	}
@@ -512,17 +524,6 @@ func (s *Server) pushLogAppended(w http.ResponseWriter, payload any) bool {
 // element — newlines are stripped outright instead of split into multiple
 // "data:" lines: simpler, and htmx's DOM parser doesn't need them.
 func writeSSEEvent(w http.ResponseWriter, html string) bool {
-	_, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", oneLine(html))
+	_, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", htmxutil.OneLine(html))
 	return err == nil
-}
-
-func oneLine(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' || s[i] == '\r' {
-			continue
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

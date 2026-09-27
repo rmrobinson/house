@@ -232,7 +232,7 @@ func LoadPersistedPolicies(e *Engine, store Store) error {
 	}
 
 	for _, p := range policies {
-		if err := e.Register(p); err != nil {
+		if err := e.register(p, false); err != nil {
 			return fmt.Errorf("policy: registering persisted policy %q: %w", p.ID, err)
 		}
 	}

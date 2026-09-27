@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -102,8 +103,7 @@ type HysteresisPollingCondition struct {
 	interval      time.Duration
 	falling       bool
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewHysteresisPollingCondition creates a HysteresisPollingCondition that
@@ -127,9 +127,7 @@ func NewDirectionalHysteresisPollingCondition(fn func() float64, thresholdHigh, 
 }
 
 func (h *HysteresisPollingCondition) Evaluate() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.value
+	return h.value.Load()
 }
 
 func (h *HysteresisPollingCondition) next(current bool, v float64) bool {
@@ -137,10 +135,8 @@ func (h *HysteresisPollingCondition) next(current bool, v float64) bool {
 }
 
 func (h *HysteresisPollingCondition) Start(ctx context.Context, onChange func(bool)) {
-	h.mu.Lock()
-	h.value = h.next(false, h.fn())
-	last := h.value
-	h.mu.Unlock()
+	last := h.next(false, h.fn())
+	h.value.Store(last)
 
 	go func() {
 		ticker := time.NewTicker(h.interval)
@@ -154,9 +150,7 @@ func (h *HysteresisPollingCondition) Start(ctx context.Context, onChange func(bo
 				cur := h.next(last, h.fn())
 				if cur != last {
 					last = cur
-					h.mu.Lock()
-					h.value = cur
-					h.mu.Unlock()
+					h.value.Store(cur)
 					onChange(cur)
 				}
 			}
@@ -177,8 +171,7 @@ type HysteresisPredicateCondition struct {
 	thresholdLow  float64
 	falling       bool
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewHysteresisPredicateCondition creates a HysteresisPredicateCondition
@@ -197,9 +190,7 @@ func NewHysteresisPredicateCondition(bus *Bus, topic string, fn func() float64, 
 }
 
 func (h *HysteresisPredicateCondition) Evaluate() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.value
+	return h.value.Load()
 }
 
 func (h *HysteresisPredicateCondition) next(current bool, v float64) bool {
@@ -207,9 +198,7 @@ func (h *HysteresisPredicateCondition) next(current bool, v float64) bool {
 }
 
 func (h *HysteresisPredicateCondition) Start(ctx context.Context, onChange func(bool)) {
-	h.mu.Lock()
-	h.value = h.next(false, h.fn())
-	h.mu.Unlock()
+	h.value.Store(h.next(false, h.fn()))
 
 	ch := h.bus.Subscribe(h.topic)
 
@@ -225,11 +214,9 @@ func (h *HysteresisPredicateCondition) Start(ctx context.Context, onChange func(
 					return
 				}
 
-				h.mu.Lock()
-				cur := h.next(h.value, h.fn())
-				changed := cur != h.value
-				h.value = cur
-				h.mu.Unlock()
+				cur := h.next(h.value.Load(), h.fn())
+				changed := cur != h.value.Load()
+				h.value.Store(cur)
 
 				if changed {
 					onChange(cur)
@@ -253,8 +240,7 @@ type EventCondition struct {
 	trueFn  func(Event) bool
 	falseFn func(Event) bool
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewEventCondition creates an EventCondition subscribed to topic on bus.
@@ -268,9 +254,7 @@ func NewEventCondition(bus *Bus, topic string, trueFn, falseFn func(Event) bool)
 }
 
 func (e *EventCondition) Evaluate() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.value
+	return e.value.Load()
 }
 
 func (e *EventCondition) Start(ctx context.Context, onChange func(bool)) {
@@ -288,20 +272,15 @@ func (e *EventCondition) Start(ctx context.Context, onChange func(bool)) {
 					return
 				}
 
-				e.mu.Lock()
-				if !e.value {
+				if !e.value.Load() {
 					if e.trueFn != nil && !e.trueFn(ev) {
-						e.mu.Unlock()
 						continue
 					}
-					e.value = true
-					e.mu.Unlock()
+					e.value.Store(true)
 					onChange(true)
 
 					if e.falseFn == nil {
-						e.mu.Lock()
-						e.value = false
-						e.mu.Unlock()
+						e.value.Store(false)
 						onChange(false)
 					}
 					continue
@@ -310,11 +289,9 @@ func (e *EventCondition) Start(ctx context.Context, onChange func(bool)) {
 				// Currently true: falseFn is guaranteed non-nil here, since
 				// the nil case above always resets to false immediately.
 				if !e.falseFn(ev) {
-					e.mu.Unlock()
 					continue
 				}
-				e.value = false
-				e.mu.Unlock()
+				e.value.Store(false)
 				onChange(false)
 			}
 		}
@@ -335,8 +312,7 @@ type PredicateCondition struct {
 	topic string
 	fn    func() bool
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewPredicateCondition creates a PredicateCondition that re-evaluates fn
@@ -346,15 +322,11 @@ func NewPredicateCondition(bus *Bus, topic string, fn func() bool) *PredicateCon
 }
 
 func (p *PredicateCondition) Evaluate() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.value
+	return p.value.Load()
 }
 
 func (p *PredicateCondition) Start(ctx context.Context, onChange func(bool)) {
-	p.mu.Lock()
-	p.value = p.fn()
-	p.mu.Unlock()
+	p.value.Store(p.fn())
 
 	ch := p.bus.Subscribe(p.topic)
 
@@ -371,11 +343,8 @@ func (p *PredicateCondition) Start(ctx context.Context, onChange func(bool)) {
 				}
 
 				cur := p.fn()
-
-				p.mu.Lock()
-				changed := cur != p.value
-				p.value = cur
-				p.mu.Unlock()
+				changed := cur != p.value.Load()
+				p.value.Store(cur)
 
 				if changed {
 					onChange(cur)
@@ -396,8 +365,7 @@ type IdleCondition struct {
 	topic    string
 	duration time.Duration
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewIdleCondition creates an IdleCondition that becomes true once duration
@@ -407,9 +375,7 @@ func NewIdleCondition(bus *Bus, topic string, duration time.Duration) *IdleCondi
 }
 
 func (i *IdleCondition) Evaluate() bool {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.value
+	return i.value.Load()
 }
 
 func (i *IdleCondition) Start(ctx context.Context, onChange func(bool)) {
@@ -425,10 +391,8 @@ func (i *IdleCondition) Start(ctx context.Context, onChange func(bool)) {
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				i.mu.Lock()
-				changed := !i.value
-				i.value = true
-				i.mu.Unlock()
+				changed := !i.value.Load()
+				i.value.Store(true)
 				if changed {
 					onChange(true)
 				}
@@ -448,10 +412,8 @@ func (i *IdleCondition) Start(ctx context.Context, onChange func(bool)) {
 				}
 				timer.Reset(i.duration)
 
-				i.mu.Lock()
-				changed := i.value
-				i.value = false
-				i.mu.Unlock()
+				changed := i.value.Load()
+				i.value.Store(false)
 				if changed {
 					onChange(false)
 				}
@@ -568,8 +530,7 @@ type ScheduleCondition struct {
 
 	now func() time.Time // overridable in tests
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewScheduleCondition creates a ScheduleCondition that fires at
@@ -587,9 +548,7 @@ func NewScheduleCondition(loc *time.Location, hour, minute int, weekdays ...time
 }
 
 func (s *ScheduleCondition) Evaluate() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.value
+	return s.value.Load()
 }
 
 func (s *ScheduleCondition) matchesDay(t time.Time) bool {
@@ -624,14 +583,10 @@ func (s *ScheduleCondition) Start(ctx context.Context, onChange func(bool)) {
 				timer.Stop()
 				return
 			case <-timer.C:
-				s.mu.Lock()
-				s.value = true
-				s.mu.Unlock()
+				s.value.Store(true)
 				onChange(true)
 
-				s.mu.Lock()
-				s.value = false
-				s.mu.Unlock()
+				s.value.Store(false)
 				onChange(false)
 			}
 		}
@@ -660,8 +615,7 @@ type SunEventCondition struct {
 
 	now func() time.Time // overridable in tests
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewSunEventCondition creates a SunEventCondition. sunset selects sunset
@@ -672,9 +626,7 @@ func NewSunEventCondition(loc *time.Location, sunset bool, offset time.Duration,
 }
 
 func (s *SunEventCondition) Evaluate() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.value
+	return s.value.Load()
 }
 
 // next returns the next instant strictly after from at which this condition
@@ -719,14 +671,10 @@ func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
 				timer.Stop()
 				return
 			case <-timer.C:
-				s.mu.Lock()
-				s.value = true
-				s.mu.Unlock()
+				s.value.Store(true)
 				onChange(true)
 
-				s.mu.Lock()
-				s.value = false
-				s.mu.Unlock()
+				s.value.Store(false)
 				onChange(false)
 			}
 		}
@@ -744,8 +692,7 @@ type SunWindowCondition struct {
 
 	now func() time.Time // overridable in tests
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewSunWindowCondition creates a SunWindowCondition for a location supplied
@@ -755,9 +702,7 @@ func NewSunWindowCondition(loc *time.Location, locate func() (lat, lon float64, 
 }
 
 func (w *SunWindowCondition) Evaluate() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.value
+	return w.value.Load()
 }
 
 // state reports whether the sun is up at t, and the next instant (strictly
@@ -799,9 +744,7 @@ func (w *SunWindowCondition) Start(ctx context.Context, onChange func(bool)) {
 	// zero-value placeholder waiting on a goroutine that hasn't run yet.
 	now := w.now()
 	up, next := w.state(now)
-	w.mu.Lock()
-	w.value = up
-	w.mu.Unlock()
+	w.value.Store(up)
 
 	go func() {
 		for {
@@ -814,10 +757,8 @@ func (w *SunWindowCondition) Start(ctx context.Context, onChange func(bool)) {
 				now = w.now()
 				up, next = w.state(now)
 
-				w.mu.Lock()
-				changed := up != w.value
-				w.value = up
-				w.mu.Unlock()
+				changed := up != w.value.Load()
+				w.value.Store(up)
 
 				if changed {
 					onChange(up)
@@ -867,8 +808,7 @@ type DateRangeCondition struct {
 
 	now func() time.Time // overridable in tests
 
-	mu    sync.Mutex
-	value bool
+	value atomic.Bool
 }
 
 // NewDateRangeCondition creates a DateRangeCondition for [startMonth,startDay]
@@ -883,9 +823,7 @@ func NewDateRangeCondition(loc *time.Location, startMonth, startDay, endMonth, e
 }
 
 func (d *DateRangeCondition) Evaluate() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.value
+	return d.value.Load()
 }
 
 func (d *DateRangeCondition) matches(t time.Time) bool {
@@ -903,9 +841,7 @@ func (d *DateRangeCondition) Start(ctx context.Context, onChange func(bool)) {
 	// Baseline established synchronously - see SunWindowCondition.Start's
 	// identical comment for why.
 	now := d.now()
-	d.mu.Lock()
-	d.value = d.matches(now)
-	d.mu.Unlock()
+	d.value.Store(d.matches(now))
 
 	go func() {
 		for {
@@ -920,10 +856,8 @@ func (d *DateRangeCondition) Start(ctx context.Context, onChange func(bool)) {
 				now = d.now()
 				newVal := d.matches(now)
 
-				d.mu.Lock()
-				changed := newVal != d.value
-				d.value = newVal
-				d.mu.Unlock()
+				changed := newVal != d.value.Load()
+				d.value.Store(newVal)
 
 				if changed {
 					onChange(newVal)

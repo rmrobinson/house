@@ -393,7 +393,7 @@ func TestAdapter_SetLight_PropagatesError(t *testing.T) {
 	adapter.Start(ctx, engine)
 
 	require.Eventually(t, func() bool {
-		return adapter.conn.Client() != nil
+		return adapter.isLive()
 	}, 2*time.Second, 10*time.Millisecond)
 
 	err := adapter.SetLight("light-1", true)
@@ -405,9 +405,17 @@ func TestAdapter_SetLight_PropagatesError(t *testing.T) {
 
 // newStartedAdapter is a small helper for the SetState tests below: it
 // starts an Adapter against srv and waits for its connection to come up, so
-// each test can focus on the SetState call itself.
+// each test can focus on the SetState call itself. If srv has no canned
+// updates of its own, it's given an empty InitialUpdate so the connection
+// actually has something to receive - a real bridge always sends at least
+// that much on connect, and the Adapter only considers itself live once it's
+// received an Update (see Adapter.isLive), not merely dialed.
 func newStartedAdapter(t *testing.T, srv *fakeBridgeServer) (*Adapter, *policy.Engine) {
 	t.Helper()
+
+	if srv.updates == nil {
+		srv.updates = initialAsBulk("b1", nil)
+	}
 
 	addr := startFakeServer(t, srv)
 	adapter := New(zaptest.NewLogger(t), addr)
@@ -419,7 +427,7 @@ func newStartedAdapter(t *testing.T, srv *fakeBridgeServer) (*Adapter, *policy.E
 	adapter.Start(ctx, engine)
 
 	require.Eventually(t, func() bool {
-		return adapter.conn.Client() != nil
+		return adapter.isLive()
 	}, 2*time.Second, 10*time.Millisecond)
 
 	return adapter, engine
