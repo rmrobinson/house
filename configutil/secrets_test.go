@@ -105,6 +105,82 @@ func TestPersistValue_CreatesMissingKey(t *testing.T) {
 	assert.Equal(t, "/data/house.db", got["house"].(map[string]any)["db"])
 }
 
+func TestPersistValue_SecretRef_WritesSecretsFileAndReferenceOnly(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "webos.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+webos:
+  devices: []
+`), 0o644))
+
+	type device struct {
+		UUID      string `yaml:"uuid"`
+		ClientKey any    `yaml:"client_key"`
+	}
+	devices := []device{
+		{UUID: "u1", ClientKey: SecretRef{Name: "webos_client_key_u1", Value: "top-secret-key"}},
+		{UUID: "u2", ClientKey: ""}, // not yet paired - stays a plain empty string
+	}
+
+	require.NoError(t, PersistValue(configPath, "webos.devices", devices))
+
+	out, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "top-secret-key", "the secret value must never land in the tracked config")
+	assert.Contains(t, string(out), "!secret webos_client_key_u1", "the tracked config must get a !secret reference in its place")
+
+	secretsOut, err := os.ReadFile(secretsPath(configPath))
+	require.NoError(t, err)
+	var secrets map[string]string
+	require.NoError(t, yaml.Unmarshal(secretsOut, &secrets))
+	assert.Equal(t, "top-secret-key", secrets["webos_client_key_u1"])
+
+	// Round-trip through ResolveSecrets, like a real bridge reboot would.
+	resolved, err := ResolveSecrets(configPath)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, yaml.Unmarshal(resolved, &got))
+	gotDevices := got["webos"].(map[string]any)["devices"].([]any)
+	require.Len(t, gotDevices, 2)
+	assert.Equal(t, "top-secret-key", gotDevices[0].(map[string]any)["client_key"])
+	assert.Equal(t, "", gotDevices[1].(map[string]any)["client_key"])
+}
+
+func TestPersistValue_SecretRef_MergesWithExistingSecrets(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "webos.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+`), 0o644))
+	require.NoError(t, os.WriteFile(secretsPath(configPath), []byte(`webos_client_key_other: "unrelated-key"
+`), 0o644))
+
+	require.NoError(t, PersistValue(configPath, "webos.devices", []map[string]any{
+		{"uuid": "u1", "client_key": SecretRef{Name: "webos_client_key_u1", Value: "new-key"}},
+	}))
+
+	secretsOut, err := os.ReadFile(secretsPath(configPath))
+	require.NoError(t, err)
+	var secrets map[string]string
+	require.NoError(t, yaml.Unmarshal(secretsOut, &secrets))
+	assert.Equal(t, "unrelated-key", secrets["webos_client_key_other"], "an existing, unrelated secret must survive")
+	assert.Equal(t, "new-key", secrets["webos_client_key_u1"])
+}
+
+func TestPersistValue_PlainValue_DoesNotCreateSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cast.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: ""
+`), 0o644))
+
+	require.NoError(t, PersistValue(configPath, "bridge.id", "plain-id"))
+
+	_, err := os.Stat(secretsPath(configPath))
+	assert.True(t, os.IsNotExist(err), "a value with no SecretRef must never create a secrets file")
+}
+
 func TestPersistValue_NeverTouchesSecretsFile(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "cast.yaml")

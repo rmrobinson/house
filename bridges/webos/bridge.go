@@ -12,6 +12,7 @@ import (
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/bridges/lib/webosctrl"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -68,6 +69,10 @@ type WebOSBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
 	b      *api2.Bridge
+	// configPath is set by main() right after construction - needed for the
+	// configutil.PersistValue calls below (persistDeviceConfigs,
+	// SetBridgeConfig). Left unset in tests that don't exercise persistence.
+	configPath string
 
 	mu      sync.Mutex
 	devices map[string]*webosDevice // keyed by webos uuid == Device.Id
@@ -264,11 +269,54 @@ func (wb *WebOSBridge) persistClientKey(uuid, clientKey string) {
 	wb.persistDeviceConfigs(configs)
 }
 
+// persistedDeviceConfig is deviceConfig's on-disk shape for persisting back
+// to config: identical fields, but ClientKey is `any` so a non-empty key
+// can be written as a configutil.SecretRef instead of a plain string,
+// keeping a pairing key learned at runtime out of the tracked config file
+// (see persistDeviceConfigs). Only used for writing; reading still decodes
+// into deviceConfig via mapstructure/viper, unchanged.
+type persistedDeviceConfig struct {
+	UUID      string `yaml:"uuid"`
+	Host      string `yaml:"host"`
+	Name      string `yaml:"name"`
+	MAC       string `yaml:"mac"`
+	HasTuner  bool   `yaml:"has_tuner"`
+	ClientKey any    `yaml:"client_key"`
+}
+
+// clientKeySecretName names the secrets-file entry a given device's
+// client-key is stored under, once it has one.
+func clientKeySecretName(uuid string) string {
+	return "webos_client_key_" + uuid
+}
+
 // persistDeviceConfigs writes configs back as the whole webos.devices list
-// (viper has no notion of updating a single list element).
+// (there's no notion of updating a single list element in the tracked
+// config) via configutil.PersistValue rather than viper.WriteConfig - the
+// latter dumps viper's entire resolved config state back into the tracked
+// file, which would leak any secret already resolved into it (see
+// configutil.ResolveSecrets, called from main.go). Each device's non-empty
+// ClientKey is wrapped as a configutil.SecretRef, so a pairing key learned
+// here lands in webos.secrets.yaml instead of the git-tracked webos.yaml.
 func (wb *WebOSBridge) persistDeviceConfigs(configs []deviceConfig) {
-	viper.Set("webos.devices", configs)
-	if err := viper.WriteConfig(); err != nil {
+	persisted := make([]persistedDeviceConfig, len(configs))
+	for i, cfg := range configs {
+		p := persistedDeviceConfig{
+			UUID:     cfg.UUID,
+			Host:     cfg.Host,
+			Name:     cfg.Name,
+			MAC:      cfg.MAC,
+			HasTuner: cfg.HasTuner,
+		}
+		if cfg.ClientKey != "" {
+			p.ClientKey = configutil.SecretRef{Name: clientKeySecretName(cfg.UUID), Value: cfg.ClientKey}
+		} else {
+			p.ClientKey = ""
+		}
+		persisted[i] = p
+	}
+
+	if err := configutil.PersistValue(wb.configPath, "webos.devices", persisted); err != nil {
 		wb.logger.Error("unable to persist webos device configs", zap.Error(err))
 	}
 }
@@ -377,7 +425,8 @@ func (wb *WebOSBridge) SetBridgeConfig(ctx context.Context, config bridge.Config
 	wb.b.Config.Name = config.Name
 	wb.b.Config.Description = config.Description
 
-	viper.Set("bridge.name", config.Name)
-	viper.Set("bridge.description", config.Description)
-	return viper.WriteConfig()
+	if err := configutil.PersistValue(wb.configPath, "bridge.name", config.Name); err != nil {
+		return err
+	}
+	return configutil.PersistValue(wb.configPath, "bridge.description", config.Description)
 }

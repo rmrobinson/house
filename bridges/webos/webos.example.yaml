@@ -36,6 +36,9 @@ webos:
       # (including closing the connection) on a tuner-less TV.
       has_tuner: false
       # Populated automatically after the on-screen pairing prompt is
-      # accepted. Do not set this by hand, except to clear it to force a
-      # fresh pairing prompt on next connect.
+      # accepted - as a "!secret webos_client_key_<uuid>" reference, not a
+      # literal value (see configutil.PersistValue/SecretRef); the actual
+      # key lands in this file's sibling webos.secrets.yaml. Do not set this
+      # by hand, except to clear it (a plain "") to force a fresh pairing
+      # prompt on next connect.
       client_key: ""

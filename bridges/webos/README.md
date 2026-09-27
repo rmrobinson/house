@@ -20,9 +20,11 @@ the device isn't gone, it's asleep.
 
 A newly discovered TV has no `client_key` yet. The first command or connection attempt triggers
 webOS's on-screen accept prompt; once a human accepts it, the bridge persists the issued
-`client_key` back to config (keyed by the TV's own `webos_uuid` - see `webos.example.yaml`) and
-every subsequent connection skips the prompt - confirmed live against a real webOS 5.5 set, but
-only after fixing a real bug where this wasn't happening (see "Verified live" below).
+`client_key` (keyed by the TV's own `webos_uuid` - see `webos.example.yaml`) and every subsequent
+connection skips the prompt - confirmed live against a real webOS 5.5 set, but only after fixing a
+real bug where this wasn't happening (see "Verified live" below). The key itself is written into
+the config's sibling `*.secrets.yaml` file via `configutil.PersistValue`/`SecretRef`, not the
+tracked config - `webos.yaml` only ever holds a `!secret webos_client_key_<uuid>` reference to it.
 
 The permission manifest sent during pairing (`bridges/lib/webosctrl/payloads.go`'s
 `manifestPermissions`) is scoped to the four required capabilities (volume, app launch/close,

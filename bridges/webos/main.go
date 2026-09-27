@@ -55,6 +55,7 @@ func main() {
 	svc := bridge.NewService(logger)
 
 	wb := NewWebOSBridge(logger, svc, deviceConfigs)
+	wb.configPath = configPath
 	svc.RegisterHandler(wb, wb.b)
 
 	ctx, cancel := context.WithCancel(context.Background())

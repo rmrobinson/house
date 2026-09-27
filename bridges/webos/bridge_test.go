@@ -1,11 +1,14 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+	"gopkg.in/yaml.v3"
 )
 
 func TestNewWebOSBridge_PartitionsConfigsByUUID(t *testing.T) {
@@ -75,6 +78,43 @@ func TestLookupDevice_ReturnsSnapshotNotSharedPointer(t *testing.T) {
 
 	assert.Equal(t, "192.168.1.10", snapshot.cfg.Host, "snapshot must not observe a later reassignment of the shared entry")
 	assert.NotSame(t, wb.devices["u1"].session, snapshot.session, "snapshot must hold its own session reference")
+}
+
+// TestPersistClientKey_WritesKeyAsSecretNotIntoTrackedConfig guards the
+// whole point of wrapping ClientKey in a configutil.SecretRef: a pairing
+// key learned at runtime must land in webos.secrets.yaml, never in the
+// git-tracked webos.yaml, and the tracked file must keep pointing at it via
+// a "!secret" reference rather than losing the association.
+func TestPersistClientKey_WritesKeyAsSecretNotIntoTrackedConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "webos.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+webos:
+  devices: []
+`), 0o644))
+
+	wb := NewWebOSBridge(zaptest.NewLogger(t), nil, []deviceConfig{
+		{UUID: "u1", Host: "192.168.1.10", Name: "Living Room"},
+	})
+	wb.configPath = configPath
+
+	wb.persistClientKey("u1", "top-secret-pairing-key")
+
+	out, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "top-secret-pairing-key",
+		"a freshly paired client_key must never be written into the tracked config")
+	assert.Contains(t, string(out), "!secret webos_client_key_u1")
+
+	secretsOut, err := os.ReadFile(filepath.Join(dir, "webos.secrets.yaml"))
+	require.NoError(t, err)
+	var secrets map[string]string
+	require.NoError(t, yaml.Unmarshal(secretsOut, &secrets))
+	assert.Equal(t, "top-secret-pairing-key", secrets["webos_client_key_u1"])
+
+	assert.Equal(t, "top-secret-pairing-key", wb.devices["u1"].cfg.ClientKey,
+		"in-memory state must still hold the plain key for actually talking to the TV")
 }
 
 func TestDeviceConfigsLocked_IncludesUnmatchedPendingEntries(t *testing.T) {

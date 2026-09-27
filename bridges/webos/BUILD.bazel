@@ -51,6 +51,7 @@ go_test(
         "@com_github_koron_go_ssdp//:go-ssdp",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@in_gopkg_yaml_v3//:yaml_v3",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_zap//zaptest",
