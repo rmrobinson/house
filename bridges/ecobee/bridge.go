@@ -19,15 +19,17 @@ import (
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/bridges/lib/homekitctrl"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
 // EcobeeBridge is the bridge.Handler implementation for a single paired ecobee thermostat and
 // its remote sensors.
 type EcobeeBridge struct {
-	logger *zap.Logger
-	svc    *bridge.Service
-	b      *api2.Bridge
+	logger     *zap.Logger
+	svc        *bridge.Service
+	b          *api2.Bridge
+	configPath string
 
 	conn   *ecobeeConn
 	config ecobeeConfig
@@ -45,8 +47,14 @@ type EcobeeBridge struct {
 }
 
 // NewEcobeeBridge creates a bridge for the ecobee described by cfg. The connection to it isn't
-// established until Run is called.
-func NewEcobeeBridge(logger *zap.Logger, svc *bridge.Service, store homekitctrl.Store, cfg ecobeeConfig) *EcobeeBridge {
+// established until Run is called. configPath is the on-disk config file
+// SetBridgeConfig persists name/description edits into, via
+// configutil.PersistValue rather than viper.WriteConfig - this config has
+// no !secret-tagged field of its own today (the HAP pairing secret lives
+// in a separate, already-gitignored ecobee-pairing.json), but using the
+// same safe partial-write helper as every other bridge avoids relying on
+// that staying true.
+func NewEcobeeBridge(logger *zap.Logger, svc *bridge.Service, store homekitctrl.Store, cfg ecobeeConfig, configPath string) *EcobeeBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -65,6 +73,7 @@ func NewEcobeeBridge(logger *zap.Logger, svc *bridge.Service, store homekitctrl.
 		logger:       logger,
 		svc:          svc,
 		b:            b,
+		configPath:   configPath,
 		conn:         newEcobeeConn(logger, store, cfg.AccessoryName),
 		config:       cfg,
 		lastSensors:  make(map[string]*device.Device),
@@ -393,5 +402,8 @@ func (eb *EcobeeBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 
 	viper.Set("bridge.name", config.Name)
 	viper.Set("bridge.description", config.Description)
-	return viper.WriteConfig()
+	if err := configutil.PersistValue(eb.configPath, "bridge.name", config.Name); err != nil {
+		return err
+	}
+	return configutil.PersistValue(eb.configPath, "bridge.description", config.Description)
 }

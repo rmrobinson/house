@@ -19,6 +19,7 @@ import (
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/api/trait"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -67,17 +68,23 @@ func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
 
 // OmadaBridge
 type OmadaBridge struct {
-	logger *zap.Logger
-	svc    *bridge.Service
-	b      *api2.Bridge
+	logger     *zap.Logger
+	svc        *bridge.Service
+	b          *api2.Bridge
+	configPath string
 
 	client *omada.Client
 	cid    string
 	siteID string
 }
 
-// NewOmadaBridge creates a new Omada bridge from the supplied client
-func NewOmadaBridge(logger *zap.Logger, svc *bridge.Service, client *omada.Client, omadaIPAddr string, omadaPort int, siteID string, cid string) *OmadaBridge {
+// NewOmadaBridge creates a new Omada bridge from the supplied client.
+// configPath is the on-disk config file SetBridgeConfig persists name/
+// description edits into - see configutil.PersistValue's doc comment for
+// why that's not viper.WriteConfig: this config has a !secret-tagged
+// oauth.client_secret resolved into viper's live state, and WriteConfig
+// would dump that resolved value straight back into the tracked file.
+func NewOmadaBridge(logger *zap.Logger, svc *bridge.Service, client *omada.Client, omadaIPAddr string, omadaPort int, siteID string, cid string, configPath string) *OmadaBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -99,12 +106,13 @@ func NewOmadaBridge(logger *zap.Logger, svc *bridge.Service, client *omada.Clien
 	}
 
 	return &OmadaBridge{
-		logger: logger,
-		svc:    svc,
-		b:      b,
-		client: client,
-		siteID: siteID,
-		cid:    cid,
+		logger:     logger,
+		svc:        svc,
+		b:          b,
+		configPath: configPath,
+		client:     client,
+		siteID:     siteID,
+		cid:        cid,
 	}
 }
 
@@ -122,9 +130,10 @@ func (omb *OmadaBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 
 	viper.Set("bridge.name", config.Name)
 	viper.Set("bridge.description", config.Description)
-	viper.WriteConfig()
-
-	return nil
+	if err := configutil.PersistValue(omb.configPath, "bridge.name", config.Name); err != nil {
+		return err
+	}
+	return configutil.PersistValue(omb.configPath, "bridge.description", config.Description)
 }
 
 // ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no

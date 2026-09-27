@@ -13,20 +13,27 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
 // PlexBridge is a bridge to the Plex media server.
 type PlexBridge struct {
-	logger *zap.Logger
-	svc    *bridge.Service
-	b      *api2.Bridge
+	logger     *zap.Logger
+	svc        *bridge.Service
+	b          *api2.Bridge
+	configPath string
 
 	client *Plex
 }
 
-// NewChargerBridge creates a new charger bridge
-func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex) *PlexBridge {
+// NewChargerBridge creates a new charger bridge. configPath is the on-disk
+// config file SetBridgeConfig persists description edits into - see
+// configutil.PersistValue's doc comment for why that's not
+// viper.WriteConfig: this config has a !secret-tagged api_key resolved
+// into viper's live state, and WriteConfig would dump that resolved value
+// straight back into the tracked file.
+func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex, configPath string) *PlexBridge {
 	var host string
 	var port int
 
@@ -64,10 +71,11 @@ func NewPlexBridge(logger *zap.Logger, svc *bridge.Service, client *Plex) *PlexB
 	}
 
 	pb := &PlexBridge{
-		logger: logger,
-		svc:    svc,
-		client: client,
-		b:      b,
+		logger:     logger,
+		svc:        svc,
+		client:     client,
+		b:          b,
+		configPath: configPath,
 	}
 
 	return pb
@@ -85,9 +93,7 @@ func (pb *PlexBridge) SetBridgeConfig(ctx context.Context, config bridge.Config)
 	pb.b.Config.Description = config.Description
 
 	viper.Set("bridge.description", config.Description)
-	viper.WriteConfig()
-
-	return nil
+	return configutil.PersistValue(pb.configPath, "bridge.description", config.Description)
 }
 
 // ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no

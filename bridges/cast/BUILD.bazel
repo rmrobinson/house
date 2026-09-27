@@ -19,6 +19,7 @@ go_library(
         "//api/device",
         "//api/trait",
         "//bridges/lib/castctrl",
+        "//configutil",
         "//service/bridge",
         "@com_github_google_uuid//:uuid",
         "@com_github_hashicorp_mdns//:mdns",

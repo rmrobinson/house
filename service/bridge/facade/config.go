@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/grpcutil"
 )
 
@@ -34,11 +35,13 @@ type Config struct {
 }
 
 // LoadConfig reads a Config from viper's bridge.*/facade.bridges keys -
-// bridge.id is generated and persisted back via viper.WriteConfig on first
-// run if left empty, the same generate-and-persist pattern any individual
-// bridge's main.go follows for its own Bridge.Id. The caller is responsible
-// for viper's config name/search path and for calling ReadInConfig first
-// (see cmd/bridgefacaded/main.go).
+// bridge.id is generated and persisted back into configPath (via
+// configutil.PersistValue, not viper.WriteConfig - see that function's doc
+// comment for why) on first run if left empty, the same generate-and-persist
+// pattern any individual bridge's main.go follows for its own Bridge.Id.
+// The caller is responsible for viper's config name/search path and for
+// calling ReadConfig first (see cmd/bridgefacaded/main.go); configPath is
+// the same file that was read, needed here only for the id persistence.
 //
 // listenPort is the port the caller's gRPC server is (or will be) listening
 // on - combined with bridge.host to build the self address published as the
@@ -56,7 +59,7 @@ type Config struct {
 // configured" apart from "facade configured but invalid" - bridgefacaded,
 // which always embeds one, treats a nil Config as a fatal config error
 // instead.
-func LoadConfig(logger *zap.Logger, listenPort int) (*Config, error) {
+func LoadConfig(logger *zap.Logger, listenPort int, configPath string) (*Config, error) {
 	var addrs []string
 	if err := viper.UnmarshalKey("facade.bridges", &addrs); err != nil {
 		return nil, fmt.Errorf("unable to parse facade.bridges config: %w", err)
@@ -69,7 +72,7 @@ func LoadConfig(logger *zap.Logger, listenPort int) (*Config, error) {
 		bridgeID := uuid.New().String()
 		logger.Info("config missing bridge id, saving new bridge id", zap.String("bridge_id", bridgeID))
 		viper.Set("bridge.id", bridgeID)
-		if err := viper.WriteConfig(); err != nil {
+		if err := configutil.PersistValue(configPath, "bridge.id", bridgeID); err != nil {
 			return nil, fmt.Errorf("unable to write new config: %w", err)
 		}
 	}

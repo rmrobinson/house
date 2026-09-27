@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 
 	"github.com/google/uuid"
@@ -8,6 +9,7 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -19,19 +21,21 @@ func main() {
 		panic(err)
 	}
 
-	viper.SetConfigName("raspi-clock")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/house")
-	viper.AddConfigPath("$HOME/.config/house")
-	viper.AddConfigPath(".")
-
 	viper.SetDefault("bridge.listen_port", 17009)
 
-	if err := viper.ReadInConfig(); err != nil {
+	configPath, err := configutil.FindConfigFile("raspi-clock", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
+	if err != nil {
+		logger.Fatal("unable to find config", zap.Error(err))
+	}
+	resolved, err := configutil.ResolveSecrets(configPath)
+	if err != nil {
+		logger.Fatal("unable to resolve config secrets", zap.Error(err))
+	}
+	if err := viper.ReadConfig(bytes.NewReader(resolved)); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	var idsChanged bool
 	if len(viper.GetString("bridge.id")) < 1 {
 		bridgeID := uuid.New().String()
 
@@ -39,7 +43,9 @@ func main() {
 			zap.String("bridge_id", bridgeID))
 
 		viper.Set("bridge.id", bridgeID)
-		idsChanged = true
+		if err := configutil.PersistValue(configPath, "bridge.id", bridgeID); err != nil {
+			logger.Fatal("unable to write new config", zap.Error(err))
+		}
 	}
 	if len(viper.GetString("device.id")) < 1 {
 		deviceID := uuid.New().String()
@@ -48,11 +54,7 @@ func main() {
 			zap.String("device_id", deviceID))
 
 		viper.Set("device.id", deviceID)
-		idsChanged = true
-	}
-	if idsChanged {
-		err = viper.WriteConfig()
-		if err != nil {
+		if err := configutil.PersistValue(configPath, "device.id", deviceID); err != nil {
 			logger.Fatal("unable to write new config", zap.Error(err))
 		}
 	}

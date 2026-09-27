@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge/facade"
 )
@@ -20,15 +22,18 @@ func main() {
 		panic(err)
 	}
 
-	viper.SetConfigName("bridgefacade")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/house")
-	viper.AddConfigPath("$HOME/.config/house")
-	viper.AddConfigPath(".")
-
 	viper.SetDefault("bridge.listen_port", 17020)
 
-	if err := viper.ReadInConfig(); err != nil {
+	configPath, err := configutil.FindConfigFile("bridgefacade", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
+	if err != nil {
+		logger.Fatal("unable to find config", zap.Error(err))
+	}
+	resolved, err := configutil.ResolveSecrets(configPath)
+	if err != nil {
+		logger.Fatal("unable to resolve config secrets", zap.Error(err))
+	}
+	if err := viper.ReadConfig(bytes.NewReader(resolved)); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
@@ -46,7 +51,7 @@ func main() {
 	}
 	boundPort := lis.Addr().(*net.TCPAddr).Port
 
-	cfg, err := facade.LoadConfig(logger, boundPort)
+	cfg, err := facade.LoadConfig(logger, boundPort, configPath)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
 	}

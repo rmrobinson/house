@@ -33,6 +33,7 @@ go_library(
         "//api",
         "//api/device",
         "//backoffutil",
+        "//configutil",
         "//grpcutil",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//codes",

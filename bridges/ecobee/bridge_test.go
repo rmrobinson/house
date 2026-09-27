@@ -59,7 +59,7 @@ func testBridge(t *testing.T, cfg ecobeeConfig) (*EcobeeBridge, *fakeController)
 	store := homekitctrl.NewFileStore(t.TempDir() + "/pairing.json")
 	seedPairingStore(t, store, cfg.AccessoryName)
 
-	eb := NewEcobeeBridge(logger, svc, store, cfg)
+	eb := NewEcobeeBridge(logger, svc, store, cfg, "")
 	svc.RegisterHandler(eb, eb.Bridge())
 
 	fc := newFakeController()

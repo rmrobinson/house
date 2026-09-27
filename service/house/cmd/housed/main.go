@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/grpcutil"
 	"github.com/rmrobinson/house/service/bridge/facade"
 	"github.com/rmrobinson/house/service/house"
@@ -24,15 +26,18 @@ func main() {
 		panic(err)
 	}
 
-	viper.SetConfigName("housed")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/house")
-	viper.AddConfigPath("$HOME/.config/house")
-	viper.AddConfigPath(".")
-
 	viper.SetDefault("house.listen_port", 1337)
 
-	if err := viper.ReadInConfig(); err != nil {
+	configPath, err := configutil.FindConfigFile("housed", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
+	if err != nil {
+		logger.Fatal("unable to find config", zap.Error(err))
+	}
+	resolved, err := configutil.ResolveSecrets(configPath)
+	if err != nil {
+		logger.Fatal("unable to resolve config secrets", zap.Error(err))
+	}
+	if err := viper.ReadConfig(bytes.NewReader(resolved)); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
@@ -116,7 +121,7 @@ func main() {
 	// If neither is configured, linked devices are still returned but only
 	// as ID-only stubs (see house.Service.resolveDevices).
 	var bridgeClient api2.BridgeServiceClient
-	facadeCfg, err := facade.LoadConfig(logger, boundPort)
+	facadeCfg, err := facade.LoadConfig(logger, boundPort, configPath)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
 	}

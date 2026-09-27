@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
+	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 
@@ -18,16 +20,19 @@ func main() {
 		panic(err)
 	}
 
-	viper.SetConfigName("tesla-charger")
 	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/house")
-	viper.AddConfigPath("$HOME/.config/house")
-	viper.AddConfigPath(".")
-
 	viper.SetDefault("bridge.refresh_interval", 60)
 	viper.SetDefault("bridge.listen_port", 17004)
 
-	if err := viper.ReadInConfig(); err != nil {
+	configPath, err := configutil.FindConfigFile("tesla-charger", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
+	if err != nil {
+		logger.Fatal("unable to find config", zap.Error(err))
+	}
+	resolved, err := configutil.ResolveSecrets(configPath)
+	if err != nil {
+		logger.Fatal("unable to resolve config secrets", zap.Error(err))
+	}
+	if err := viper.ReadConfig(bytes.NewReader(resolved)); err != nil {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
@@ -39,8 +44,7 @@ func main() {
 
 		viper.Set("bridge.id", bridgeID)
 
-		err = viper.WriteConfig()
-		if err != nil {
+		if err := configutil.PersistValue(configPath, "bridge.id", bridgeID); err != nil {
 			logger.Fatal("unable to write new config", zap.Error(err))
 		}
 	}
