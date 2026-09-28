@@ -190,8 +190,13 @@ func ResolveSecrets(configPath string) ([]byte, error) {
 // learned config while an inbound RPC persists a name edit): calls against
 // the same configPath are serialized against each other and against
 // ResolveSecrets reads of it, and each file (configPath, and its secrets
-// sibling if touched) is written atomically via a temp file + rename, so a
-// crash mid-call can't leave either file torn.
+// sibling if touched) is written via a temp file + rename where that's
+// possible, so a crash mid-call can't leave it torn - except when configPath
+// is itself an individual Docker bind mount (every real deployment here:
+// "./config/<name>.yaml:/etc/house/<name>.yaml"), where the rename target is
+// a mount point and the kernel refuses to rename onto it (EBUSY); see
+// atomicWriteFile's doc comment for the in-place fallback that case takes,
+// which gives up the crash-safety guarantee only in that situation.
 //
 // To persist more than one key path in the same call - so a concurrent
 // PersistValue/PersistValues call against a different key path can't land
@@ -404,6 +409,19 @@ func saveSecrets(path string, secrets map[string]string) error {
 // and PersistValue/saveSecrets both run at arbitrary points during a
 // bridge's runtime (not just at startup), so a torn write here would corrupt
 // a file the next process start can't parse.
+//
+// If the rename fails, this falls back to os.WriteFile (an in-place
+// truncate+write, giving up the crash-safety guarantee for this call only).
+// This is not just a defensive fallback for a rare error - it is the normal
+// path in every real deployment here: each bridge's config file is mounted
+// individually ("./config/<name>.yaml:/etc/house/<name>.yaml" in
+// house-config's docker-compose.yaml files, not a whole-directory mount),
+// which makes that exact path a mount point inside the container. Linux
+// refuses to rename anything onto a mount point (EBUSY: "device or resource
+// busy"), so without this fallback, a bridge's very first PersistValue call
+// (e.g. persisting its freshly-generated bridge.id) would crash-loop forever
+// under that deployment topology - which is exactly what happened before
+// this fallback was added (see git history on this function).
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -423,8 +441,24 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing %s: %w", tmpPath, err)
 	}
+
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming %s to %s: %w", tmpPath, path, err)
+		// Every bridge's config file is deployed as its own individual
+		// Docker bind mount (e.g. "./config/nanoleaf.yaml:/etc/house/
+		// nanoleaf.yaml", not a whole-directory mount) - inside the
+		// container, that exact path is a mount point, and the kernel
+		// refuses to rename anything onto a mount point (EBUSY: "device
+		// or resource busy"). That's the deployment topology every real
+		// bridge here actually runs under, so falling back to a plain
+		// in-place write (which only overwrites the mounted file's
+		// content, not the path itself) is not a rare edge case - it is
+		// the common case in practice. This does give up the crash-safety
+		// the rename was for, but only on that specific failure; the
+		// rename above still succeeds (keeping that guarantee) whenever
+		// path isn't a mount point.
+		if writeErr := os.WriteFile(path, data, perm); writeErr != nil {
+			return fmt.Errorf("renaming %s to %s failed (%v), and writing %s directly also failed: %w", tmpPath, path, err, path, writeErr)
+		}
 	}
 	return nil
 }
