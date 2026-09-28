@@ -1,0 +1,7 @@
+# Every git worktree lives under .claude/worktrees/<name> (see
+# .claude/worktrees/ in .git/info/exclude) and carries its own
+# bazel-<name> build-output symlink. A recursive "//..." from this,
+# the primary checkout, otherwise walks into those symlinks too and fails
+# to load packages there against *this* checkout's external repository
+# resolution.
+.claude/worktrees
