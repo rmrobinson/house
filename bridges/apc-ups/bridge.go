@@ -54,17 +54,23 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 	}
 }
 
+// statusClient is the subset of *apcupsd.Client this bridge needs, narrowed to an interface so
+// Refresh can be tested against a fake - apcupsd.Client itself has no test double.
+type statusClient interface {
+	Status() (*apcupsd.Status, error)
+}
+
 // APCUPSBridge is a bridge to an APC UPS status daemon
 type APCUPSBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
 	b      *api2.Bridge
 
-	client *apcupsd.Client
+	client statusClient
 }
 
 // NewAPCUPSBridge creates a new bridge to the specified APC UPS daemon
-func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client *apcupsd.Client, upsIPAddr string, upsPort int) *APCUPSBridge {
+func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client statusClient, upsIPAddr string, upsPort int) *APCUPSBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -128,6 +134,19 @@ func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
 		aub.logger.Error("unable to get status from ups",
 			zap.Error(err))
 		return status.Error(codes.Internal, "unable to get status from ups")
+	}
+
+	// apcupsd can answer the STATUS query successfully before it's finished its own
+	// initial sync with the UPS (typically only on this bridge's very first Refresh,
+	// called immediately on Run() before the poll ticker even starts) - in that case
+	// most fields, including SerialNumber, come back empty. Since aub.svc.UpdateDevice
+	// keys its device map by Id, publishing that would create a permanent phantom
+	// second device (empty id, all-zero state) alongside the real one a later,
+	// fully-synced poll adds - it doesn't get overwritten because it lives under a
+	// different (empty string) key. Skip it and retry on the next poll instead.
+	if s.SerialNumber == "" {
+		aub.logger.Warn("ups status missing serial number, skipping this refresh (apcupsd may still be syncing with the ups)")
+		return nil
 	}
 
 	aub.svc.UpdateDevice(statusToDevice(s))
