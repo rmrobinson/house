@@ -1,8 +1,10 @@
 package configutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,6 +149,71 @@ webos:
 	assert.Equal(t, "", gotDevices[1].(map[string]any)["client_key"])
 }
 
+// TestPersistValue_DroppingSecretRef_PrunesOrphanedSecret checks that
+// removing a device (and its client_key SecretRef) from webos.devices also
+// removes that secret's now-unreferenced entry from the secrets file,
+// rather than leaving it there forever with nothing pointing to it.
+func TestPersistValue_DroppingSecretRef_PrunesOrphanedSecret(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "webos.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+webos:
+  devices: []
+`), 0o644))
+
+	type device struct {
+		UUID      string `yaml:"uuid"`
+		ClientKey any    `yaml:"client_key"`
+	}
+	require.NoError(t, PersistValue(configPath, "webos.devices", []device{
+		{UUID: "u1", ClientKey: SecretRef{Name: "webos_client_key_u1", Value: "key-1"}},
+		{UUID: "u2", ClientKey: SecretRef{Name: "webos_client_key_u2", Value: "key-2"}},
+	}))
+
+	// u1 is unpaired/removed - only u2 remains.
+	require.NoError(t, PersistValue(configPath, "webos.devices", []device{
+		{UUID: "u2", ClientKey: SecretRef{Name: "webos_client_key_u2", Value: "key-2"}},
+	}))
+
+	out, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "webos_client_key_u1", "a dropped device's secret reference must not remain in the tracked config")
+
+	secretsOut, err := os.ReadFile(secretsPath(configPath))
+	require.NoError(t, err)
+	var secrets map[string]string
+	require.NoError(t, yaml.Unmarshal(secretsOut, &secrets))
+	assert.NotContains(t, secrets, "webos_client_key_u1", "an orphaned secret must be pruned once nothing references it")
+	assert.Equal(t, "key-2", secrets["webos_client_key_u2"], "a still-referenced secret must survive")
+}
+
+// TestPersistValue_DroppingSecretRef_KeepsSecretStillReferencedElsewhere
+// checks that pruning never removes a secret name that's still referenced
+// by some other part of the document, even though the specific key path
+// this call touched no longer references it.
+func TestPersistValue_DroppingSecretRef_KeepsSecretStillReferencedElsewhere(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cast.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+  backup_secret: !secret shared_secret
+extra: !secret shared_secret
+`), 0o644))
+	require.NoError(t, os.WriteFile(secretsPath(configPath), []byte(`shared_secret: "value"
+`), 0o644))
+
+	// Replace "extra" with a plain value - "bridge.backup_secret" still
+	// references shared_secret, so it must not be pruned.
+	require.NoError(t, PersistValue(configPath, "extra", "no longer a secret"))
+
+	secretsOut, err := os.ReadFile(secretsPath(configPath))
+	require.NoError(t, err)
+	var secrets map[string]string
+	require.NoError(t, yaml.Unmarshal(secretsOut, &secrets))
+	assert.Equal(t, "value", secrets["shared_secret"], "a secret still referenced elsewhere in the document must survive")
+}
+
 func TestPersistValue_SecretRef_MergesWithExistingSecrets(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "webos.yaml")
@@ -205,4 +272,95 @@ omada:
 	secretsAfter, err := os.ReadFile(secretsPath)
 	require.NoError(t, err)
 	assert.Equal(t, secretsBefore, secretsAfter, "PersistValue must never modify the secrets file")
+}
+
+// TestPersistValue_ConcurrentCallsDontLoseUpdates guards against the lost-
+// update race PersistValue used to have: each call reads the whole file,
+// patches only its own key path, and writes the whole file back, so two
+// concurrent calls targeting different key paths - exactly what happens in
+// practice, e.g. a bridge's discovery loop persisting a learned device
+// config while an inbound RPC persists a name edit - could each read before
+// either had written, and whichever wrote last would silently revert the
+// other's change. PersistValue must serialize these against each other so
+// every concurrent caller's write survives.
+func TestPersistValue_ConcurrentCallsDontLoseUpdates(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cast.yaml")
+
+	const n = 25
+	initial := "bridge:\n  id: \"\"\n"
+	for i := 0; i < n; i++ {
+		initial += fmt.Sprintf("k%d: \"\"\n", i)
+	}
+	require.NoError(t, os.WriteFile(configPath, []byte(initial), 0o644))
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			require.NoError(t, PersistValue(configPath, fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i)))
+		}(i)
+	}
+	wg.Wait()
+
+	out, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, yaml.Unmarshal(out, &got))
+	for i := 0; i < n; i++ {
+		assert.Equal(t, fmt.Sprintf("v%d", i), got[fmt.Sprintf("k%d", i)], "concurrent PersistValue call for k%d must not be lost", i)
+	}
+}
+
+// TestPersistValues_WritesMultipleKeysTogether checks the batch variant
+// callers should reach for instead of separate PersistValue calls whenever
+// they have more than one key path to persist at once (e.g. SetBridgeConfig
+// persisting bridge.name and bridge.description) - both land in a single
+// read-modify-write, so no concurrent call against a third key path can
+// land in the gap between two separate PersistValue calls.
+func TestPersistValues_WritesMultipleKeysTogether(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cast.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: "x"
+  name: ""
+  description: ""
+`), 0o644))
+
+	require.NoError(t, PersistValues(configPath,
+		KeyValue{KeyPath: "bridge.name", Value: "Living Room"},
+		KeyValue{KeyPath: "bridge.description", Value: "Main TV"},
+	))
+
+	out, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, yaml.Unmarshal(out, &got))
+	bridge := got["bridge"].(map[string]any)
+	assert.Equal(t, "Living Room", bridge["name"])
+	assert.Equal(t, "Main TV", bridge["description"])
+	assert.Equal(t, "x", bridge["id"])
+}
+
+// TestPersistValue_WriteIsAtomic checks that a successful PersistValue call
+// leaves no leftover temp file behind - it must write through a temp file
+// and rename over configPath (so a crash mid-write can't truncate
+// configPath in place), then clean up after itself.
+func TestPersistValue_WriteIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cast.yaml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`bridge:
+  id: ""
+`), 0o644))
+
+	require.NoError(t, PersistValue(configPath, "bridge.id", "new-id"))
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	assert.ElementsMatch(t, []string{"cast.yaml"}, names, "PersistValue must not leave a temp file behind")
 }

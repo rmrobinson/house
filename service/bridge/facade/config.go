@@ -105,10 +105,16 @@ func LoadConfig(logger *zap.Logger, listenPort int, configPath string) (*Config,
 		// clientAuth EKUs. client_ca_file is step-ca's root either way too:
 		// verifying an inbound caller's cert and verifying an upstream
 		// bridge's cert both chain to the same private CA.
+		keyFile := viper.GetString("bridge.tls.key_file")
+		caFile := viper.GetString("bridge.tls.client_ca_file")
+		if len(keyFile) < 1 || len(caFile) < 1 {
+			return nil, errors.New("bridge.tls.cert_file is set; bridge.tls.key_file and bridge.tls.client_ca_file are required together with it")
+		}
+
 		clientTLS = &grpcutil.ClientTLSConfig{
 			CertFile: certFile,
-			KeyFile:  viper.GetString("bridge.tls.key_file"),
-			CAFile:   viper.GetString("bridge.tls.client_ca_file"),
+			KeyFile:  keyFile,
+			CAFile:   caFile,
 		}
 	}
 

@@ -80,7 +80,11 @@ func main() {
 	// Check for updates periodically
 	go ab.Run(ctx)
 
-	s, err := bridge.NewServer(logger, svc, bridge.TLSConfigFromViper())
+	tlsCfg, err := bridge.TLSConfigFromViper()
+	if err != nil {
+		logger.Fatal("invalid bridge.tls config", zap.Error(err))
+	}
+	s, err := bridge.NewServer(logger, svc, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to create bridge server", zap.Error(err))
 	}

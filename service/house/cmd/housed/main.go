@@ -97,6 +97,9 @@ func main() {
 	if certFile := viper.GetString("house.tls.cert_file"); len(certFile) > 0 {
 		keyFile := viper.GetString("house.tls.key_file")
 		caFile := viper.GetString("house.tls.client_ca_file")
+		if len(keyFile) < 1 || len(caFile) < 1 {
+			logger.Fatal("house.tls.cert_file is set; house.tls.key_file and house.tls.client_ca_file are required together with it")
+		}
 
 		tlsCfg = &grpcutil.ServerTLSConfig{CertFile: certFile, KeyFile: keyFile, ClientCAFile: caFile}
 		creds, err := grpcutil.ServerTLS(*tlsCfg)

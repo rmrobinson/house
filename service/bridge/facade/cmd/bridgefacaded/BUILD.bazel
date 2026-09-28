@@ -9,6 +9,7 @@ go_library(
         "//api",
         "//configutil",
         "//grpcutil",
+        "//service/bridge",
         "//service/bridge/facade",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",

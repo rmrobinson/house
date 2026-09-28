@@ -425,8 +425,8 @@ func (wb *WebOSBridge) SetBridgeConfig(ctx context.Context, config bridge.Config
 	wb.b.Config.Name = config.Name
 	wb.b.Config.Description = config.Description
 
-	if err := configutil.PersistValue(wb.configPath, "bridge.name", config.Name); err != nil {
-		return err
-	}
-	return configutil.PersistValue(wb.configPath, "bridge.description", config.Description)
+	return configutil.PersistValues(wb.configPath,
+		configutil.KeyValue{KeyPath: "bridge.name", Value: config.Name},
+		configutil.KeyValue{KeyPath: "bridge.description", Value: config.Description},
+	)
 }

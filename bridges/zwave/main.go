@@ -67,7 +67,11 @@ func main() {
 		logger.Fatal("unable to connect to mqtt broker", zap.Error(err))
 	}
 
-	s, err := bridge.NewServer(logger, svc, bridge.TLSConfigFromViper())
+	tlsCfg, err := bridge.TLSConfigFromViper()
+	if err != nil {
+		logger.Fatal("invalid bridge.tls config", zap.Error(err))
+	}
+	s, err := bridge.NewServer(logger, svc, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to create bridge server", zap.Error(err))
 	}

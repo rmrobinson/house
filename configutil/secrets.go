@@ -16,9 +16,28 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
+
+// configLocks serializes PersistValue calls per resolved config path, so two
+// concurrent callers (e.g. a bridge's discovery loop persisting a learned
+// device config while an inbound SetBridgeConfig RPC persists a name edit)
+// can't each read the file before the other writes it and clobber one
+// another's change - PersistValue only patches the one key path it was
+// given, so a lost update here means the *other* caller's write silently
+// vanishes, not just a torn file.
+var configLocks sync.Map // map[string]*sync.RWMutex
+
+func configLock(configPath string) *sync.RWMutex {
+	abs, err := filepath.Abs(configPath)
+	if err != nil {
+		abs = configPath
+	}
+	mu, _ := configLocks.LoadOrStore(abs, &sync.RWMutex{})
+	return mu.(*sync.RWMutex)
+}
 
 // SecretRef marks a value, passed to PersistValue, that must never be
 // written into the tracked config file - only a "!secret Name" reference
@@ -101,6 +120,10 @@ func FindConfigFile(name, configType string, paths []string) (string, error) {
 // configPath actually contains a "!secret" tag - most services have no
 // secrets at all.
 func ResolveSecrets(configPath string) ([]byte, error) {
+	mu := configLock(configPath)
+	mu.RLock()
+	defer mu.RUnlock()
+
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", configPath, err)
@@ -161,7 +184,56 @@ func ResolveSecrets(configPath string) ([]byte, error) {
 // is already there, and configPath gets a "!secret <Name>" reference in
 // its place. The secrets file is only touched (and created, if missing)
 // when value actually contains a SecretRef.
+//
+// Safe to call concurrently, including from multiple different keyPaths
+// against the same configPath (e.g. one goroutine persisting a device's
+// learned config while an inbound RPC persists a name edit): calls against
+// the same configPath are serialized against each other and against
+// ResolveSecrets reads of it, and each file (configPath, and its secrets
+// sibling if touched) is written atomically via a temp file + rename, so a
+// crash mid-call can't leave either file torn.
+//
+// To persist more than one key path in the same call - so a concurrent
+// PersistValue/PersistValues call against a different key path can't land
+// between them - use PersistValues instead.
 func PersistValue(configPath, keyPath string, value any) error {
+	return PersistValues(configPath, KeyValue{KeyPath: keyPath, Value: value})
+}
+
+// KeyValue pairs a dot-separated key path (see PersistValue) with the value
+// to persist there, for PersistValues.
+type KeyValue struct {
+	KeyPath string
+	Value   any
+}
+
+// PersistValues is PersistValue for multiple key paths, written together
+// under one read-modify-write of configPath (and, if any pair's value
+// contains a SecretRef, one merge into the secrets file) instead of one
+// per pair. Use this instead of separate PersistValue calls whenever a
+// caller has more than one key path to persist at once (e.g.
+// SetBridgeConfig persisting bridge.name and bridge.description together):
+// each separate PersistValue call reads and writes the whole file, so back
+// to back calls leave a window where a concurrent call against yet another
+// key path can land in between and have its own change overwritten by the
+// second call's write, since that write is based on a read taken before the
+// concurrent change landed.
+//
+// If replacing a key path drops a "!secret <name>" tag that was there
+// before (e.g. removing a paired device from webos.devices along with its
+// client_key), name's entry is removed from the secrets file too, but only
+// if the document no longer references name anywhere else - so the secrets
+// file doesn't accumulate entries nothing points to anymore, without ever
+// risking removal of a secret still in use.
+func PersistValues(configPath string, kvs ...KeyValue) error {
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	mu := configLock(configPath)
+	mu.Lock()
+	defer mu.Unlock()
+
 	raw, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", configPath, err)
@@ -176,13 +248,52 @@ func PersistValue(configPath, keyPath string, value any) error {
 		root.Content = []*yaml.Node{{Kind: yaml.MappingNode}}
 	}
 
-	valueNode, err := marshalNode(value)
-	if err != nil {
-		return fmt.Errorf("marshaling value for %s: %w", keyPath, err)
+	// staleSecretNames collects every "!secret <name>" tag reachable under
+	// each key path's *old* value, before it's overwritten below - e.g. a
+	// webos device's client_key secret, if that device is dropped from
+	// webos.devices by this call. Collected up front, since setMapValue
+	// below overwrites these nodes in place.
+	staleSecretNames := map[string]bool{}
+	for _, kv := range kvs {
+		if old := getMapValue(root.Content[0], strings.Split(kv.KeyPath, ".")); old != nil {
+			walkScalars(old, func(n *yaml.Node) {
+				if n.Tag == "!secret" {
+					staleSecretNames[n.Value] = true
+				}
+			})
+		}
 	}
 
-	if err := setMapValue(root.Content[0], strings.Split(keyPath, "."), valueNode); err != nil {
-		return fmt.Errorf("setting %s in %s: %w", keyPath, configPath, err)
+	secrets := map[string]string{}
+	for _, kv := range kvs {
+		valueNode, err := marshalNode(kv.Value)
+		if err != nil {
+			return fmt.Errorf("marshaling value for %s: %w", kv.KeyPath, err)
+		}
+		if err := setMapValue(root.Content[0], strings.Split(kv.KeyPath, "."), valueNode); err != nil {
+			return fmt.Errorf("setting %s in %s: %w", kv.KeyPath, configPath, err)
+		}
+		collectSecretRefs(reflect.ValueOf(kv.Value), secrets)
+	}
+
+	// A stale name only gets pruned if the document no longer references it
+	// anywhere at all (not just at the key path that used to hold it) -
+	// this only runs when staleSecretNames is non-empty, so a call that
+	// never touched a "!secret" tag leaves the secrets file untouched, same
+	// as before.
+	var toRemove []string
+	if len(staleSecretNames) > 0 {
+		stillReferenced := map[string]bool{}
+		walkScalars(&root, func(n *yaml.Node) {
+			if n.Tag == "!secret" {
+				stillReferenced[n.Value] = true
+			}
+		})
+		for name := range staleSecretNames {
+			if !stillReferenced[name] {
+				toRemove = append(toRemove, name)
+			}
+		}
 	}
 
 	out, err := yaml.Marshal(&root)
@@ -190,9 +301,7 @@ func PersistValue(configPath, keyPath string, value any) error {
 		return fmt.Errorf("re-marshaling %s: %w", configPath, err)
 	}
 
-	secrets := map[string]string{}
-	collectSecretRefs(reflect.ValueOf(value), secrets)
-	if len(secrets) > 0 {
+	if len(secrets) > 0 || len(toRemove) > 0 {
 		path := secretsPath(configPath)
 		existing, err := loadSecretsOrEmpty(path)
 		if err != nil {
@@ -201,13 +310,34 @@ func PersistValue(configPath, keyPath string, value any) error {
 		for name, v := range secrets {
 			existing[name] = v
 		}
+		for _, name := range toRemove {
+			delete(existing, name)
+		}
 		if err := saveSecrets(path, existing); err != nil {
 			return err
 		}
 	}
 
-	if err := os.WriteFile(configPath, out, 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", configPath, err)
+	return atomicWriteFile(configPath, out, 0o644)
+}
+
+// getMapValue returns the node currently at segs within mapping node n, or
+// nil if any segment along the way doesn't exist (e.g. keyPath names a key
+// PersistValue/PersistValues is about to create for the first time - there
+// is no old value to inspect).
+func getMapValue(n *yaml.Node, segs []string) *yaml.Node {
+	if n == nil || n.Kind != yaml.MappingNode {
+		return nil
+	}
+	key := segs[0]
+	for i := 0; i < len(n.Content); i += 2 {
+		if n.Content[i].Value != key {
+			continue
+		}
+		if len(segs) == 1 {
+			return n.Content[i+1]
+		}
+		return getMapValue(n.Content[i+1], segs[1:])
 	}
 	return nil
 }
@@ -265,8 +395,36 @@ func saveSecrets(path string, secrets map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("marshaling %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
+	return atomicWriteFile(path, data, 0o600)
+}
+
+// atomicWriteFile writes data to a temp file next to path and renames it
+// into place, so a crash/power-loss/OOM-kill mid-write can never leave path
+// truncated or half-written - os.WriteFile alone truncates path in place,
+// and PersistValue/saveSecrets both run at arbitrary points during a
+// bridge's runtime (not just at startup), so a torn write here would corrupt
+// a file the next process start can't parse.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("creating temp file for %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op once the rename below succeeds
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing %s: %w", tmpPath, err)
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return fmt.Errorf("setting permissions on %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("renaming %s to %s: %w", tmpPath, path, err)
 	}
 	return nil
 }

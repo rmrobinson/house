@@ -18,16 +18,27 @@ import (
 // TLS stays opt-in per bridge. Centralized here so every bridge main.go
 // reads this the same way instead of repeating the same three GetString
 // calls and nil check.
-func TLSConfigFromViper() *grpcutil.ServerTLSConfig {
+//
+// Returns an error if bridge.tls.cert_file is set but bridge.tls.key_file
+// or bridge.tls.client_ca_file is left blank, so a half-configured TLS
+// setup fails with a clear config error here rather than a confusing
+// low-level file error deep inside grpcutil.ServerTLS/loadCAPool (e.g.
+// "reading : no such file or directory").
+func TLSConfigFromViper() (*grpcutil.ServerTLSConfig, error) {
 	certFile := viper.GetString("bridge.tls.cert_file")
 	if len(certFile) < 1 {
-		return nil
+		return nil, nil
+	}
+	keyFile := viper.GetString("bridge.tls.key_file")
+	clientCAFile := viper.GetString("bridge.tls.client_ca_file")
+	if len(keyFile) < 1 || len(clientCAFile) < 1 {
+		return nil, fmt.Errorf("bridge.tls.cert_file is set; bridge.tls.key_file and bridge.tls.client_ca_file are required together with it")
 	}
 	return &grpcutil.ServerTLSConfig{
 		CertFile:     certFile,
-		KeyFile:      viper.GetString("bridge.tls.key_file"),
-		ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
-	}
+		KeyFile:      keyFile,
+		ClientCAFile: clientCAFile,
+	}, nil
 }
 
 // Server creates a new network server hosting the Bridge gRPC server.

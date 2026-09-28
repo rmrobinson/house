@@ -130,10 +130,10 @@ func (omb *OmadaBridge) SetBridgeConfig(ctx context.Context, config bridge.Confi
 
 	viper.Set("bridge.name", config.Name)
 	viper.Set("bridge.description", config.Description)
-	if err := configutil.PersistValue(omb.configPath, "bridge.name", config.Name); err != nil {
-		return err
-	}
-	return configutil.PersistValue(omb.configPath, "bridge.description", config.Description)
+	return configutil.PersistValues(omb.configPath,
+		configutil.KeyValue{KeyPath: "bridge.name", Value: config.Name},
+		configutil.KeyValue{KeyPath: "bridge.description", Value: config.Description},
+	)
 }
 
 // ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no

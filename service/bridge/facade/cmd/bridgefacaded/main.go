@@ -13,6 +13,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/configutil"
 	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/bridge/facade"
 )
 
@@ -64,13 +65,13 @@ func main() {
 
 	f := facade.NewFromConfig(ctx, logger, cfg)
 
+	tlsCfg, err := bridge.TLSConfigFromViper()
+	if err != nil {
+		logger.Fatal("invalid bridge.tls config", zap.Error(err))
+	}
 	var opts []grpc.ServerOption
-	if certFile := viper.GetString("bridge.tls.cert_file"); len(certFile) > 0 {
-		creds, err := grpcutil.ServerTLS(grpcutil.ServerTLSConfig{
-			CertFile:     certFile,
-			KeyFile:      viper.GetString("bridge.tls.key_file"),
-			ClientCAFile: viper.GetString("bridge.tls.client_ca_file"),
-		})
+	if tlsCfg != nil {
+		creds, err := grpcutil.ServerTLS(*tlsCfg)
 		if err != nil {
 			logger.Fatal("unable to configure server TLS", zap.Error(err))
 		}
