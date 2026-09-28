@@ -30,7 +30,7 @@ cd "$REPO_ROOT"
 BRIDGES=(
   plex webos cast frigate omada ecobee housed bridgefacaded
   esphome airthings tesla-charger zwave zigbee
-  apc-ups
+  apc-ups nanoleaf raspi-clock roku example
 )
 
 TARGETS=("$@")

@@ -1,9 +1,12 @@
 # OCI images for house-config's docker-compose deploys. See README.md.
 #
-# Not gazelle-managed (no .go files here) — bridge_image() calls are added and
-# maintained by hand as bridges get onboarded to deployment. Which host runs
-# which of these images is a deployment decision that lives entirely in
-# house-config's docker-compose files, not here.
+# Not gazelle-managed (no .go files here) — every bridge under bridges/ (plus
+# housed and bridgefacaded) gets a bridge_image() call here, hand-maintained
+# rather than generated, so a new bridge always has an image ready to deploy
+# instead of that being a step someone has to remember once it's actually
+# needed. Which host runs which of these images (or whether it's deployed at
+# all yet) is a deployment decision that lives entirely in house-config's
+# docker-compose files, not here.
 
 load(":defs.bzl", "bridge_image")
 
@@ -82,4 +85,24 @@ bridge_image(
 bridge_image(
     name = "apc-ups",
     binary = "//bridges/apc-ups",
+)
+
+bridge_image(
+    name = "nanoleaf",
+    binary = "//bridges/nanoleaf",
+)
+
+bridge_image(
+    name = "raspi-clock",
+    binary = "//bridges/raspi-clock",
+)
+
+bridge_image(
+    name = "roku",
+    binary = "//bridges/roku",
+)
+
+bridge_image(
+    name = "example",
+    binary = "//bridges/example",
 )
