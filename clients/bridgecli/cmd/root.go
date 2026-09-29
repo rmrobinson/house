@@ -13,12 +13,13 @@ import (
 )
 
 var (
-	bridgeAddr   string
-	tlsCertFile  string
-	tlsKeyFile   string
-	tlsCAFile    string
-	bridgeConn   *grpc.ClientConn
-	bridgeClient api2.BridgeServiceClient
+	bridgeAddr    string
+	tlsCertFile   string
+	tlsKeyFile    string
+	tlsCAFile     string
+	tlsServerName string
+	bridgeConn    *grpc.ClientConn
+	bridgeClient  api2.BridgeServiceClient
 
 	rootCmd = &cobra.Command{
 		Use:   "bridge",
@@ -48,6 +49,13 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&tlsCertFile, "tls-cert", "", "client certificate file for mutual TLS")
 	rootCmd.PersistentFlags().StringVar(&tlsKeyFile, "tls-key", "", "client key file for mutual TLS")
 	rootCmd.PersistentFlags().StringVar(&tlsCAFile, "tls-ca", "", "CA file trusted to verify the bridge's certificate")
+	// Optional even when TLS is on: every bridge's cert is issued for
+	// "<name>.<host>.house.internal" (see house-config's cert-agent/renew.sh),
+	// not whatever --addr actually is (an IP, or a different hostname) - so
+	// the default (grpc deriving the expected name from --addr) only works
+	// when --addr already happens to be that same name. Leave blank in that
+	// case; set explicitly whenever --addr is an IP or anything else.
+	rootCmd.PersistentFlags().StringVar(&tlsServerName, "tls-server-name", "", "hostname to verify the bridge's certificate against, if different from --addr")
 
 	device.Init(rootCmd)
 	bridge.Init(rootCmd)
@@ -70,7 +78,7 @@ func initClient() {
 	case 0:
 		// plaintext gRPC - the default
 	case 3:
-		tlsCfg = &grpcutil.ClientTLSConfig{CertFile: tlsCertFile, KeyFile: tlsKeyFile, CAFile: tlsCAFile}
+		tlsCfg = &grpcutil.ClientTLSConfig{CertFile: tlsCertFile, KeyFile: tlsKeyFile, CAFile: tlsCAFile, ServerName: tlsServerName}
 	default:
 		fmt.Fprintln(os.Stderr, "--tls-cert, --tls-key, and --tls-ca are required together - only some of them were set")
 		os.Exit(1)
