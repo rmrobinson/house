@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "apc-ups_lib",
@@ -29,4 +29,19 @@ go_binary(
     name = "apc-ups",
     embed = [":apc-ups_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "apc-ups_test",
+    srcs = ["bridge_test.go"],
+    embed = [":apc-ups_lib"],
+    deps = [
+        "//api",
+        "//api/device",
+        "//service/bridge",
+        "@com_github_mdlayher_apcupsd//:apcupsd",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//zaptest",
+    ],
 )
