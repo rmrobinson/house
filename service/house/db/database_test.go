@@ -5,19 +5,18 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
 
 // newTestDB opens a fresh in-memory database with migrations applied.
-// MaxOpenConns is pinned to 1 - mattn/go-sqlite3's :memory: database is
+// MaxOpenConns is pinned to 1 - modernc.org/sqlite's :memory: database is
 // per-connection, so a pooled second connection would see an empty schema.
 func newTestDB(t *testing.T) *Database {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { sqlDB.Close() })

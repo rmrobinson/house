@@ -58,7 +58,6 @@ use_repo(
     "com_github_hekmon_plexwebhooks",
     "com_github_koron_go_ssdp",
     "com_github_lukehagar_plexgo",
-    "com_github_mattn_go_sqlite3",
     "com_github_mctofu_homekit",
     "com_github_mdlayher_apcupsd",
     "com_github_picatz_roku",
@@ -81,9 +80,15 @@ use_repo(
 )
 
 # hermetic, Zig-based C/C++ cross-toolchain — lets CGO bridges (airthings
-# today) and housed (CGO via mattn/go-sqlite3) cross-compile for arm64
-# without a hand-maintained sysroot. libc_aware/glibc variants chosen
-# to match the glibc-based runtime base images in //images.
+# today) cross-compile without a hand-maintained sysroot. libc_aware/glibc
+# variants chosen to match the glibc-based runtime base images in //images.
+# housed used to need this too (CGO via mattn/go-sqlite3), until that turned
+# out to only ever have been exercised cross-compiling for arm64 (iot001) -
+# h031's first-ever amd64 deploy of housed hit a real CGO_ENABLED=0 stub
+# (go-sqlite3 silently becomes a non-functional stub without real cgo).
+# Rather than debug the amd64 leg of this same toolchain, housed was moved to
+# a pure-Go sqlite driver (modernc.org/sqlite, via golang-migrate's
+# database/sqlite package) instead - see service/house/db/database.go.
 cc_toolchains = use_extension("@hermetic_cc_toolchain//toolchain:ext.bzl", "toolchains")
 use_repo(cc_toolchains, "zig_sdk")
 
@@ -96,11 +101,14 @@ oci = use_extension("@rules_oci//oci:extensions.bzl", "oci")
 oci.pull(
     name = "distroless_base",
     image = "gcr.io/distroless/base-debian12",
-    tag = "latest",
-    reproducible = False,  # home-lab use; pin a digest instead if this needs to be reproducible
     # arm64's manifest-list entry carries an OCI "variant: v8" descriptor —
     # plain "linux/arm64" doesn't match it, has to be spelled out.
-    platforms = ["linux/amd64", "linux/arm64/v8"],
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+    reproducible = False,  # home-lab use; pin a digest instead if this needs to be reproducible
+    tag = "latest",
 )
 
 # airthings needs libdbus at runtime (tinygo BLE -> cbgo -> BlueZ over D-Bus),
@@ -108,9 +116,12 @@ oci.pull(
 oci.pull(
     name = "debian_slim",
     image = "docker.io/library/debian",
-    tag = "trixie-slim",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
     reproducible = False,
-    platforms = ["linux/amd64", "linux/arm64/v8"],
+    tag = "trixie-slim",
 )
 use_repo(
     oci,

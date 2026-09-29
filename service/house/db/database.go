@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -45,14 +45,14 @@ func NewDatabase(logger *zap.Logger, db *sql.DB) (*Database, error) {
 	if err != nil {
 		logger.Error("unable to open embedded migrations")
 	}
-	driver, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
 	if err != nil {
 		logger.Error("unable to create migration driver", zap.Error(err))
 		return nil, err
 	}
 	m, err := migrate.NewWithInstance(
 		"iofs", migrations,
-		"sqlite3", driver)
+		"sqlite", driver)
 	if err != nil {
 		logger.Error("unable to create migration", zap.Error(err))
 		return nil, err

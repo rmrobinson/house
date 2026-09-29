@@ -56,7 +56,7 @@ func main() {
 	}
 
 	dsn := fmt.Sprintf("file:%s?parseTime=true", dbPath)
-	sqlDB, err := sql.Open("sqlite3", dsn)
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		logger.Fatal("unable to open db", zap.Error(err))
 	} else if sqlDB == nil {

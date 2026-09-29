@@ -6,7 +6,6 @@ import (
 	"errors"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -67,12 +66,12 @@ func (s *fakeListRoomsServer) Send(r *api2.Room) error {
 }
 
 // newTestService wires a Service against a fresh in-memory database.
-// MaxOpenConns is pinned to 1 - mattn/go-sqlite3's :memory: database is
+// MaxOpenConns is pinned to 1 - modernc.org/sqlite's :memory: database is
 // per-connection, so a pooled second connection would see an empty schema.
 func newTestService(t *testing.T, bridgeClient api2.BridgeServiceClient) *Service {
 	t.Helper()
 
-	sqlDB, err := sql.Open("sqlite3", ":memory:")
+	sqlDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { sqlDB.Close() })
