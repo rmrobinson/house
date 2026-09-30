@@ -326,6 +326,9 @@ func (nc *networkConn) buildNode(n nodeInfo) {
 		id = fmt.Sprintf("zwave-%d", n.ID)
 	}
 	d.Id = id
+	if n.Name != "" {
+		d.Config = &device.Device_Config{Name: n.Name}
+	}
 	if d.Address == nil {
 		d.Address = &device.Device_Address{}
 	}

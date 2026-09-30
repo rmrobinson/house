@@ -10,6 +10,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 // upstreamConn manages one upstream BridgeService connection: dialing and
@@ -28,11 +29,15 @@ type upstreamConn struct {
 	live     bool
 }
 
-func newUpstreamConn(f *Facade, addr string) *upstreamConn {
+// newUpstreamConn creates an upstreamConn that will dial addr once run is
+// called. tlsCfg is the ClientTLSConfig to use for this specific connection -
+// the owning Facade's clientTLS, with ServerName possibly overridden per
+// upstream (see Facade.Connect) - not necessarily f.clientTLS itself.
+func newUpstreamConn(f *Facade, addr string, tlsCfg *grpcutil.ClientTLSConfig) *upstreamConn {
 	return &upstreamConn{
 		addr: addr,
 		f:    f,
-		conn: bridgeconn.New(f.logger, addr, f.clientTLS),
+		conn: bridgeconn.New(f.logger, addr, tlsCfg),
 	}
 }
 
