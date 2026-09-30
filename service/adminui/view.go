@@ -48,8 +48,122 @@ type roomView struct {
 	// floor.html's "Add room" form) - carried through only so an edit form
 	// can round-trip it via a hidden input instead of silently resetting it
 	// to Unspecified on save.
-	Type    int32
-	Devices []deviceView
+	Type        int32
+	Devices     []deviceView
+	Aggregation aggregationView
+	Properties  propertiesView
+}
+
+// aggregationView mirrors Room.Config.aggregation, reshaped for the edit
+// form's five <select> elements (room.html) - each field is one of
+// strategyValues' strings, matching the <option value="..."> the form
+// posts back, so room.html never has to compare across the proto's own
+// int32 enum (see strategyToStr/strategyFromStr).
+type aggregationView struct {
+	OccupancyStrategy   string
+	TemperatureStrategy string
+	LightStrategy       string
+	AirQualityStrategy  string
+	PowerStrategy       string
+}
+
+// propertiesView mirrors Room.Properties, pre-formatted for display -
+// each field is "" when that metric is unset (no linked Sensor has
+// reported it yet), which room.html treats as "Unknown".
+type propertiesView struct {
+	Occupied        string
+	TemperatureF    string
+	LightLevelLux   string
+	AirQualityIndex string
+	PowerDrawW      string
+}
+
+// strategyToStr/strategyFromStr convert api2.AggregationConfig_Strategy to
+// and from the plain string room.html's aggregation <select>s use as their
+// option values - the same "proto enum <-> template-friendly string"
+// pattern onConditionFalseStr uses for policy pages (see policy_view.go).
+// An unrecognized string (there shouldn't be one, short of a hand-crafted
+// request) falls back to STRATEGY_UNSPECIFIED, same as the enum's own zero
+// value.
+func strategyToStr(s api2.AggregationConfig_Strategy) string {
+	switch s {
+	case api2.AggregationConfig_LATEST:
+		return "latest"
+	case api2.AggregationConfig_AVERAGE:
+		return "average"
+	case api2.AggregationConfig_MIN:
+		return "min"
+	case api2.AggregationConfig_MAX:
+		return "max"
+	case api2.AggregationConfig_SUM:
+		return "sum"
+	case api2.AggregationConfig_ANY:
+		return "any"
+	default:
+		return "unspecified"
+	}
+}
+
+func strategyFromStr(s string) api2.AggregationConfig_Strategy {
+	switch s {
+	case "latest":
+		return api2.AggregationConfig_LATEST
+	case "average":
+		return api2.AggregationConfig_AVERAGE
+	case "min":
+		return api2.AggregationConfig_MIN
+	case "max":
+		return api2.AggregationConfig_MAX
+	case "sum":
+		return api2.AggregationConfig_SUM
+	case "any":
+		return api2.AggregationConfig_ANY
+	default:
+		return api2.AggregationConfig_STRATEGY_UNSPECIFIED
+	}
+}
+
+// aggregationToView reads a.Get*() through a possibly-nil a - proto
+// accessors on a nil message return each field's zero value, so this needs
+// no nil check of its own.
+func aggregationToView(a *api2.AggregationConfig) aggregationView {
+	return aggregationView{
+		OccupancyStrategy:   strategyToStr(a.GetOccupancyStrategy()),
+		TemperatureStrategy: strategyToStr(a.GetTemperatureStrategy()),
+		LightStrategy:       strategyToStr(a.GetLightStrategy()),
+		AirQualityStrategy:  strategyToStr(a.GetAirQualityStrategy()),
+		PowerStrategy:       strategyToStr(a.GetPowerStrategy()),
+	}
+}
+
+// propertiesToView formats p's set fields for display, leaving an unset
+// metric (including every field, if p itself is nil - no linked Sensor has
+// reported anything for this room yet) as "".
+func propertiesToView(p *api2.Room_Properties) propertiesView {
+	var pv propertiesView
+	if p == nil {
+		return pv
+	}
+	if p.Occupied != nil {
+		if p.GetOccupied() {
+			pv.Occupied = "Yes"
+		} else {
+			pv.Occupied = "No"
+		}
+	}
+	if p.TemperatureF != nil {
+		pv.TemperatureF = fmt.Sprintf("%.1f°F", p.GetTemperatureF())
+	}
+	if p.LightLevelLux != nil {
+		pv.LightLevelLux = fmt.Sprintf("%d lux", p.GetLightLevelLux())
+	}
+	if p.AirQualityIndex != nil {
+		pv.AirQualityIndex = fmt.Sprintf("%d", p.GetAirQualityIndex())
+	}
+	if p.PowerDrawW != nil {
+		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
+	}
+	return pv
 }
 
 // deviceView is shown both embedded in a room and on the flat /devices list.
@@ -94,12 +208,14 @@ func floorToView(f *api2.Floor) floorView {
 
 func roomToView(r *api2.Room) roomView {
 	rv := roomView{
-		ID:         r.GetId(),
-		Name:       r.GetConfig().GetName(),
-		FloorID:    r.GetFloorId(),
-		BuildingID: r.GetBuildingId(),
-		Version:    r.GetVersion(),
-		Type:       r.GetConfig().GetType(),
+		ID:          r.GetId(),
+		Name:        r.GetConfig().GetName(),
+		FloorID:     r.GetFloorId(),
+		BuildingID:  r.GetBuildingId(),
+		Version:     r.GetVersion(),
+		Type:        r.GetConfig().GetType(),
+		Aggregation: aggregationToView(r.GetConfig().GetAggregation()),
+		Properties:  propertiesToView(r.GetProperties()),
 	}
 	for _, d := range sortDevices(r.GetDevices()) {
 		rv.Devices = append(rv.Devices, deviceToView(d))

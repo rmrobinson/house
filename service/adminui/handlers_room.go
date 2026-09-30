@@ -79,6 +79,13 @@ func (s *Server) handleRoomUpdate(w http.ResponseWriter, r *http.Request) {
 		Config: &api2.Room_Config{
 			Name: r.FormValue("name"),
 			Type: int32(roomType),
+			Aggregation: &api2.AggregationConfig{
+				OccupancyStrategy:   strategyFromStr(r.FormValue("occupancy_strategy")),
+				TemperatureStrategy: strategyFromStr(r.FormValue("temperature_strategy")),
+				LightStrategy:       strategyFromStr(r.FormValue("light_strategy")),
+				AirQualityStrategy:  strategyFromStr(r.FormValue("air_quality_strategy")),
+				PowerStrategy:       strategyFromStr(r.FormValue("power_strategy")),
+			},
 		},
 	})
 	flash, isError := successOrError(err, "Room updated")

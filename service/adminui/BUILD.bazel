@@ -76,6 +76,7 @@ go_test(
         "handlers_policy_test.go",
         "server_test.go",
         "settings_test.go",
+        "view_test.go",
     ],
     embed = [":adminui_lib"],
     deps = [
