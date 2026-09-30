@@ -110,6 +110,21 @@ func TestBuildNode_AutoAssignedID(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, bd.device.Address.IsReachable)
 	assert.Equal(t, 7, bd.nodeID)
+	assert.Nil(t, bd.device.Config)
+}
+
+func TestBuildNode_SetsConfigNameFromNodeName(t *testing.T) {
+	nc, _ := newTestNetworkConn(t, zwaveConfig{})
+
+	n := nodeInfo{ID: 7, Name: "kitchen_plug", Available: true, Status: "Alive"}
+	n.DeviceClass.Generic = genericBinarySwitch
+
+	nc.buildNode(n)
+
+	bd, ok := nc.devices["zwave-7"]
+	require.True(t, ok)
+	require.NotNil(t, bd.device.Config)
+	assert.Equal(t, "kitchen_plug", bd.device.Config.Name)
 }
 
 func TestBuildNode_IDOverride(t *testing.T) {

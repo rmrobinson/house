@@ -83,4 +83,19 @@ func TestRefresh_RealSerialNumber_Published(t *testing.T) {
 	devices := listDevices(t, svc)
 	require.Len(t, devices, 1)
 	assert.Equal(t, "0B2542L21100", devices[0].GetId())
+	assert.Nil(t, devices[0].GetConfig(), "no UPSNAME set on the UPS: Config must not be synthesized")
+}
+
+func TestRefresh_UPSNameSet_UsedAsConfigName(t *testing.T) {
+	client := &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", UPSName: "basement-ups", EndAPC: time.Now()},
+	}}
+	aub, svc := newTestBridge(t, client)
+
+	require.NoError(t, aub.Refresh(context.Background()))
+
+	devices := listDevices(t, svc)
+	require.Len(t, devices, 1)
+	require.NotNil(t, devices[0].GetConfig())
+	assert.Equal(t, "basement-ups", devices[0].GetConfig().GetName())
 }

@@ -82,6 +82,7 @@ func (onOffBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		Manufacturer:     bd.Definition.Vendor,
 		ModelId:          bd.Definition.Model,
 		ModelDescription: &bd.Definition.Description,
+		Config:           &device.Device_Config{Name: bd.FriendlyName},
 		Details:          &device.Device_Generic{Generic: g},
 	}, nil
 }
@@ -225,6 +226,7 @@ func (lb lightBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		Manufacturer:     bd.Definition.Vendor,
 		ModelId:          bd.Definition.Model,
 		ModelDescription: &bd.Definition.Description,
+		Config:           &device.Device_Config{Name: bd.FriendlyName},
 		Details:          &device.Device_Light{Light: l},
 	}, nil
 }
@@ -500,6 +502,7 @@ func (sensorBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		Manufacturer:     bd.Definition.Vendor,
 		ModelId:          bd.Definition.Model,
 		ModelDescription: &bd.Definition.Description,
+		Config:           &device.Device_Config{Name: bd.FriendlyName},
 		Details:          &device.Device_Sensor{Sensor: s},
 	}, nil
 }
@@ -735,6 +738,7 @@ func (fb fanBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		Manufacturer:     bd.Definition.Vendor,
 		ModelId:          bd.Definition.Model,
 		ModelDescription: &bd.Definition.Description,
+		Config:           &device.Device_Config{Name: bd.FriendlyName},
 		Details:          &device.Device_Fan{Fan: f},
 	}, nil
 }

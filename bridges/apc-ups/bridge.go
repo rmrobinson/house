@@ -19,7 +19,7 @@ import (
 )
 
 func statusToDevice(s *apcupsd.Status) *device.Device {
-	return &device.Device{
+	d := &device.Device{
 		Id:           s.SerialNumber,
 		ModelId:      s.Model,
 		Manufacturer: "APC",
@@ -52,6 +52,12 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 			},
 		},
 	}
+
+	if s.UPSName != "" {
+		d.Config = &device.Device_Config{Name: s.UPSName}
+	}
+
+	return d
 }
 
 // statusClient is the subset of *apcupsd.Client this bridge needs, narrowed to an interface so
