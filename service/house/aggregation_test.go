@@ -190,3 +190,107 @@ func TestAggregator_RoomAggregationOverride(t *testing.T) {
 	require.NotNil(t, a.getProperties("room-1").PowerDrawW)
 	assert.Equal(t, 40.0, *a.getProperties("room-1").PowerDrawW)
 }
+
+func TestAggregator_PublishesOnlyWhenPropertiesChange(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	a.registerRoom("room-1", "building-1")
+	a.setDeviceRoom("sensor-1", "room-1")
+
+	sink := a.updates.NewSink()
+	defer sink.Close()
+
+	send := func(motion bool) {
+		a.handleUpdate(&api2.Update{
+			Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+				Device: &apiDevice.Device{
+					Id: "sensor-1",
+					Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+						Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: motion}},
+					}},
+				},
+			}},
+		})
+	}
+
+	send(true)
+	select {
+	case msg := <-sink.Messages():
+		ru, ok := msg.(*api2.RoomUpdate)
+		require.True(t, ok)
+		assert.Equal(t, "room-1", ru.RoomId)
+		require.NotNil(t, ru.Properties.Occupied)
+		assert.True(t, ru.Properties.GetOccupied())
+	default:
+		t.Fatal("expected a RoomUpdate on the first real reading")
+	}
+
+	// The identical reading again produces no new computed Properties, so
+	// no update is published (see recomputeRoomLocked's proto.Equal check).
+	send(true)
+	select {
+	case msg := <-sink.Messages():
+		t.Fatalf("unexpected duplicate update: %+v", msg)
+	default:
+	}
+
+	// A genuinely different reading does publish again.
+	send(false)
+	select {
+	case msg := <-sink.Messages():
+		ru := msg.(*api2.RoomUpdate)
+		assert.False(t, ru.Properties.GetOccupied())
+	default:
+		t.Fatal("expected a RoomUpdate when occupancy actually changed")
+	}
+}
+
+func TestAggregator_PropertiesForBuildingAndBuildingOf(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	a.registerRoom("room-1", "building-1")
+	a.registerRoom("room-2", "building-2")
+	a.setDeviceRoom("sensor-1", "room-1")
+	a.setDeviceRoom("sensor-2", "room-2")
+
+	assert.Equal(t, "building-1", a.buildingOf("room-1"))
+	assert.Equal(t, "building-2", a.buildingOf("room-2"))
+	assert.Equal(t, "", a.buildingOf("unknown-room"))
+
+	// Neither room has reported anything yet - nothing to snapshot.
+	assert.Empty(t, a.propertiesForBuilding("building-1"))
+
+	a.handleUpdate(&api2.Update{
+		Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+			Device: &apiDevice.Device{
+				Id: "sensor-1",
+				Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+					Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 40}},
+				}},
+			},
+		}},
+	})
+	a.handleUpdate(&api2.Update{
+		Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+			Device: &apiDevice.Device{
+				Id: "sensor-2",
+				Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+					Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 10}},
+				}},
+			},
+		}},
+	})
+
+	building1 := a.propertiesForBuilding("building-1")
+	require.Len(t, building1, 1)
+	require.Contains(t, building1, "room-1")
+	assert.Equal(t, 40.0, building1["room-1"].GetPowerDrawW())
+
+	building2 := a.propertiesForBuilding("building-2")
+	require.Len(t, building2, 1)
+	require.Contains(t, building2, "room-2")
+
+	// registerRoom/removeRoom keep roomBuilding (and therefore
+	// propertiesForBuilding/buildingOf) in sync with room lifecycle too.
+	a.removeRoom("room-1")
+	assert.Equal(t, "", a.buildingOf("room-1"))
+	assert.Empty(t, a.propertiesForBuilding("building-1"))
+}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/house/db"
 )
 
@@ -95,6 +97,112 @@ func createTestRoom(t *testing.T, s *Service) *api2.Room {
 	room, err := s.CreateRoom(ctx, &api2.CreateRoomRequest{FloorId: floor.Id, Config: &api2.Room_Config{Name: "Kitchen"}})
 	require.NoError(t, err)
 	return room
+}
+
+// fakeStreamHouseUpdatesServer is a minimal
+// api2.HouseService_StreamHouseUpdatesServer for exercising
+// Service.StreamHouseUpdates without a real network connection - sent is
+// buffered so Send doesn't block the goroutine running StreamHouseUpdates
+// on a slow test reader.
+type fakeStreamHouseUpdatesServer struct {
+	grpc.ServerStream
+	ctx  context.Context
+	sent chan *api2.RoomUpdate
+}
+
+func (s *fakeStreamHouseUpdatesServer) Context() context.Context { return s.ctx }
+
+func (s *fakeStreamHouseUpdatesServer) Send(u *api2.RoomUpdate) error {
+	s.sent <- u
+	return nil
+}
+
+func TestStreamHouseUpdates_RequiresBuildingID(t *testing.T) {
+	s := newTestService(t, nil)
+	err := s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{}, &fakeStreamHouseUpdatesServer{ctx: context.Background(), sent: make(chan *api2.RoomUpdate, 1)})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+}
+
+func TestStreamHouseUpdates_SnapshotThenLiveUpdatesFilteredByBuilding(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	room := createTestRoom(t, s)
+
+	// A second, unrelated building/room - its updates must never reach a
+	// stream scoped to room's building.
+	otherBuilding, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Cottage"}})
+	require.NoError(t, err)
+	otherFloor, err := s.CreateFloor(ctx, &api2.CreateFloorRequest{BuildingId: otherBuilding.Id, Name: "Main"})
+	require.NoError(t, err)
+	otherRoom, err := s.CreateRoom(ctx, &api2.CreateRoomRequest{FloorId: otherFloor.Id, Config: &api2.Room_Config{Name: "Loft"}})
+	require.NoError(t, err)
+
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "sensor-1", RoomId: room.Id})
+	require.NoError(t, err)
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "sensor-2", RoomId: otherRoom.Id})
+	require.NoError(t, err)
+
+	sendMotion := func(deviceID string, motion bool) {
+		s.agg.handleUpdate(&api2.Update{
+			Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+				Device: &apiDevice.Device{
+					Id: deviceID,
+					Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+						Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: motion}},
+					}},
+				},
+			}},
+		})
+	}
+
+	// A reading before the stream even starts, so the initial snapshot has
+	// something to send.
+	sendMotion("sensor-1", true)
+	sendMotion("sensor-2", true)
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.RoomUpdate, 10)}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{BuildingId: room.BuildingId}, fake)
+	}()
+
+	select {
+	case u := <-fake.sent:
+		assert.Equal(t, room.Id, u.RoomId, "initial snapshot must only cover room's own building")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for initial snapshot")
+	}
+
+	sendMotion("sensor-1", false)
+	select {
+	case u := <-fake.sent:
+		assert.Equal(t, room.Id, u.RoomId)
+		require.NotNil(t, u.Properties.Occupied)
+		assert.False(t, u.Properties.GetOccupied())
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for live update")
+	}
+
+	// A change in the other building's room never reaches this stream.
+	sendMotion("sensor-2", false)
+	select {
+	case u := <-fake.sent:
+		t.Fatalf("unexpected update from another building: %+v", u)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("StreamHouseUpdates did not return after context cancellation")
+	}
 }
 
 func TestResolveDevices_NilClientReturnsNil(t *testing.T) {

@@ -5,9 +5,11 @@ import (
 	"sync"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/house/db"
 )
 
@@ -16,38 +18,48 @@ import (
 // AggregationConfig doc comment for the metric/strategy contract. It is
 // kept current by feeding it every BridgeService Update (see handleUpdate)
 // and every room/link change Service itself makes (setDeviceRoom,
-// removeDeviceRoom, setRoomAggregation, removeRoom) - it never queries the
-// db on its own, so Service is responsible for keeping it in sync.
+// removeDeviceRoom, setRoomAggregation, registerRoom, removeRoom) - it
+// never queries the db on its own, so Service is responsible for keeping it
+// in sync. Every room whose computed Properties actually changes (see
+// recomputeRoomLocked) is republished on updates, the fan-out source
+// Service.StreamHouseUpdates subscribes to - the same bridge.Source/Sink
+// pub-sub primitive service/bridge/facade uses for BridgeService.
+// StreamUpdates.
 type aggregator struct {
-	logger *zap.Logger
+	logger  *zap.Logger
+	updates *bridge.Source
 
 	mu sync.Mutex
 	// deviceRoom and roomDevices are inverses of each other, kept in sync
 	// together - deviceRoom for O(1) device->room lookup on an incoming
 	// Update, roomDevices for O(room size) recompute instead of an O(all
 	// devices) scan.
-	deviceRoom  map[string]string                  // device_id -> room_id
-	roomDevices map[string]map[string]bool         // room_id -> set of device_id
-	deviceState map[string]*apiDevice.Sensor       // device_id -> latest known Sensor reading
-	roomConfig  map[string]*api2.AggregationConfig // room_id -> override, nil = every metric uses its default
-	properties  map[string]*api2.Room_Properties   // room_id -> last computed Properties
+	deviceRoom   map[string]string                  // device_id -> room_id
+	roomDevices  map[string]map[string]bool         // room_id -> set of device_id
+	deviceState  map[string]*apiDevice.Sensor       // device_id -> latest known Sensor reading
+	roomConfig   map[string]*api2.AggregationConfig // room_id -> override, nil = every metric uses its default
+	roomBuilding map[string]string                  // room_id -> building_id, for StreamHouseUpdates' per-building scoping
+	properties   map[string]*api2.Room_Properties   // room_id -> last computed Properties
 }
 
 func newAggregator(logger *zap.Logger) *aggregator {
 	return &aggregator{
-		logger:      logger,
-		deviceRoom:  make(map[string]string),
-		roomDevices: make(map[string]map[string]bool),
-		deviceState: make(map[string]*apiDevice.Sensor),
-		roomConfig:  make(map[string]*api2.AggregationConfig),
-		properties:  make(map[string]*api2.Room_Properties),
+		logger:       logger,
+		updates:      bridge.NewSource(logger),
+		deviceRoom:   make(map[string]string),
+		roomDevices:  make(map[string]map[string]bool),
+		deviceState:  make(map[string]*apiDevice.Sensor),
+		roomConfig:   make(map[string]*api2.AggregationConfig),
+		roomBuilding: make(map[string]string),
+		properties:   make(map[string]*api2.Room_Properties),
 	}
 }
 
-// load seeds the device->room index and every room's aggregation override
-// from the database. Call once at startup, before subscribing to bridge
-// updates - a device update for a not-yet-loaded link would otherwise be
-// silently dropped (see handleUpdate).
+// load seeds the device->room index, every room's building_id, and every
+// room's aggregation override from the database. Call once at startup,
+// before subscribing to bridge updates - a device update for a
+// not-yet-loaded link would otherwise be silently dropped (see
+// handleUpdate).
 func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	rooms, err := database.ListRooms(ctx, nil, nil)
 	if err != nil {
@@ -62,6 +74,7 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	defer a.mu.Unlock()
 	for _, r := range rooms {
 		a.roomConfig[r.ID] = dbAggregationToAPI(r.Aggregation)
+		a.roomBuilding[r.ID] = r.BuildingID
 	}
 	for _, l := range links {
 		a.linkLocked(l.ID, l.RoomID)
@@ -127,6 +140,17 @@ func (a *aggregator) setRoomAggregation(roomID string, cfg *api2.AggregationConf
 	a.recomputeRoomLocked(roomID)
 }
 
+// registerRoom records roomID's building_id. Call from Service.CreateRoom
+// once the room's id/building are known - a room's building never changes
+// after creation (see db.Room's UpdateRoom doc comment: "Room-to-floor
+// reassignment isn't supported here"), so this is otherwise a one-time
+// registration, not something UpdateRoom needs to repeat.
+func (a *aggregator) registerRoom(roomID, buildingID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.roomBuilding[roomID] = buildingID
+}
+
 // removeRoom drops all cached state for a deleted room. Call from
 // Service.DeleteRoom - DeleteRoom only succeeds when no devices are still
 // linked to the room (ErrHasChildren otherwise), so there's no roomDevices
@@ -137,6 +161,7 @@ func (a *aggregator) removeRoom(roomID string) {
 	delete(a.roomConfig, roomID)
 	delete(a.properties, roomID)
 	delete(a.roomDevices, roomID)
+	delete(a.roomBuilding, roomID)
 }
 
 // getProperties returns the cached Properties for roomID, or nil if the
@@ -145,6 +170,35 @@ func (a *aggregator) getProperties(roomID string) *api2.Room_Properties {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.properties[roomID]
+}
+
+// buildingOf returns the building_id roomID belongs to, or "" if roomID is
+// unknown (never registered, or since removed).
+func (a *aggregator) buildingOf(roomID string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.roomBuilding[roomID]
+}
+
+// propertiesForBuilding returns every room in buildingID that currently has
+// a computed Properties (a room with no linked Sensor that's ever reported
+// is left out entirely, same as getProperties returning nil for it) -
+// Service.StreamHouseUpdates' initial snapshot for a newly subscribed
+// client.
+func (a *aggregator) propertiesForBuilding(buildingID string) map[string]*api2.Room_Properties {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	out := make(map[string]*api2.Room_Properties)
+	for roomID, bID := range a.roomBuilding {
+		if bID != buildingID {
+			continue
+		}
+		if p := a.properties[roomID]; p != nil {
+			out[roomID] = p
+		}
+	}
+	return out
 }
 
 // handleUpdate applies one BridgeService Update. Non-device updates and
@@ -174,8 +228,9 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 }
 
 // recomputeRoomLocked rebuilds roomID's cached Properties from the current
-// deviceState of every device in roomDevices[roomID]. Callers must hold
-// a.mu.
+// deviceState of every device in roomDevices[roomID], and republishes it on
+// a.updates - the fan-out Service.StreamHouseUpdates reads from - if it
+// actually changed from what was cached before. Callers must hold a.mu.
 func (a *aggregator) recomputeRoomLocked(roomID string) {
 	var sensors []*apiDevice.Sensor
 	for deviceID := range a.roomDevices[roomID] {
@@ -183,7 +238,20 @@ func (a *aggregator) recomputeRoomLocked(roomID string) {
 			sensors = append(sensors, s)
 		}
 	}
-	a.properties[roomID] = computeProperties(a.roomConfig[roomID], sensors)
+
+	newProps := computeProperties(a.roomConfig[roomID], sensors)
+	oldProps := a.properties[roomID]
+	a.properties[roomID] = newProps
+
+	// proto.Equal treats two nil messages as equal, so a room with no
+	// linked Sensor that's ever reported (oldProps and newProps both nil)
+	// correctly produces no update - the same "only fan out when something
+	// actually changed" diffing service/bridge.Service does for device
+	// updates (see AGENTS.md).
+	if proto.Equal(oldProps, newProps) {
+		return
+	}
+	a.updates.SendMessage(&api2.RoomUpdate{RoomId: roomID, Properties: newProps})
 }
 
 /* ----- pure aggregation math ----- */

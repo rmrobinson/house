@@ -189,6 +189,23 @@ message ListDeviceLinksRequest {
   optional string device_id = 3;
 }
 
+/* ----- Room/floor-level update stream -----
+ * Distinct from BridgeService.StreamUpdates (raw, per-device): this reports
+ * only the synthetic/aggregated Room.Properties computed server-side (see
+ * AggregationConfig) whenever they change for a room in the requested
+ * building. A client wanting both subscribes to each separately. */
+message StreamHouseUpdatesRequest {
+  string building_id = 1;
+}
+message RoomUpdate {
+  string room_id = 1;
+  // Always set to the room's current computed value on the field(s) that
+  // changed since the last update sent for it - never a partial diff of
+  // just what changed, so a client can always replace its cached
+  // Properties for room_id wholesale rather than merge.
+  Room.Properties properties = 2;
+}
+
 service HouseService {
   // Building
   rpc ListBuildings(ListBuildingsRequest) returns (stream Building) {}
@@ -216,4 +233,7 @@ service HouseService {
   rpc LinkDevice(LinkDeviceRequest) returns (LinkDeviceResponse) {}
   rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
   rpc ListDeviceLinks(ListDeviceLinksRequest) returns (stream DeviceRoomLink) {}
+
+  // Room/floor-level update stream - see StreamHouseUpdatesRequest.
+  rpc StreamHouseUpdates(StreamHouseUpdatesRequest) returns (stream RoomUpdate) {}
 }

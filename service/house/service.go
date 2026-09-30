@@ -285,6 +285,7 @@ func (s *Service) CreateRoom(ctx context.Context, req *api2.CreateRoomRequest) (
 		s.logger.Error("unable to create room", zap.String("floor_id", req.GetFloorId()), zap.Error(err))
 		return nil, mapDBErr(err, "floor")
 	}
+	s.agg.registerRoom(res.ID, res.BuildingID)
 	s.agg.setRoomAggregation(res.ID, dbAggregationToAPI(res.Aggregation))
 
 	return s.roomToAPI(ctx, *res)
@@ -368,6 +369,61 @@ func (s *Service) ListDeviceLinks(req *api2.ListDeviceLinksRequest, stream api2.
 		}
 	}
 	return nil
+}
+
+/* ----- Room/floor-level update stream ----- */
+
+// StreamHouseUpdates reports every change to a computed Room.Properties for
+// a room in req.BuildingId, starting with one RoomUpdate per such room that
+// already has a known value (see aggregator.propertiesForBuilding), then
+// live updates as they happen - mirroring the INITIAL-snapshot-then-live
+// shape of BridgeService.StreamUpdates (service/bridge/facade.Facade.
+// StreamUpdates), just scoped to one building and to aggregated Properties
+// instead of raw device state.
+func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream api2.HouseService_StreamHouseUpdatesServer) error {
+	buildingID := req.GetBuildingId()
+	if len(buildingID) < 1 {
+		return status.Error(codes.InvalidArgument, "building_id must be set")
+	}
+
+	// Subscribe before snapshotting so no update landing between the
+	// snapshot and the subscribe is missed; a client may see a harmless
+	// duplicate in that window instead - the same tradeoff facade.
+	// StreamUpdates makes for the same reason.
+	sink := s.agg.updates.NewSink()
+	defer sink.Close()
+
+	for roomID, props := range s.agg.propertiesForBuilding(buildingID) {
+		if err := stream.Send(&api2.RoomUpdate{RoomId: roomID, Properties: props}); err != nil {
+			return err
+		}
+	}
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case msg, ok := <-sink.Messages():
+			if !ok {
+				return nil
+			}
+			update, castOk := msg.(*api2.RoomUpdate)
+			if !castOk {
+				panic("must send api2.RoomUpdate messages to the aggregator's update source")
+			}
+			// The source has no per-building fan-out of its own (see
+			// aggregator.updates) - every subscriber sees every room's
+			// updates, filtered here to the one building this stream asked
+			// for.
+			if s.agg.buildingOf(update.GetRoomId()) != buildingID {
+				continue
+			}
+			if err := stream.Send(update); err != nil {
+				s.logger.Error("unable to send house update", zap.Error(err))
+				return err
+			}
+		}
+	}
 }
 
 /* ----- db <-> API conversions ----- */
