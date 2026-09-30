@@ -205,6 +205,87 @@ func TestStreamHouseUpdates_SnapshotThenLiveUpdatesFilteredByBuilding(t *testing
 	}
 }
 
+// TestStreamHouseUpdates_OtherBuildingBurstDoesNotStarveBuffer is the
+// end-to-end regression case for the shared-Source buffer-starvation bug:
+// aggregator.updates is one house-wide Source (bridge.Source's sink buffer
+// is a fixed 10 slots), so a burst of updates for a building this stream
+// didn't ask for must never crowd out updates for the building it did ask
+// for. Before StreamHouseUpdates filtered at NewFilteredSink time (rather
+// than after reading the sink back), more than 10 of otherRoom's updates
+// arriving before room's own update would have evicted it from the buffer.
+func TestStreamHouseUpdates_OtherBuildingBurstDoesNotStarveBuffer(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	room := createTestRoom(t, s)
+
+	otherBuilding, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Cottage"}})
+	require.NoError(t, err)
+	otherFloor, err := s.CreateFloor(ctx, &api2.CreateFloorRequest{BuildingId: otherBuilding.Id, Name: "Main"})
+	require.NoError(t, err)
+	otherRoom, err := s.CreateRoom(ctx, &api2.CreateRoomRequest{FloorId: otherFloor.Id, Config: &api2.Room_Config{Name: "Loft"}})
+	require.NoError(t, err)
+
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "sensor-1", RoomId: room.Id})
+	require.NoError(t, err)
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "sensor-2", RoomId: otherRoom.Id})
+	require.NoError(t, err)
+
+	sendMotion := func(deviceID string, motion bool) {
+		s.agg.handleUpdate(&api2.Update{
+			Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+				Device: &apiDevice.Device{
+					Id: deviceID,
+					Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+						Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: motion}},
+					}},
+				},
+			}},
+		})
+	}
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Buffered large enough that the test's own reader never blocks Send -
+	// this test is about the sink's internal 10-slot buffer, not this one.
+	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.RoomUpdate, 100)}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{BuildingId: room.BuildingId}, fake)
+	}()
+
+	// Let StreamHouseUpdates subscribe and drain its (empty) initial
+	// snapshot before flooding, so the burst below lands on the live-update
+	// path, not the snapshot.
+	time.Sleep(50 * time.Millisecond)
+
+	// Flood well past the sink's fixed buffer size (10) with updates for
+	// the OTHER building, alternating so each one actually changes
+	// Properties and gets published.
+	for i := 0; i < 30; i++ {
+		sendMotion("sensor-2", i%2 == 0)
+	}
+
+	// room's own update must still arrive, not have been evicted by the
+	// flood above.
+	sendMotion("sensor-1", true)
+	select {
+	case u := <-fake.sent:
+		assert.Equal(t, room.Id, u.RoomId, "room's update must survive a burst of another building's updates")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for room's update - it was likely starved out of the sink's buffer")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("StreamHouseUpdates did not return after context cancellation")
+	}
+}
+
 func TestResolveDevices_NilClientReturnsNil(t *testing.T) {
 	s := newTestService(t, nil)
 	assert.Nil(t, s.resolveDevices(context.Background()))

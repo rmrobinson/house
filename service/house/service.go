@@ -7,10 +7,12 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/house/db"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
@@ -390,7 +392,21 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 	// snapshot and the subscribe is missed; a client may see a harmless
 	// duplicate in that window instead - the same tradeoff facade.
 	// StreamUpdates makes for the same reason.
-	sink := s.agg.updates.NewSink()
+	//
+	// aggregator.updates is one house-wide Source shared by every building,
+	// so filter to buildingID here, at NewFilteredSink time - before a
+	// message ever reaches this sink's fixed-size buffer - rather than
+	// after reading it back off the sink. Filtering post-buffer would let a
+	// burst of updates for other buildings fill this client's buffer and
+	// crowd out updates for the one building it actually asked for.
+	sink := s.agg.updates.NewFilteredSink(func(msg proto.Message) bool {
+		update, ok := msg.(*api2.RoomUpdate)
+		if !ok {
+			// Let the type-assert guard below produce the real error.
+			return true
+		}
+		return s.agg.buildingOf(update.GetRoomId()) == buildingID
+	})
 	defer sink.Close()
 
 	for roomID, props := range s.agg.propertiesForBuilding(buildingID) {
@@ -405,18 +421,19 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 			return nil
 		case msg, ok := <-sink.Messages():
 			if !ok {
-				return nil
+				// The sink's Messages channel is only ever closed by
+				// Source.SendMessage disconnecting a subscriber that fell
+				// behind (see bridge.Source) - sink.Close() below runs on
+				// every return path, including this one, but that's a
+				// separate close on an already-closed channel handled by
+				// Sink.closeChannel's sync.Once. The client should
+				// reconnect for a fresh initial snapshot, same as
+				// BridgeService.StreamUpdates (facade.go, api.go).
+				return bridge.ErrStreamFellBehind
 			}
 			update, castOk := msg.(*api2.RoomUpdate)
 			if !castOk {
 				panic("must send api2.RoomUpdate messages to the aggregator's update source")
-			}
-			// The source has no per-building fan-out of its own (see
-			// aggregator.updates) - every subscriber sees every room's
-			// updates, filtered here to the one building this stream asked
-			// for.
-			if s.agg.buildingOf(update.GetRoomId()) != buildingID {
-				continue
 			}
 			if err := stream.Send(update); err != nil {
 				s.logger.Error("unable to send house update", zap.Error(err))

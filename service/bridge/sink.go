@@ -10,6 +10,10 @@ import (
 type Sink struct {
 	id      string
 	channel chan proto.Message
+	// filter, if set, is consulted before a message is written to channel -
+	// a message it rejects is dropped without ever taking a buffer slot.
+	// See Source.NewFilteredSink.
+	filter func(proto.Message) bool
 
 	source    *Source
 	closeOnce sync.Once

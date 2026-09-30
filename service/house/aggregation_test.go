@@ -98,6 +98,29 @@ func TestComputeProperties_NoSensors(t *testing.T) {
 	assert.Nil(t, computeProperties(nil, nil))
 }
 
+// TestComputeProperties_NilSubState guards against a panic when a Sensor
+// advertises a Presence/AirQuality trait whose State submessage hasn't been
+// populated yet (e.g. a device that reports its traits before its first
+// reading) - State is a proto3 message field, so it can be non-nil-trait,
+// nil-state.
+func TestComputeProperties_NilSubState(t *testing.T) {
+	sensors := []*apiDevice.Sensor{
+		{
+			Presence:   &apiTrait.Presence{},
+			AirQuality: &apiTrait.AirQuality{},
+		},
+	}
+
+	var props *api2.Room_Properties
+	require.NotPanics(t, func() {
+		props = computeProperties(nil, sensors)
+	})
+	// Neither trait's State was populated, so neither contributed a sample -
+	// the room has no computed Properties at all, not a misleading
+	// all-unset one (same contract as TestComputeProperties_NoSensors).
+	assert.Nil(t, props)
+}
+
 func TestAggregationConfig_DBAPIRoundTrip(t *testing.T) {
 	assert.Nil(t, dbAggregationToAPI(nil))
 	assert.Nil(t, apiAggregationToDB(nil))

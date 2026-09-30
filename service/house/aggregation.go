@@ -103,14 +103,17 @@ func (a *aggregator) linkLocked(deviceID, roomID string) {
 // Service.LinkDevice after a successful link.
 func (a *aggregator) setDeviceRoom(deviceID, roomID string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	prevRoomID, hadPrev := a.deviceRoom[deviceID]
 	a.linkLocked(deviceID, roomID)
+	var prevUpdate *api2.RoomUpdate
 	if hadPrev && prevRoomID != roomID {
-		a.recomputeRoomLocked(prevRoomID)
+		prevUpdate = a.recomputeRoomLocked(prevRoomID)
 	}
-	a.recomputeRoomLocked(roomID)
+	update := a.recomputeRoomLocked(roomID)
+	a.mu.Unlock()
+
+	a.publish(prevUpdate)
+	a.publish(update)
 }
 
 // removeDeviceRoom unlinks deviceID from whatever room it was linked to (a
@@ -118,16 +121,19 @@ func (a *aggregator) setDeviceRoom(deviceID, roomID string) {
 // from Service.UnlinkDevice.
 func (a *aggregator) removeDeviceRoom(deviceID string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	roomID, ok := a.deviceRoom[deviceID]
 	if !ok {
+		a.mu.Unlock()
 		return
 	}
 	delete(a.deviceRoom, deviceID)
 	delete(a.roomDevices[roomID], deviceID)
 	delete(a.deviceState, deviceID)
-	a.recomputeRoomLocked(roomID)
+	update := a.recomputeRoomLocked(roomID)
+	a.mu.Unlock()
+
+	a.publish(update)
 }
 
 // setRoomAggregation records roomID's aggregation override (nil = every
@@ -135,9 +141,11 @@ func (a *aggregator) removeDeviceRoom(deviceID string) {
 // Service.CreateRoom/UpdateRoom.
 func (a *aggregator) setRoomAggregation(roomID string, cfg *api2.AggregationConfig) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.roomConfig[roomID] = cfg
-	a.recomputeRoomLocked(roomID)
+	update := a.recomputeRoomLocked(roomID)
+	a.mu.Unlock()
+
+	a.publish(update)
 }
 
 // registerRoom records roomID's building_id. Call from Service.CreateRoom
@@ -217,21 +225,32 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 	}
 
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
 	roomID, ok := a.deviceRoom[device.GetId()]
 	if !ok {
+		a.mu.Unlock()
 		return
 	}
-	a.deviceState[device.GetId()] = sensor
-	a.recomputeRoomLocked(roomID)
+	// Cloned per AGENTS.md's proto-ownership convention: the aggregator
+	// caches this pointer indefinitely across recomputes, so it must not
+	// share memory with whatever the bridge update pipeline does with u
+	// after handleUpdate returns.
+	a.deviceState[device.GetId()] = proto.Clone(sensor).(*apiDevice.Sensor)
+	update := a.recomputeRoomLocked(roomID)
+	a.mu.Unlock()
+
+	a.publish(update)
 }
 
 // recomputeRoomLocked rebuilds roomID's cached Properties from the current
-// deviceState of every device in roomDevices[roomID], and republishes it on
-// a.updates - the fan-out Service.StreamHouseUpdates reads from - if it
-// actually changed from what was cached before. Callers must hold a.mu.
-func (a *aggregator) recomputeRoomLocked(roomID string) {
+// deviceState of every device in roomDevices[roomID], returning the
+// RoomUpdate to publish on a.updates if it actually changed from what was
+// cached before, or nil otherwise. Callers must hold a.mu, and must publish
+// the result via a.publish only after releasing it - a.updates.SendMessage
+// synchronously invokes each subscriber's filter (e.g.
+// Service.StreamHouseUpdates' per-building filter, which calls
+// a.buildingOf), and a.mu is not reentrant.
+func (a *aggregator) recomputeRoomLocked(roomID string) *api2.RoomUpdate {
 	var sensors []*apiDevice.Sensor
 	for deviceID := range a.roomDevices[roomID] {
 		if s, ok := a.deviceState[deviceID]; ok {
@@ -249,9 +268,18 @@ func (a *aggregator) recomputeRoomLocked(roomID string) {
 	// actually changed" diffing service/bridge.Service does for device
 	// updates (see AGENTS.md).
 	if proto.Equal(oldProps, newProps) {
+		return nil
+	}
+	return &api2.RoomUpdate{RoomId: roomID, Properties: newProps}
+}
+
+// publish sends update on a.updates, a no-op if update is nil. Must be
+// called without holding a.mu (see recomputeRoomLocked).
+func (a *aggregator) publish(update *api2.RoomUpdate) {
+	if update == nil {
 		return
 	}
-	a.updates.SendMessage(&api2.RoomUpdate{RoomId: roomID, Properties: newProps})
+	a.updates.SendMessage(update)
 }
 
 /* ----- pure aggregation math ----- */
@@ -366,10 +394,10 @@ func computeProperties(cfg *api2.AggregationConfig, sensors []*apiDevice.Sensor)
 			lastReported = ts.AsTime().UnixNano()
 		}
 
-		if p := s.GetPresence(); p != nil {
-			v := p.GetState().GetMotionDetected()
-			if p.GetState().OccupancyDetected != nil {
-				v = p.GetState().GetOccupancyDetected()
+		if st := s.GetPresence().GetState(); st != nil {
+			v := st.GetMotionDetected()
+			if st.OccupancyDetected != nil {
+				v = st.GetOccupancyDetected()
 			}
 			val := 0.0
 			if v {
@@ -383,8 +411,8 @@ func computeProperties(cfg *api2.AggregationConfig, sensors []*apiDevice.Sensor)
 		if ll := s.GetLightLevel(); ll != nil {
 			light = append(light, numericSample{float64(ll.GetState().GetLux()), lastReported})
 		}
-		if aq := s.GetAirQuality(); aq != nil && aq.GetState().Aqi != nil {
-			aqi = append(aqi, numericSample{float64(aq.GetState().GetAqi()), lastReported})
+		if st := s.GetAirQuality().GetState(); st != nil && st.Aqi != nil {
+			aqi = append(aqi, numericSample{float64(st.GetAqi()), lastReported})
 		}
 		if pw := s.GetPower(); pw != nil {
 			power = append(power, numericSample{pw.GetState().GetPowerW(), lastReported})
@@ -427,42 +455,18 @@ func celsiusToFahrenheit(c float64) float64 {
 
 /* ----- db <-> API AggregationConfig conversion ----- */
 
+// dbStrategyToAPI and apiStrategyToDB are plain casts, not switches, because
+// db.AggregationStrategy and api2.AggregationConfig_Strategy are declared in
+// the same order (both: UNSPECIFIED, LATEST, AVERAGE, MIN, MAX, SUM, ANY) -
+// the same convention service.go's db.RoomType(...) cast uses for
+// Room.Config.type. Keep the two enums' orderings in sync if either grows a
+// new value.
 func dbStrategyToAPI(s db.AggregationStrategy) api2.AggregationConfig_Strategy {
-	switch s {
-	case db.AggregationLatest:
-		return api2.AggregationConfig_LATEST
-	case db.AggregationAverage:
-		return api2.AggregationConfig_AVERAGE
-	case db.AggregationMin:
-		return api2.AggregationConfig_MIN
-	case db.AggregationMax:
-		return api2.AggregationConfig_MAX
-	case db.AggregationSum:
-		return api2.AggregationConfig_SUM
-	case db.AggregationAny:
-		return api2.AggregationConfig_ANY
-	default:
-		return api2.AggregationConfig_STRATEGY_UNSPECIFIED
-	}
+	return api2.AggregationConfig_Strategy(s)
 }
 
 func apiStrategyToDB(s api2.AggregationConfig_Strategy) db.AggregationStrategy {
-	switch s {
-	case api2.AggregationConfig_LATEST:
-		return db.AggregationLatest
-	case api2.AggregationConfig_AVERAGE:
-		return db.AggregationAverage
-	case api2.AggregationConfig_MIN:
-		return db.AggregationMin
-	case api2.AggregationConfig_MAX:
-		return db.AggregationMax
-	case api2.AggregationConfig_SUM:
-		return db.AggregationSum
-	case api2.AggregationConfig_ANY:
-		return db.AggregationAny
-	default:
-		return db.AggregationUnspecified
-	}
+	return db.AggregationStrategy(s)
 }
 
 // dbAggregationToAPI converts a db.AggregationConfig to its API
