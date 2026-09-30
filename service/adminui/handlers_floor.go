@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 func (s *Server) handleFloorCreate(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +112,7 @@ func (s *Server) handleFloorDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.house.DeleteFloor(r.Context(), &api2.DeleteFloorRequest{Id: id, Version: r.FormValue("version")}); err != nil {
-		s.respond(w, "floor", data, grpcMessage(err), true)
+		s.respond(w, "floor", data, houseview.Message(err), true)
 		return
 	}
 	redirectAfterDelete(w, "/buildings/"+data.Building.ID)

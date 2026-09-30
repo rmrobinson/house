@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap/zaptest"
 
 	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 func TestDevicesFilterFromRequest(t *testing.T) {
@@ -48,7 +49,7 @@ func TestSortDevices(t *testing.T) {
 	}
 
 	var ids []string
-	for _, d := range sortDevices(devices) {
+	for _, d := range houseview.SortDevices(devices) {
 		ids = append(ids, d.GetId())
 	}
 	assert.Equal(t, []string{"2", "1", "0", "3", "4"}, ids)

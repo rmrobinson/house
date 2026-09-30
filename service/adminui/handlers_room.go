@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 type roomPageData struct {
@@ -112,7 +113,7 @@ func (s *Server) handleRoomDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := s.house.DeleteRoom(r.Context(), &api2.DeleteRoomRequest{Id: id, Version: r.FormValue("version")}); err != nil {
-		s.respond(w, "room", data, grpcMessage(err), true)
+		s.respond(w, "room", data, houseview.Message(err), true)
 		return
 	}
 
@@ -191,7 +192,7 @@ func (s *Server) handleRoomDevicePicker(w http.ResponseWriter, r *http.Request) 
 		}
 		data.Devices = append(data.Devices, devicePickerEntry{
 			ID:           d.GetId(),
-			Name:         deviceDisplayName(d),
+			Name:         houseview.DisplayName(d),
 			Manufacturer: d.GetManufacturer(),
 			Location:     label,
 			Version:      current.Version,
@@ -217,13 +218,13 @@ func (s *Server) handleRoomLinkDevice(w http.ResponseWriter, r *http.Request) {
 			s.httpError(w, r, loadErr)
 			return
 		}
-		s.respond(w, "room", data, grpcMessage(err), true)
+		s.respond(w, "room", data, houseview.Message(err), true)
 		return
 	}
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	data, loadErr := s.loadRoomPageData(r, roomID)
@@ -258,7 +259,7 @@ func (s *Server) handleRoomUnlinkDevice(w http.ResponseWriter, r *http.Request) 
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	if _, err := s.house.UnlinkDevice(ctx, &api2.UnlinkDeviceRequest{DeviceId: deviceID}); err != nil {
@@ -267,7 +268,7 @@ func (s *Server) handleRoomUnlinkDevice(w http.ResponseWriter, r *http.Request) 
 			s.httpError(w, r, loadErr)
 			return
 		}
-		s.respond(w, "room", data, grpcMessage(err), true)
+		s.respond(w, "room", data, houseview.Message(err), true)
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 // policyView/executionLogView mirror the PolicyService proto messages,
@@ -111,12 +112,12 @@ var policyTemplateFuncs = map[string]any{
 // Policies) - admin-tool traffic, not large enough to justify streaming
 // incrementally (matches listBuildings/listFloors in view.go).
 func (s *Server) listPolicies(ctx context.Context) ([]policyView, error) {
-	items, err := streamAll(func(cb func(*api2.Policy) error) error {
+	items, err := houseview.StreamAll(func(cb func(*api2.Policy) error) error {
 		stream, err := s.policy.ListPolicies(ctx, &api2.ListPoliciesRequest{})
 		if err != nil {
 			return err
 		}
-		return recvAll(stream, cb)
+		return houseview.RecvAll(stream, cb)
 	})
 	if err != nil {
 		return nil, err
@@ -138,12 +139,12 @@ const maxLogRows = 200
 // listLogs returns up to maxLogRows of policyID's logs (every policy's, if
 // policyID is empty), newest first.
 func (s *Server) listLogs(ctx context.Context, policyID string) ([]executionLogView, error) {
-	items, err := streamAll(func(cb func(*api2.ExecutionLog) error) error {
+	items, err := houseview.StreamAll(func(cb func(*api2.ExecutionLog) error) error {
 		stream, err := s.policy.ListLogs(ctx, &api2.ListLogsRequest{PolicyId: policyID, Limit: maxLogRows})
 		if err != nil {
 			return err
 		}
-		return recvAll(stream, cb)
+		return houseview.RecvAll(stream, cb)
 	})
 	if err != nil {
 		return nil, err

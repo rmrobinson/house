@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 // policiesPageData/policyDetailPageData/editorData/logsPageData mirror
@@ -122,11 +123,11 @@ func (s *Server) handlePolicyDelete(w http.ResponseWriter, r *http.Request) {
 		// minimal replacement fragment instead. NotFound gets its own copy
 		// (below, via Gone) rather than DeletePolicy's raw message - it
 		// means "id was already gone" (e.g. a double-submit), not that
-		// removal was attempted and failed, and grpcMessage(err) here would
+		// removal was attempted and failed, and houseview.Message(err) here would
 		// otherwise read as "removing it failed: policy not registered",
 		// implying the opposite of what happened.
 		gone := status.Code(err) == codes.NotFound
-		msg := grpcMessage(err)
+		msg := houseview.Message(err)
 		s.respond(w, "policy_delete_failed", struct {
 			ID   string
 			Err  string
@@ -246,7 +247,7 @@ func (s *Server) handlePolicySubmit(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		data.TypeNames, _ = s.listConditionTypes(ctx)
-		s.respond(w, "policy_editor", data, grpcMessage(err), true)
+		s.respond(w, "policy_editor", data, houseview.Message(err), true)
 		return
 	}
 
