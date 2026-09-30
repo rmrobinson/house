@@ -402,7 +402,7 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 	sink := s.agg.updates.NewFilteredSink(func(msg proto.Message) bool {
 		update, ok := msg.(*api2.RoomUpdate)
 		if !ok {
-			// Let the type-assert guard below produce the real error.
+			// Let bridge.Pump's own type-assert guard produce the real error.
 			return true
 		}
 		return s.agg.buildingOf(update.GetRoomId()) == buildingID
@@ -415,32 +415,18 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 		}
 	}
 
-	for {
-		select {
-		case <-stream.Context().Done():
-			return nil
-		case msg, ok := <-sink.Messages():
-			if !ok {
-				// The sink's Messages channel is only ever closed by
-				// Source.SendMessage disconnecting a subscriber that fell
-				// behind (see bridge.Source) - sink.Close() below runs on
-				// every return path, including this one, but that's a
-				// separate close on an already-closed channel handled by
-				// Sink.closeChannel's sync.Once. The client should
-				// reconnect for a fresh initial snapshot, same as
-				// BridgeService.StreamUpdates (facade.go, api.go).
-				return bridge.ErrStreamFellBehind
-			}
-			update, castOk := msg.(*api2.RoomUpdate)
-			if !castOk {
-				panic("must send api2.RoomUpdate messages to the aggregator's update source")
-			}
-			if err := stream.Send(update); err != nil {
-				s.logger.Error("unable to send house update", zap.Error(err))
-				return err
-			}
+	// bridge.Pump relays sink to stream.Send until the client disconnects
+	// (nil) or this sink falls behind and is disconnected
+	// (bridge.ErrStreamFellBehind) - the client should reconnect for a
+	// fresh initial snapshot, same as BridgeService.StreamUpdates
+	// (facade.go, api.go).
+	return bridge.Pump(stream.Context(), sink, func(update *api2.RoomUpdate) error {
+		if err := stream.Send(update); err != nil {
+			s.logger.Error("unable to send house update", zap.Error(err))
+			return err
 		}
-	}
+		return nil
+	})
 }
 
 /* ----- db <-> API conversions ----- */
