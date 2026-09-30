@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/service/lib/configutil"
-	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/bridge/facade"
 	"github.com/rmrobinson/house/service/house"
 	"github.com/rmrobinson/house/service/house/db"
+	"github.com/rmrobinson/house/service/lib/configutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 func main() {
@@ -124,6 +124,14 @@ func main() {
 	// If neither is configured, linked devices are still returned but only
 	// as ID-only stubs (see house.Service.resolveDevices).
 	var bridgeClient api2.BridgeServiceClient
+	// bridgeAddr/bridgeTLS mirror whichever branch below actually dials
+	// bridgeClient, so the room-aggregation engine (house.NewService) can
+	// open its own long-lived, reconnecting StreamUpdates subscription to
+	// the same endpoint via bridgeconn.Conn - a plain request/response
+	// grpc.ClientConn like bridgeClient re-dials transparently, but a
+	// broken stream needs its own explicit retry loop.
+	var bridgeAddr string
+	var bridgeTLS *grpcutil.ClientTLSConfig
 	facadeCfg, err := facade.LoadConfig(logger, boundPort, configPath)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
@@ -155,6 +163,7 @@ func main() {
 			logger.Fatal("unable to dial embedded bridge facade", zap.String("address", selfAddr), zap.Error(err))
 		}
 		bridgeClient = api2.NewBridgeServiceClient(conn)
+		bridgeAddr, bridgeTLS = selfAddr, selfTLS
 	case len(viper.GetString("house.bridge_facade_addr")) > 0:
 		addr := viper.GetString("house.bridge_facade_addr")
 		conn, err := grpcutil.Dial(addr, clientTLS)
@@ -162,11 +171,15 @@ func main() {
 			logger.Fatal("unable to dial bridge facade", zap.String("address", addr), zap.Error(err))
 		}
 		bridgeClient = api2.NewBridgeServiceClient(conn)
+		bridgeAddr, bridgeTLS = addr, clientTLS
 	default:
 		logger.Warn("no bridge facade configured; linked devices will only be returned as ID-only stubs")
 	}
 
-	svc := house.NewService(logger, buildingDB, bridgeClient)
+	svc, err := house.NewService(ctx, logger, buildingDB, bridgeClient, bridgeAddr, bridgeTLS)
+	if err != nil {
+		logger.Fatal("unable to initialize house service", zap.Error(err))
+	}
 	api2.RegisterHouseServiceServer(grpcServer, svc)
 
 	logger.Info("serving requests", zap.String("address", lis.Addr().String()))

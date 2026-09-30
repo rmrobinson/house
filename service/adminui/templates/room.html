@@ -16,6 +16,64 @@
       <input type="hidden" name="version" value="{{.Room.Version}}">
       <input type="hidden" name="type" value="{{.Room.Type}}">
       <label>Name <input type="text" name="name" value="{{.Room.Name}}" required></label>
+
+      <fieldset>
+        <legend>Property aggregation</legend>
+        <p class="hint">How this room's Properties (below) are computed from its linked sensors. "Default" uses the strategy named in parentheses.</p>
+
+        <label>Occupancy
+          <select name="occupancy_strategy">
+            <option value="unspecified" {{if eq .Room.Aggregation.OccupancyStrategy "unspecified"}}selected{{end}}>Default (Any)</option>
+            <option value="any" {{if eq .Room.Aggregation.OccupancyStrategy "any"}}selected{{end}}>Any</option>
+            <option value="latest" {{if eq .Room.Aggregation.OccupancyStrategy "latest"}}selected{{end}}>Latest</option>
+          </select>
+        </label>
+
+        <label>Temperature
+          <select name="temperature_strategy">
+            <option value="unspecified" {{if eq .Room.Aggregation.TemperatureStrategy "unspecified"}}selected{{end}}>Default (Average)</option>
+            <option value="latest" {{if eq .Room.Aggregation.TemperatureStrategy "latest"}}selected{{end}}>Latest</option>
+            <option value="average" {{if eq .Room.Aggregation.TemperatureStrategy "average"}}selected{{end}}>Average</option>
+            <option value="min" {{if eq .Room.Aggregation.TemperatureStrategy "min"}}selected{{end}}>Min</option>
+            <option value="max" {{if eq .Room.Aggregation.TemperatureStrategy "max"}}selected{{end}}>Max</option>
+            <option value="sum" {{if eq .Room.Aggregation.TemperatureStrategy "sum"}}selected{{end}}>Sum</option>
+          </select>
+        </label>
+
+        <label>Light level
+          <select name="light_strategy">
+            <option value="unspecified" {{if eq .Room.Aggregation.LightStrategy "unspecified"}}selected{{end}}>Default (Average)</option>
+            <option value="latest" {{if eq .Room.Aggregation.LightStrategy "latest"}}selected{{end}}>Latest</option>
+            <option value="average" {{if eq .Room.Aggregation.LightStrategy "average"}}selected{{end}}>Average</option>
+            <option value="min" {{if eq .Room.Aggregation.LightStrategy "min"}}selected{{end}}>Min</option>
+            <option value="max" {{if eq .Room.Aggregation.LightStrategy "max"}}selected{{end}}>Max</option>
+            <option value="sum" {{if eq .Room.Aggregation.LightStrategy "sum"}}selected{{end}}>Sum</option>
+          </select>
+        </label>
+
+        <label>Air quality
+          <select name="air_quality_strategy">
+            <option value="unspecified" {{if eq .Room.Aggregation.AirQualityStrategy "unspecified"}}selected{{end}}>Default (Average)</option>
+            <option value="latest" {{if eq .Room.Aggregation.AirQualityStrategy "latest"}}selected{{end}}>Latest</option>
+            <option value="average" {{if eq .Room.Aggregation.AirQualityStrategy "average"}}selected{{end}}>Average</option>
+            <option value="min" {{if eq .Room.Aggregation.AirQualityStrategy "min"}}selected{{end}}>Min</option>
+            <option value="max" {{if eq .Room.Aggregation.AirQualityStrategy "max"}}selected{{end}}>Max</option>
+            <option value="sum" {{if eq .Room.Aggregation.AirQualityStrategy "sum"}}selected{{end}}>Sum</option>
+          </select>
+        </label>
+
+        <label>Power draw
+          <select name="power_strategy">
+            <option value="unspecified" {{if eq .Room.Aggregation.PowerStrategy "unspecified"}}selected{{end}}>Default (Sum)</option>
+            <option value="latest" {{if eq .Room.Aggregation.PowerStrategy "latest"}}selected{{end}}>Latest</option>
+            <option value="average" {{if eq .Room.Aggregation.PowerStrategy "average"}}selected{{end}}>Average</option>
+            <option value="min" {{if eq .Room.Aggregation.PowerStrategy "min"}}selected{{end}}>Min</option>
+            <option value="max" {{if eq .Room.Aggregation.PowerStrategy "max"}}selected{{end}}>Max</option>
+            <option value="sum" {{if eq .Room.Aggregation.PowerStrategy "sum"}}selected{{end}}>Sum</option>
+          </select>
+        </label>
+      </fieldset>
+
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Save</button>
@@ -28,6 +86,17 @@
       </form>
     </div>
   </dialog>
+
+  <table class="properties">
+    <caption>Properties <span class="hint">(computed from linked sensors, as of the last page load)</span></caption>
+    <tbody>
+      <tr><th>Occupied</th><td>{{if .Room.Properties.Occupied}}{{.Room.Properties.Occupied}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Temperature</th><td>{{if .Room.Properties.TemperatureF}}{{.Room.Properties.TemperatureF}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Light level</th><td>{{if .Room.Properties.LightLevelLux}}{{.Room.Properties.LightLevelLux}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Air quality index</th><td>{{if .Room.Properties.AirQualityIndex}}{{.Room.Properties.AirQualityIndex}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Power draw</th><td>{{if .Room.Properties.PowerDrawW}}{{.Room.Properties.PowerDrawW}}{{else}}Unknown{{end}}</td></tr>
+    </tbody>
+  </table>
 
   <table>
     <thead><tr><th>Device</th><th></th></tr></thead>

@@ -330,24 +330,13 @@ func (f *Facade) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.Bridg
 		}
 	}
 
-	for {
-		select {
-		case <-stream.Context().Done():
-			return nil
-		case msg, ok := <-sink.Messages():
-			if !ok {
-				return bridge.ErrStreamFellBehind
-			}
-			update, castOk := msg.(*api2.Update)
-			if !castOk {
-				panic("must send api2.Update messages to the updates chan")
-			}
-			if err := stream.Send(update); err != nil {
-				logger.Error("unable to send update", zap.Error(err))
-				return err
-			}
+	return bridge.Pump(stream.Context(), sink, func(update *api2.Update) error {
+		if err := stream.Send(update); err != nil {
+			logger.Error("unable to send update", zap.Error(err))
+			return err
 		}
-	}
+		return nil
+	})
 }
 
 type deviceWithOwner struct {

@@ -192,6 +192,42 @@ func TestRoom_CreateDerivesBuildingIDFromFloor(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestRoom_AggregationRoundTrips(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	b := createTestBuilding(t, d)
+	f := createTestFloor(t, d, b.ID)
+
+	// No override configured: Aggregation comes back nil, not a zero-valued
+	// struct - see columnsToAggregation.
+	r, err := d.CreateRoom(ctx, &Room{FloorID: f.ID, Name: "Kitchen", Type: Kitchen})
+	require.NoError(t, err)
+	assert.Nil(t, r.Aggregation)
+
+	got, err := d.GetRoom(ctx, r.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Aggregation)
+
+	// An explicit override round-trips, including a field deliberately left
+	// at AggregationUnspecified.
+	r.Aggregation = &AggregationConfig{
+		OccupancyStrategy: AggregationAny,
+		PowerStrategy:     AggregationSum,
+	}
+	updated, err := d.UpdateRoom(ctx, r)
+	require.NoError(t, err)
+	require.NotNil(t, updated.Aggregation)
+	assert.Equal(t, AggregationAny, updated.Aggregation.OccupancyStrategy)
+	assert.Equal(t, AggregationUnspecified, updated.Aggregation.TemperatureStrategy)
+	assert.Equal(t, AggregationSum, updated.Aggregation.PowerStrategy)
+
+	got, err = d.GetRoom(ctx, r.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Aggregation)
+	assert.Equal(t, *updated.Aggregation, *got.Aggregation)
+}
+
 func TestRoom_GetListUpdateDelete(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
