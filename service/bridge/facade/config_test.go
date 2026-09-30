@@ -30,7 +30,7 @@ func TestLoadConfig_NoFacadeBridgesReturnsNilConfig(t *testing.T) {
 func TestLoadConfig_MissingHostIsError(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.id", "test-id")
-	viper.Set("facade.bridges", []string{"192.168.1.50:17010"})
+	viper.Set("facade.bridges", []map[string]string{{"address": "192.168.1.50:17010"}})
 
 	_, err := LoadConfig(zaptest.NewLogger(t), 1337, filepath.Join(t.TempDir(), "bridgefacade.yaml"))
 	assert.Error(t, err)
@@ -40,7 +40,10 @@ func TestLoadConfig_RejectsSelfReferentialUpstream(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.id", "test-id")
 	viper.Set("bridge.host", "192.168.1.5")
-	viper.Set("facade.bridges", []string{"192.168.1.50:17010", "192.168.1.5:1337"})
+	viper.Set("facade.bridges", []map[string]string{
+		{"address": "192.168.1.50:17010"},
+		{"address": "192.168.1.5:1337"},
+	})
 
 	_, err := LoadConfig(zaptest.NewLogger(t), 1337, filepath.Join(t.TempDir(), "bridgefacade.yaml"))
 	require.Error(t, err)
@@ -52,7 +55,9 @@ func TestLoadConfig_Success(t *testing.T) {
 	viper.Set("bridge.id", "test-id")
 	viper.Set("bridge.host", "192.168.1.5")
 	viper.Set("bridge.name", "Home Facade")
-	viper.Set("facade.bridges", []string{"192.168.1.50:17010"})
+	viper.Set("facade.bridges", []map[string]string{
+		{"address": "192.168.1.50:17010", "server_name": "esphome.example.house.internal"},
+	})
 
 	cfg, err := LoadConfig(zaptest.NewLogger(t), 1337, filepath.Join(t.TempDir(), "bridgefacade.yaml"))
 	require.NoError(t, err)
@@ -60,13 +65,13 @@ func TestLoadConfig_Success(t *testing.T) {
 	assert.Equal(t, "test-id", cfg.BridgeID)
 	assert.Equal(t, "Home Facade", cfg.BridgeName)
 	assert.Equal(t, "192.168.1.5:1337", cfg.SelfAddress)
-	assert.Equal(t, []string{"192.168.1.50:17010"}, cfg.UpstreamAddrs)
+	assert.Equal(t, []UpstreamBridge{{Address: "192.168.1.50:17010", ServerName: "esphome.example.house.internal"}}, cfg.UpstreamBridges)
 }
 
 func TestLoadConfig_GeneratesAndPersistsMissingBridgeID(t *testing.T) {
 	resetViper(t)
 	viper.Set("bridge.host", "192.168.1.5")
-	viper.Set("facade.bridges", []string{"192.168.1.50:17010"})
+	viper.Set("facade.bridges", []map[string]string{{"address": "192.168.1.50:17010"}})
 
 	configPath := filepath.Join(t.TempDir(), "bridgefacade.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("bridge:\n  host: \"192.168.1.5\"\n"), 0o644))

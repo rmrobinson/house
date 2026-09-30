@@ -20,5 +20,11 @@ bridge:
 
 facade:
   bridges:
-    - "192.168.1.50:17010" # esphome bridge
-    - "192.168.1.51:17021" # cast bridge
+    # server_name is required whenever address isn't the name the upstream's
+    # own certificate was actually issued for (e.g. dialing by IP, as below)
+    # - see UpstreamBridge.ServerName. Omit it entirely for plaintext gRPC,
+    # or whenever address already is that name.
+    - address: "192.168.1.50:17010"
+      server_name: "esphome.myhost.house.internal"
+    - address: "192.168.1.51:17021"
+      server_name: "cast.myhost.house.internal"

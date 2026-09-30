@@ -107,11 +107,25 @@ func (f *Facade) present(d *device.Device) *device.Device {
 // connection to the BridgeService at addr. It returns immediately; the
 // connection is established and streamed in a background goroutine that
 // runs until ctx is cancelled.
-func (f *Facade) Connect(ctx context.Context, addr string) {
+//
+// serverName overrides the hostname f.clientTLS verifies addr's certificate
+// against for this connection only - see UpstreamBridge.ServerName. Every
+// upstream shares this facade's one client identity (f.clientTLS's
+// cert/key/CA), but each may need a different serverName, since addr is
+// rarely the same name the upstream's own certificate was issued for.
+// Ignored when f.clientTLS is nil.
+func (f *Facade) Connect(ctx context.Context, addr, serverName string) {
+	tlsCfg := f.clientTLS
+	if tlsCfg != nil && len(serverName) > 0 {
+		override := *tlsCfg
+		override.ServerName = serverName
+		tlsCfg = &override
+	}
+
 	uc := &upstreamConn{
 		addr:   addr,
 		f:      f,
-		tlsCfg: f.clientTLS,
+		tlsCfg: tlsCfg,
 	}
 	uc.backoff.Store(int64(minReconnectBackoff))
 	go uc.run(ctx)
