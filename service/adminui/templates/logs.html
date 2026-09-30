@@ -1,0 +1,15 @@
+{{define "content"}}
+<h1>Execution Log{{if .PolicyID}} — {{.PolicyID}}{{end}}</h1>
+<table>
+  <thead><tr><th>Policy</th><th>Started</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+  {{/* Filtered by ?policy=<id>, this shares the exact tbody id convention
+  the policy detail page uses for its own log table, so the SSE relay
+  (sse.go's writePolicyEvent), which always emits a per-policy row alongside
+  the global one, lands here too without any extra plumbing. */}}
+  <tbody id="{{if .PolicyID}}logs-tbody-{{.PolicyID}}{{else}}logs-tbody{{end}}">
+  {{range .Logs}}{{template "log_row" .}}{{else}}
+    <tr><td colspan="5" class="hint">No executions yet.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

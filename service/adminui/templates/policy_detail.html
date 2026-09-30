@@ -1,16 +1,4 @@
-{{define "policy_detail_page"}}
-<!doctype html>
-<html>
-<head>{{template "head" .}}</head>
-{{template "body_open" .}}
-<main>
-  {{template "policy_detail_content" .}}
-</main>
-</body>
-</html>
-{{end}}
-
-{{define "policy_detail_content"}}
+{{define "content"}}
 <div id="page-content">
   <h1>{{.Info.ID}}</h1>
 
@@ -24,7 +12,7 @@
 
   <div class="card">
     <h2>Condition</h2>
-    <pre>{{conditionPretty .Info.ConditionExpr}}</pre>
+    <pre>{{conditionPretty .Info.ConditionExprJSON}}</pre>
   </div>
 
   <div class="card">
@@ -49,12 +37,4 @@
     </tbody>
   </table>
 </div>
-{{end}}
-
-{{define "policy_simulate_fragment"}}
-{{if .Registered}}
-  <p>Combined condition currently evaluates to: <strong>{{if .Result}}TRUE (would fire){{else}}false{{end}}</strong></p>
-{{else}}
-  <p class="hint">Policy no longer registered.</p>
-{{end}}
 {{end}}

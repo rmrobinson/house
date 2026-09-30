@@ -1,24 +1,12 @@
-{{define "policies_page"}}
-<!doctype html>
-<html>
-<head>{{template "head" .}}</head>
-{{template "body_open" .}}
-<main>
-  <h1>Policies</h1>
-  {{template "policies_table" .}}
-</main>
-</body>
-</html>
-{{end}}
-
-{{define "policies_table"}}
+{{define "content"}}
+<h1>Policies</h1>
 <table>
   <thead><tr><th>ID</th><th>Condition</th><th>State</th><th></th></tr></thead>
   <tbody>
   {{range .Rows}}
     <tr>
       <td><a href="/policies/{{.ID}}">{{.ID}}</a></td>
-      <td><code>{{conditionCompact .ConditionExpr}}</code></td>
+      <td><code>{{.ConditionExprJSON}}</code></td>
       <td>{{template "policy_status_cell" .}}</td>
       <td><a href="/policies/{{.ID}}/edit">edit</a></td>
     </tr>

@@ -1,0 +1,7 @@
+{{define "policy_simulate"}}
+{{if .Registered}}
+  <p>Combined condition currently evaluates to: <strong>{{if .Result}}TRUE (would fire){{else}}false{{end}}</strong></p>
+{{else}}
+  <p class="hint">Policy no longer registered.</p>
+{{end}}
+{{end}}

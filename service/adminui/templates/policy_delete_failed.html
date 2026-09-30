@@ -1,0 +1,11 @@
+{{/* Shown in place of policy_detail's #page-content when DeletePolicy
+fails after the policy is already gone from the running engine - see
+handlers_policy.go's handlePolicyDelete for why policy_detail's own content
+can't just be re-rendered here (there's no policy data left to build it
+from). */}}
+{{define "content"}}
+<div id="page-content">
+  <p><strong>{{.ID}}</strong> is no longer active on the running engine, but removing it failed: {{.Err}}</p>
+  <p><a href="/policies">Back to policies</a></p>
+</div>
+{{end}}

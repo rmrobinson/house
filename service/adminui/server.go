@@ -20,20 +20,32 @@ import (
 // holds the single shared BridgeService.StreamUpdates subscription every
 // SSE client is fanned out from (see hub.go/sse.go).
 type Server struct {
-	logger *zap.Logger
-	house  api2.HouseServiceClient
-	bridge api2.BridgeServiceClient
-	hub    *deviceHub
-	mux    *http.ServeMux
+	logger    *zap.Logger
+	house     api2.HouseServiceClient
+	bridge    api2.BridgeServiceClient
+	policy    api2.PolicyServiceClient
+	hub       *deviceHub
+	policyHub *policyHub
+	mux       *http.ServeMux
 }
 
-// newServer wires up every route and starts the shared device update hub,
-// which runs for the lifetime of ctx.
-func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient) *Server {
+// newServer wires up every route and starts the shared device/policy update
+// hubs, which run for the lifetime of ctx. policy may be nil - adminui.
+// policy_addr is optional; the /policies and /logs routes still register,
+// but 500 on every request if called with none configured (matching the
+// same "obvious 500" this repo's other daemons show for a missing required
+// dependency, rather than papering over it with a placeholder empty page).
+func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient, policySvc api2.PolicyServiceClient) *Server {
 	hub := newDeviceHub(logger, bridge)
 	go hub.run(ctx)
 
-	s := &Server{logger: logger, house: house, bridge: bridge, hub: hub}
+	var pHub *policyHub
+	if policySvc != nil {
+		pHub = newPolicyHub(logger, policySvc)
+		go pHub.run(ctx)
+	}
+
+	s := &Server{logger: logger, house: house, bridge: bridge, policy: policySvc, hub: hub, policyHub: pHub}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
@@ -62,6 +74,15 @@ func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceC
 	mux.HandleFunc("GET /devices", s.handleDevicesList)
 	mux.HandleFunc("GET /devices/{id}/room-picker", s.handleDeviceRoomPicker)
 	mux.HandleFunc("POST /devices/{id}/link", s.handleDeviceLink)
+
+	mux.HandleFunc("GET /policies", s.handlePoliciesList)
+	mux.HandleFunc("POST /policies", s.handlePolicySubmit)
+	mux.HandleFunc("GET /policies/new", s.handlePolicyEditorNew)
+	mux.HandleFunc("GET /policies/{id}", s.handlePolicyDetail)
+	mux.HandleFunc("GET /policies/{id}/edit", s.handlePolicyEditorEdit)
+	mux.HandleFunc("POST /policies/{id}/delete", s.handlePolicyDelete)
+	mux.HandleFunc("GET /policies/{id}/simulate", s.handlePolicySimulate)
+	mux.HandleFunc("GET /logs", s.handleLogs)
 
 	mux.HandleFunc("GET /events", s.handleSSE)
 

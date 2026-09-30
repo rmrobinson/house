@@ -28,18 +28,35 @@ var pages = map[string]*template.Template{
 	// single block.
 	"room":    mustParsePage("templates/room.html", "templates/partials/device_info.html"),
 	"devices": mustParsePage("templates/devices.html", "templates/partials/device_info.html"),
+	// policies/policy_detail/policy_editor need policyTemplateFuncs (see
+	// policy_view.go) for formatTime/duration/conditionPretty/
+	// onConditionFalseStr - ported from service/policy/http.go, which
+	// registered the same funcs on its own now-removed template set.
+	"policies":             mustParsePageFuncs(policyTemplateFuncs, "templates/policies.html", "templates/partials/policy_status.html"),
+	"policy_detail":        mustParsePageFuncs(policyTemplateFuncs, "templates/policy_detail.html", "templates/partials/policy_status.html", "templates/partials/log_row.html"),
+	"policy_editor":        mustParsePageFuncs(policyTemplateFuncs, "templates/policy_editor.html"),
+	"logs":                 mustParsePageFuncs(policyTemplateFuncs, "templates/logs.html", "templates/partials/log_row.html"),
+	"policy_delete_failed": mustParsePage("templates/policy_delete_failed.html"),
 }
 
-// fragments are partials rendered standalone (no layout) - pickers, and
-// device_info again for the SSE relay (sse.go)'s device_info_oob block,
-// which has no page of its own to attach to.
+// fragments are partials rendered standalone (no layout) - pickers,
+// device_info again for the SSE relay (sse.go)'s device_info_oob block
+// (which has no page of its own to attach to), and the same for
+// policy_status/log_row's OOB blocks.
 var fragments = map[string]*template.Template{
-	"device_picker": template.Must(template.ParseFS(templatesFS, "templates/partials/device_picker.html")),
-	"room_picker":   template.Must(template.ParseFS(templatesFS, "templates/partials/room_picker.html")),
-	"device_info":   template.Must(template.ParseFS(templatesFS, "templates/partials/device_info.html")),
+	"device_picker":   template.Must(template.ParseFS(templatesFS, "templates/partials/device_picker.html")),
+	"room_picker":     template.Must(template.ParseFS(templatesFS, "templates/partials/room_picker.html")),
+	"device_info":     template.Must(template.ParseFS(templatesFS, "templates/partials/device_info.html")),
+	"policy_status":   template.Must(template.New("").Funcs(policyTemplateFuncs).ParseFS(templatesFS, "templates/partials/policy_status.html")),
+	"log_row":         template.Must(template.New("").Funcs(policyTemplateFuncs).ParseFS(templatesFS, "templates/partials/log_row.html")),
+	"policy_simulate": template.Must(template.ParseFS(templatesFS, "templates/partials/policy_simulate.html")),
 }
 
 func mustParsePage(files ...string) *template.Template {
+	return mustParsePageFuncs(nil, files...)
+}
+
+func mustParsePageFuncs(funcs template.FuncMap, files ...string) *template.Template {
 	all := append([]string{"templates/layout.html"}, files...)
-	return template.Must(template.ParseFS(templatesFS, all...))
+	return template.Must(template.New("layout.html").Funcs(funcs).ParseFS(templatesFS, all...))
 }

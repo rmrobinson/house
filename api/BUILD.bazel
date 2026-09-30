@@ -11,6 +11,7 @@ proto_library(
     srcs = [
         "bridge.proto",
         "house.proto",
+        "policy.proto",
         "sensor.proto",
     ],
     visibility = ["//visibility:public"],
@@ -19,6 +20,7 @@ proto_library(
         "//api/device:device_proto",
         "@googleapis//google/rpc:status_proto",
         "@protobuf//:empty_proto",
+        "@protobuf//:timestamp_proto",
     ],
 )
 

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -15,6 +16,12 @@ import (
 // defaultExecutionTimeout is the maximum runtime for a single script
 // execution when the engine isn't configured with WithExecutionTimeout.
 const defaultExecutionTimeout = 30 * time.Second
+
+// ErrPolicyNotRegistered is returned by Unregister when id has no
+// registered policy - distinct from a persistence failure partway through
+// unregistering one that was, so a caller (e.g. the gRPC Service) can map
+// the two to different status codes.
+var ErrPolicyNotRegistered = errors.New("policy not registered")
 
 // UI-facing Bus topics, published whenever something a UI would want to
 // live-update on. uiPolicyChangedTopic's Payload is the changed policy's ID
@@ -389,7 +396,7 @@ func (e *Engine) Unregister(id string) error {
 	e.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("policy %q not registered", id)
+		return fmt.Errorf("policy %q: %w", id, ErrPolicyNotRegistered)
 	}
 
 	// Cancel id's condition evaluation (and, for Interrupt, its running

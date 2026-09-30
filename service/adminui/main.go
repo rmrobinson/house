@@ -77,7 +77,19 @@ func main() {
 	}
 	bridgeClient := api2.NewBridgeServiceClient(bridgeConn)
 
-	srv := newServer(context.Background(), logger, houseClient, bridgeClient)
+	// Optional: adminui.policy_addr points at a policyd instance for the
+	// /policies and /logs pages. Left unset, those routes still register but
+	// error on every request - see newServer's doc comment.
+	var policyClient api2.PolicyServiceClient
+	if policyAddr := viper.GetString("adminui.policy_addr"); len(policyAddr) > 0 {
+		policyConn, err := grpcutil.Dial(policyAddr, tlsCfg)
+		if err != nil {
+			logger.Fatal("unable to dial policy service", zap.String("address", policyAddr), zap.Error(err))
+		}
+		policyClient = api2.NewPolicyServiceClient(policyConn)
+	}
+
+	srv := newServer(context.Background(), logger, houseClient, bridgeClient, policyClient)
 
 	port := viper.GetInt("adminui.listen_port")
 	logger.Info("serving admin ui", zap.Int("port", port))

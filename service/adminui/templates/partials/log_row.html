@@ -1,0 +1,17 @@
+{{/* log_row is one execution's row, used both for a table's normal initial
+render and, via log_row_oob below, for a live push. */}}
+{{define "log_row"}}<tr>{{template "log_row_cells" .}}</tr>{{end}}
+
+{{/* log_row_oob prepends a freshly-completed execution's row into Target
+(a table body's CSS id, e.g. "#logs-tbody" or "#logs-tbody-<policyID>") via
+the SSE relay (sse.go's writePolicyEvent). Unlike policy_status_cell_oob
+this never patches an existing element - it always inserts a new one, since
+a completed execution is never revised in place (exactly one ExecutionLog
+per execution, appended only once its status is already final). */}}
+{{define "log_row_oob"}}<tr hx-swap-oob="afterbegin:{{.Target}}">{{template "log_row_cells" .Log}}</tr>{{end}}
+
+{{define "log_row_cells"}}<td><a href="/policies/{{.PolicyID}}">{{.PolicyID}}</a></td>
+<td>{{formatTime .StartedAt}}</td>
+<td>{{duration .}}</td>
+<td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+<td>{{.Error}}</td>{{end}}

@@ -7,9 +7,13 @@ adminui:
   # service/house/cmd/housed/housed.example.yaml). Set this explicitly only
   # if the facade runs as its own bridgefacaded process.
   bridge_facade_addr: ""
-  # Optional: mutual TLS for both dials above. Leave all three blank (the
+  # Optional: address of a policyd instance's PolicyService, for the
+  # /policies and /logs pages. Leave unset to run without the policy engine
+  # UI (every other page still works; those two error on every request).
+  policy_addr: ""
+  # Optional: mutual TLS for every dial above. Leave all three blank (the
   # default) to speak plaintext gRPC. ca_file is the CA (e.g. step-ca's
-  # root) trusted to sign housed's/the facade's certificate.
+  # root) trusted to sign housed's/the facade's/policyd's certificate.
   tls:
     cert_file: ""
     key_file: ""
