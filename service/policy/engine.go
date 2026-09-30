@@ -477,6 +477,48 @@ func (e *Engine) LogsForPolicy(policyID string) []ExecutionLog {
 	return out
 }
 
+// LastLog returns policyID's most recent ExecutionLog, or ok=false if it has
+// none.
+func (e *Engine) LastLog(policyID string) (l ExecutionLog, ok bool) {
+	e.logsMu.Lock()
+	defer e.logsMu.Unlock()
+
+	for _, entry := range e.logs {
+		if entry.PolicyID == policyID {
+			l, ok = entry, true
+		}
+	}
+	return l, ok
+}
+
+// RecentLogs returns up to limit ExecutionLogs matching policyID (every
+// policy's, if empty), newest first; limit <= 0 means unlimited. It prefers
+// Store.GetLogs when a store is configured - a bounded, indexed query -
+// rather than always scanning e.logs (itself bounded to maxInMemoryLogs, see
+// appendLog) and reversing/truncating it in memory, which is only done as a
+// fallback for a store-less Engine.
+func (e *Engine) RecentLogs(policyID string, limit int) ([]ExecutionLog, error) {
+	if e.store != nil {
+		return e.store.GetLogs(policyID, limit)
+	}
+
+	var all []ExecutionLog
+	if policyID != "" {
+		all = e.LogsForPolicy(policyID)
+	} else {
+		all = e.Logs()
+	}
+
+	if limit <= 0 || limit > len(all) {
+		limit = len(all)
+	}
+	out := make([]ExecutionLog, limit)
+	for i := 0; i < limit; i++ {
+		out[i] = all[len(all)-1-i]
+	}
+	return out, nil
+}
+
 // LastLogs returns the most recent ExecutionLog for every policy that has
 // at least one, keyed by policy ID, in a single pass over the log history -
 // for a caller (e.g. the policies list page) that wants every policy's last

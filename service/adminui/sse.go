@@ -112,12 +112,18 @@ func (s *Server) writePolicyEvent(w http.ResponseWriter, ev *api2.PolicyEvent) b
 	var frag bytes.Buffer
 	var renderErr error
 
-	switch {
-	case ev.GetPolicyChanged() != nil:
+	// Switched on which oneof case is actually set, not a value-emptiness
+	// check like ev.GetPolicyRemoved() != "" - a removed policy's id is a
+	// caller-supplied string with no length restriction, so an empty one
+	// would otherwise be indistinguishable from the oneof being unset
+	// entirely (falling through to default and silently dropping the
+	// event).
+	switch ev.GetEvent().(type) {
+	case *api2.PolicyEvent_PolicyChanged:
 		renderErr = fragments["policy_status"].ExecuteTemplate(&frag, "policy_status_cell_oob", policyToView(ev.GetPolicyChanged()))
-	case ev.GetPolicyRemoved() != "":
+	case *api2.PolicyEvent_PolicyRemoved:
 		renderErr = fragments["policy_status"].ExecuteTemplate(&frag, "policy_status_removed", ev.GetPolicyRemoved())
-	case ev.GetLogAppended() != nil:
+	case *api2.PolicyEvent_LogAppended:
 		l := executionLogToView(ev.GetLogAppended())
 		for _, target := range []string{"#logs-tbody", "#logs-tbody-" + l.PolicyID} {
 			data := struct {

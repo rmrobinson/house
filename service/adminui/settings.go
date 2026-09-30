@@ -129,6 +129,12 @@ func (a *app) rebuild(ep endpoints) error {
 	if old != nil {
 		old.teardown()
 	}
+	// Set only now that newS is actually the serving generation - setting it
+	// any earlier (e.g. inside dialServer/newServer, before the persist
+	// above) would leave it reflecting a rebuild that dialed successfully
+	// but then failed to persist, while a.current (and every in-flight
+	// request) stayed on the old generation.
+	policyConfigured.Store(newS.policy != nil)
 	return nil
 }
 
@@ -169,8 +175,8 @@ func (a *app) handleSettingsSave(w http.ResponseWriter, r *http.Request) {
 	// /events connection (templates/layout.html's hx-ext="sse") is still
 	// subscribed to the old generation's now-quiescent hub (see
 	// Server.teardown), so it has to reconnect - which only happens on a
-	// fresh page load, the same way opening a new tab does. Same technique
-	// as redirectAfterDelete (server.go) for "nothing sensible to re-render
-	// in place", just to this same page instead of elsewhere.
-	w.Header().Set("HX-Redirect", "/settings")
+	// fresh page load, the same way opening a new tab does. redirectAfterDelete
+	// (server.go) is the same "nothing sensible to re-render in place"
+	// mechanism, just to this same page instead of elsewhere.
+	redirectAfterDelete(w, "/settings")
 }

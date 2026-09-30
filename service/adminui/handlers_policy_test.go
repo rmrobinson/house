@@ -136,6 +136,42 @@ func TestHandlePolicySubmitCreatesPolicy(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "test.created")
 }
 
+// TestHandlePolicyEditorEditPrefillsForm guards against handlePolicyEditorEdit
+// regressing to a blank form: it should populate the editor from the
+// existing policy's ID/script/condition JSON/on-condition-false, and from
+// the concurrently-fetched condition type list.
+func TestHandlePolicyEditorEditPrefillsForm(t *testing.T) {
+	s, _ := startTestPolicyServer(t)
+	createTestPolicy(t, s, "test.editme")
+
+	rec := httptest.NewRecorder()
+	s.handlePolicyEditorEdit(rec, newTestRequest("GET", "/policies/test.editme/edit", "", map[string]string{"id": "test.editme"}))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `value="test.editme"`)
+	assert.Contains(t, body, "x=1")
+	assert.Contains(t, body, "test.trigger")
+}
+
+// TestHandlePolicySubmitMalformedRequestShowsFlash guards the ParseForm
+// error branch: a request body ParseForm can't decode should still render
+// the editor (as a new/blank form) with a flash, not fail some other way.
+func TestHandlePolicySubmitMalformedRequestShowsFlash(t *testing.T) {
+	s, _ := startTestPolicyServer(t)
+
+	req := httptest.NewRequest("POST", "/policies", strings.NewReader("id=%zz"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rec := httptest.NewRecorder()
+	s.handlePolicySubmit(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, rec.Header().Get("HX-Redirect"))
+	assert.Contains(t, rec.Body.String(), "invalid form")
+	assert.Contains(t, rec.Body.String(), `class="flash flash-error"`)
+}
+
 func TestHandlePolicySubmitRejectsBadConditionJSON(t *testing.T) {
 	s, _ := startTestPolicyServer(t)
 

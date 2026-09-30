@@ -16,25 +16,28 @@ const (
 	hubReconnectMaxDelay = 30 * time.Second
 )
 
-// deviceHub maintains a single upstream BridgeService.StreamUpdates
-// subscription and fans DeviceUpdate events out to every subscribed SSE
-// client (see handleSSE), so N open browser tabs cost one upstream stream -
-// and one initial-state replay, which no subscriber even needs, since a
-// DeviceUpdate only ever swaps a device_info cell a page already rendered
-// from its own GetDevice/ListDevices call - instead of N.
-type deviceHub struct {
+// hub maintains a single upstream gRPC server-streaming subscription and
+// fans its messages out to every subscribed SSE client (see handleSSE), so N
+// open browser tabs cost one upstream stream instead of N - the shared
+// mechanics behind deviceHub (BridgeService.StreamUpdates) and policyHub
+// (PolicyService.StreamEvents), so a fix to the reconnect/backoff/broadcast
+// logic only has to be made once, not once per stream type.
+type hub[T any] struct {
 	logger *zap.Logger
-	bridge api2.BridgeServiceClient
+	// connect opens one attempt at the upstream stream, returning a Recv
+	// func to pull messages from it - e.g. bridge.StreamUpdates(ctx, ...)
+	// then that call's own stream.Recv, bound as a value.
+	connect func(ctx context.Context) (func() (T, error), error)
 
 	mu   sync.Mutex
-	subs map[chan *api2.Update]struct{}
+	subs map[chan T]struct{}
 }
 
-func newDeviceHub(logger *zap.Logger, bridge api2.BridgeServiceClient) *deviceHub {
-	return &deviceHub{
-		logger: logger,
-		bridge: bridge,
-		subs:   make(map[chan *api2.Update]struct{}),
+func newHub[T any](logger *zap.Logger, connect func(ctx context.Context) (func() (T, error), error)) *hub[T] {
+	return &hub[T]{
+		logger:  logger,
+		connect: connect,
+		subs:    make(map[chan T]struct{}),
 	}
 }
 
@@ -42,11 +45,13 @@ func newDeviceHub(logger *zap.Logger, bridge api2.BridgeServiceClient) *deviceHu
 // reconnecting with jittered backoff on drop - existing SSE clients simply
 // stop seeing updates while a reconnect is in flight, rather than having
 // their own HTTP connection torn down. Call it from its own goroutine.
-func (h *deviceHub) run(ctx context.Context) {
+// logMsg labels the reconnect warning with which stream dropped (e.g.
+// "bridge update stream ended, reconnecting").
+func (h *hub[T]) run(ctx context.Context, logMsg string) {
 	backoff := hubReconnectMinDelay
 	for ctx.Err() == nil {
 		if err := h.streamOnce(ctx); err != nil && ctx.Err() == nil {
-			h.logger.Warn("bridge update stream ended, reconnecting", zap.Error(err))
+			h.logger.Warn(logMsg, zap.Error(err))
 		}
 
 		select {
@@ -58,41 +63,41 @@ func (h *deviceHub) run(ctx context.Context) {
 	}
 }
 
-func (h *deviceHub) streamOnce(ctx context.Context) error {
-	stream, err := h.bridge.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
+func (h *hub[T]) streamOnce(ctx context.Context) error {
+	recv, err := h.connect(ctx)
 	if err != nil {
 		return err
 	}
 
 	for {
-		update, err := stream.Recv()
+		v, err := recv()
 		if err != nil {
 			return err
 		}
-		h.broadcast(update)
+		h.broadcast(v)
 	}
 }
 
-func (h *deviceHub) broadcast(update *api2.Update) {
+func (h *hub[T]) broadcast(v T) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	for ch := range h.subs {
 		select {
-		case ch <- update:
+		case ch <- v:
 		default:
 			// Slow subscriber - drop rather than block every other
-			// subscriber on it. The device_info cell it missed just stays
-			// stale until the next update for that device arrives.
+			// subscriber on it. The cell/row it missed just stays stale
+			// until the next message arrives.
 		}
 	}
 }
 
-// subscribe registers a new subscriber, returning its update channel and an
+// subscribe registers a new subscriber, returning its message channel and an
 // unsubscribe func the caller must call exactly once when done (e.g. via
-// defer) to stop receiving updates and release the channel.
-func (h *deviceHub) subscribe() (<-chan *api2.Update, func()) {
-	ch := make(chan *api2.Update, 16)
+// defer) to stop receiving messages and release the channel.
+func (h *hub[T]) subscribe() (<-chan T, func()) {
+	ch := make(chan T, 16)
 
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
@@ -103,4 +108,19 @@ func (h *deviceHub) subscribe() (<-chan *api2.Update, func()) {
 		delete(h.subs, ch)
 		h.mu.Unlock()
 	}
+}
+
+// deviceHub is a hub fanning out BridgeService.StreamUpdates, so a
+// device_info cell a page already rendered from its own GetDevice/
+// ListDevices call can be patched live - see handleSSE.
+type deviceHub = hub[*api2.Update]
+
+func newDeviceHub(logger *zap.Logger, bridge api2.BridgeServiceClient) *deviceHub {
+	return newHub(logger, func(ctx context.Context) (func() (*api2.Update, error), error) {
+		stream, err := bridge.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
+		if err != nil {
+			return nil, err
+		}
+		return stream.Recv, nil
+	})
 }

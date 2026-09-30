@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -48,23 +49,50 @@ type policyDetailPageData struct {
 	Logs []executionLogView
 }
 
+// writePolicyFetchError writes the appropriate response for err, as returned
+// by PolicyService.GetPolicy: a plain 404 (a policy simply not existing is
+// an ordinary, expected outcome of a lookup by ID, not a request failure
+// worth httpError's error-level log) for NotFound, or httpError's generic
+// handling for anything else. Shared by every handler that fetches a single
+// policy by ID up front.
+func (s *Server) writePolicyFetchError(w http.ResponseWriter, r *http.Request, err error) {
+	if status.Code(err) == codes.NotFound {
+		http.Error(w, "policy not found", http.StatusNotFound)
+		return
+	}
+	s.httpError(w, r, err)
+}
+
 func (s *Server) handlePolicyDetail(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx := r.Context()
 
-	p, err := s.policy.GetPolicy(ctx, &api2.GetPolicyRequest{Id: id})
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			http.Error(w, "policy not found", http.StatusNotFound)
-			return
-		}
-		s.httpError(w, r, err)
+	// GetPolicy and listLogs are independent RPCs (logs are keyed by id from
+	// the URL, not by anything GetPolicy returns) - run concurrently rather
+	// than paying RTT(GetPolicy) + RTT(listLogs) for every page load.
+	var wg sync.WaitGroup
+	var p *api2.Policy
+	var policyErr error
+	var logs []executionLogView
+	var logsErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		p, policyErr = s.policy.GetPolicy(ctx, &api2.GetPolicyRequest{Id: id})
+	}()
+	go func() {
+		defer wg.Done()
+		logs, logsErr = s.listLogs(ctx, id)
+	}()
+	wg.Wait()
+
+	if policyErr != nil {
+		s.writePolicyFetchError(w, r, policyErr)
 		return
 	}
-
-	logs, err := s.listLogs(ctx, id)
-	if err != nil {
-		s.httpError(w, r, err)
+	if logsErr != nil {
+		s.httpError(w, r, logsErr)
 		return
 	}
 
@@ -91,11 +119,22 @@ func (s *Server) handlePolicyDelete(w http.ResponseWriter, r *http.Request) {
 		// Same reasoning as service/policy/http.go's original handler: a
 		// plain http.Error would go unseen (htmx's default responseHandling
 		// doesn't swap 4xx/5xx bodies into the target), so this renders a
-		// minimal replacement fragment instead.
-		s.respond(w, "policy_delete_failed", struct{ ID, Err string }{ID: id, Err: grpcMessage(err)}, grpcMessage(err), true)
+		// minimal replacement fragment instead. NotFound gets its own copy
+		// (below, via Gone) rather than DeletePolicy's raw message - it
+		// means "id was already gone" (e.g. a double-submit), not that
+		// removal was attempted and failed, and grpcMessage(err) here would
+		// otherwise read as "removing it failed: policy not registered",
+		// implying the opposite of what happened.
+		gone := status.Code(err) == codes.NotFound
+		msg := grpcMessage(err)
+		s.respond(w, "policy_delete_failed", struct {
+			ID   string
+			Err  string
+			Gone bool
+		}{ID: id, Err: msg, Gone: gone}, msg, true)
 		return
 	}
-	w.Header().Set("HX-Redirect", "/policies")
+	redirectAfterDelete(w, "/policies")
 }
 
 type policyEditorData struct {
@@ -130,19 +169,32 @@ func (s *Server) handlePolicyEditorEdit(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	ctx := r.Context()
 
-	p, err := s.policy.GetPolicy(ctx, &api2.GetPolicyRequest{Id: id})
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
-			http.Error(w, "policy not found", http.StatusNotFound)
-			return
-		}
-		s.httpError(w, r, err)
+	// GetPolicy and listConditionTypes are independent RPCs - run
+	// concurrently rather than paying RTT(GetPolicy) + RTT(listConditionTypes)
+	// for every "edit policy" page load.
+	var wg sync.WaitGroup
+	var p *api2.Policy
+	var policyErr error
+	var typeNames []string
+	var typesErr error
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		p, policyErr = s.policy.GetPolicy(ctx, &api2.GetPolicyRequest{Id: id})
+	}()
+	go func() {
+		defer wg.Done()
+		typeNames, typesErr = s.listConditionTypes(ctx)
+	}()
+	wg.Wait()
+
+	if policyErr != nil {
+		s.writePolicyFetchError(w, r, policyErr)
 		return
 	}
-
-	typeNames, err := s.listConditionTypes(ctx)
-	if err != nil {
-		s.httpError(w, r, err)
+	if typesErr != nil {
+		s.httpError(w, r, typesErr)
 		return
 	}
 
@@ -176,9 +228,12 @@ func (s *Server) handlePolicySubmit(w http.ResponseWriter, r *http.Request) {
 		OnConditionFalse:  onConditionFalse,
 		IsNew:             r.FormValue("is_new") == "true",
 	}
-	data.TypeNames, _ = s.listConditionTypes(ctx)
 
 	if data.ID == "" {
+		// Only fetched on a branch that actually re-renders policy_editor -
+		// the common successful-save path below never reads TypeNames, so it
+		// shouldn't pay for the RPC.
+		data.TypeNames, _ = s.listConditionTypes(ctx)
 		s.respond(w, "policy_editor", data, "policy ID is required", true)
 		return
 	}
@@ -190,13 +245,14 @@ func (s *Server) handlePolicySubmit(w http.ResponseWriter, r *http.Request) {
 		OnConditionFalse:  data.OnConditionFalse,
 	})
 	if err != nil {
+		data.TypeNames, _ = s.listConditionTypes(ctx)
 		s.respond(w, "policy_editor", data, grpcMessage(err), true)
 		return
 	}
 
 	// Nothing sensible to re-render on this response: navigate the browser
-	// to the policy the caller just created or edited, matching this app's
-	// redirectAfterDelete convention for the same "old page no longer
+	// to the policy the caller just created or edited, via the same
+	// mechanism redirectAfterDelete uses for the same "old page no longer
 	// applies" situation.
-	w.Header().Set("HX-Redirect", "/policies/"+url.PathEscape(data.ID))
+	redirectAfterDelete(w, "/policies/"+url.PathEscape(data.ID))
 }

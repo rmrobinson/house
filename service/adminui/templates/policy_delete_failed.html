@@ -5,7 +5,11 @@ can't just be re-rendered here (there's no policy data left to build it
 from). */}}
 {{define "content"}}
 <div id="page-content">
+  {{if .Gone}}
+  <p><strong>{{.ID}}</strong> was already removed (e.g. by another request).</p>
+  {{else}}
   <p><strong>{{.ID}}</strong> is no longer active on the running engine, but removing it failed: {{.Err}}</p>
+  {{end}}
   <p><a href="/policies">Back to policies</a></p>
 </div>
 {{end}}

@@ -129,15 +129,17 @@ func (s *Server) listPolicies(ctx context.Context) ([]policyView, error) {
 }
 
 // maxLogRows caps how many execution log rows a single page renders, newest
-// first - matches service/policy/http.go's own cap, ported here since
-// PolicyService.ListLogs returns oldest-first same as Engine.Logs() did.
+// first - matches service/policy/http.go's own cap. Passed as
+// ListLogsRequest.Limit so PolicyService bounds the query itself, rather
+// than this streaming (and this handler buffering) every matching log ever
+// recorded just to keep the newest maxLogRows of them.
 const maxLogRows = 200
 
 // listLogs returns up to maxLogRows of policyID's logs (every policy's, if
 // policyID is empty), newest first.
 func (s *Server) listLogs(ctx context.Context, policyID string) ([]executionLogView, error) {
 	items, err := streamAll(func(cb func(*api2.ExecutionLog) error) error {
-		stream, err := s.policy.ListLogs(ctx, &api2.ListLogsRequest{PolicyId: policyID})
+		stream, err := s.policy.ListLogs(ctx, &api2.ListLogsRequest{PolicyId: policyID, Limit: maxLogRows})
 		if err != nil {
 			return err
 		}
@@ -147,9 +149,9 @@ func (s *Server) listLogs(ctx context.Context, policyID string) ([]executionLogV
 		return nil, err
 	}
 
-	out := make([]executionLogView, 0, min(len(items), maxLogRows))
-	for i := len(items) - 1; i >= 0 && len(out) < maxLogRows; i-- {
-		out = append(out, executionLogToView(items[i]))
+	out := make([]executionLogView, len(items))
+	for i, l := range items {
+		out[i] = executionLogToView(l)
 	}
 	return out, nil
 }

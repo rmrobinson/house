@@ -207,5 +207,25 @@ func main() {
 
 	<-ctx.Done()
 	logger.Info("shutting down")
-	grpcServer.GracefulStop()
+
+	// GracefulStop waits for every in-flight RPC to finish, including a
+	// StreamEvents call (adminui's policyHub holds one open indefinitely by
+	// design - see service/adminui/policy_hub.go) that only ends once its
+	// own ctx is cancelled or the connection drops - neither of which
+	// GracefulStop itself triggers. Bounded the same way the old HTTP
+	// server's Shutdown(10s) was, so a connected adminui (or any other
+	// long-lived StreamEvents client) can no longer wedge shutdown
+	// indefinitely; Stop forcibly cuts any RPC still running past the
+	// deadline.
+	stopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		logger.Warn("graceful shutdown timed out; forcing stop")
+		grpcServer.Stop()
+	}
 }

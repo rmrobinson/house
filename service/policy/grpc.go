@@ -112,7 +112,11 @@ func (s *Service) GetPolicy(ctx context.Context, req *api2.GetPolicyRequest) (*a
 	if !ok {
 		return nil, status.Error(codes.NotFound, "policy doesn't exist")
 	}
-	return s.policyInfoToAPI(info, nil)
+	var last *ExecutionLog
+	if l, ok := s.engine.LastLog(req.GetId()); ok {
+		last = &l
+	}
+	return s.policyInfoToAPI(info, last)
 }
 
 // SavePolicy upserts a policy, matching Engine.Register's own
@@ -133,7 +137,15 @@ func (s *Service) SavePolicy(ctx context.Context, req *api2.SavePolicyRequest) (
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	info, _ := s.engine.Policy(req.GetId())
+	info, ok := s.engine.Policy(req.GetId())
+	if !ok {
+		// Register just succeeded above; only a concurrent Unregister of
+		// this same id, racing right after, gets here. Reporting it as
+		// Internal rather than fabricating a response from a zero-value
+		// info: the save itself worked, but what the engine now holds for
+		// id is "nothing", not "what was just saved".
+		return nil, status.Errorf(codes.Internal, "policy %q: saved but no longer registered (removed concurrently)", req.GetId())
+	}
 	return s.policyInfoToAPI(info, nil)
 }
 
@@ -153,15 +165,14 @@ func (s *Service) SimulatePolicy(ctx context.Context, req *api2.SimulatePolicyRe
 	return &api2.SimulatePolicyResponse{Result: result, Registered: registered}, nil
 }
 
-// ListLogs streams every ExecutionLog matching req, oldest first - the same
-// order Engine.Logs()/LogsForPolicy() already return, so callers wanting
-// newest-first (e.g. a UI) reverse/truncate client-side themselves.
+// ListLogs streams up to req.Limit ExecutionLogs matching req, newest first
+// (see Engine.RecentLogs) - bounded server-side so a caller wanting only the
+// most recent rows (e.g. a UI) doesn't pay for streaming and buffering the
+// entire matching history just to truncate it client-side.
 func (s *Service) ListLogs(req *api2.ListLogsRequest, stream api2.PolicyService_ListLogsServer) error {
-	var logs []ExecutionLog
-	if id := req.GetPolicyId(); id != "" {
-		logs = s.engine.LogsForPolicy(id)
-	} else {
-		logs = s.engine.Logs()
+	logs, err := s.engine.RecentLogs(req.GetPolicyId(), int(req.GetLimit()))
+	if err != nil {
+		return status.Error(codes.Internal, err.Error())
 	}
 
 	for _, l := range logs {

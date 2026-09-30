@@ -51,6 +51,7 @@ func newApp(rootCtx context.Context, logger *zap.Logger, configPath string, tlsC
 		return nil, err
 	}
 	a.current.Store(s)
+	policyConfigured.Store(s.policy != nil)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))

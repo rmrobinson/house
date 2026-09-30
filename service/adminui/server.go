@@ -15,21 +15,23 @@ import (
 	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
-// policyConfigured reports whether adminui.policy_addr was set at startup -
-// read by navFuncs' policyAvailable (templates.go) so every page's nav can
-// grey out the Policies/Execution Log links, and written once by newServer
-// before it returns (i.e. before ListenAndServe starts handling requests,
-// so every read-side goroutine is guaranteed to see the write - see the Go
-// memory model's rule that a goroutine's creation happens-before its
-// execution begins).
+// policyConfigured reports whether the current Server generation has a
+// policy client - read by navFuncs' policyAvailable (templates.go) so every
+// page's nav can grey out the Policies/Execution Log links. It is set by
+// app.newApp (the first generation) and app.rebuild (settings.go, every
+// generation after a Settings save) only once that generation is actually
+// the one serving requests - never by newServer itself, which runs before a
+// rebuild's persistence step: setting it there would let a rebuild that
+// dials successfully but then fails to persist leave this reflecting the
+// abandoned generation instead of the old one that's still live.
 //
 // This is a package-level var rather than a *Server field because
 // html/template's FuncMap is fixed when each page's *template.Template is
 // parsed at package init (see templates.go's `pages` var), before any
 // *Server exists to close over - adminui only ever runs one Server per
-// process, so a singleton is safe. house_addr has no equivalent var: it's
-// mandatory (see main.go), so there's no "not configured" state for it to
-// track.
+// process at a time (rebuild fully swaps generations, never runs two), so a
+// singleton is safe. house_addr has no equivalent var: it's mandatory (see
+// main.go), so there's no "not configured" state for it to track.
 var policyConfigured atomic.Bool
 
 // Server holds the gRPC clients one "generation" of this admin UI depends on
@@ -67,15 +69,13 @@ type Server struct {
 // renders the policy_unavailable page (with setup instructions) instead of
 // calling into a nil client for every one of them.
 func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient, policySvc api2.PolicyServiceClient) *Server {
-	policyConfigured.Store(policySvc != nil)
-
 	hub := newDeviceHub(logger, bridge)
-	go hub.run(ctx)
+	go hub.run(ctx, "bridge update stream ended, reconnecting")
 
 	var pHub *policyHub
 	if policySvc != nil {
 		pHub = newPolicyHub(logger, policySvc)
-		go pHub.run(ctx)
+		go pHub.run(ctx, "policy event stream ended, reconnecting")
 	}
 
 	return &Server{logger: logger, house: house, bridge: bridge, policy: policySvc, hub: hub, policyHub: pHub}

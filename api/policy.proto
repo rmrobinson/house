@@ -42,9 +42,11 @@ message Policy {
   // Active is the condition's last-known evaluated value. Read-only; ignored
   // on SavePolicy.
   bool active = 5;
-  // Populated only by ListPolicies, as a single-pass join against the
-  // engine's execution log so the list page doesn't need a second RPC per
-  // row. Unset elsewhere.
+  // Populated by ListPolicies (as a single-pass join against the engine's
+  // execution log, so the list page doesn't need a second RPC per row) and
+  // by GetPolicy. Unset on SavePolicy's response and on the policy_changed
+  // event in StreamEvents, which is always immediately paired with the log
+  // event that changed it.
   ExecutionLog last_log = 6;
 }
 
@@ -95,6 +97,11 @@ message SimulatePolicyResponse {
 message ListLogsRequest {
   // Empty means every policy's logs, matching Engine.Logs().
   string policy_id = 1;
+  // Caps how many logs are returned, newest first. 0 means unlimited.
+  // Bounding this server-side (rather than every caller streaming the full
+  // matching history and truncating client-side) matters once history
+  // grows large - see service/policy.Engine.RecentLogs.
+  int32 limit = 2;
 }
 
 message ListConditionTypesResponse {

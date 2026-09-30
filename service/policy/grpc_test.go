@@ -106,6 +106,30 @@ func TestGetPolicyFound(t *testing.T) {
 	assert.Contains(t, p.GetConditionExprJson(), `"trigger"`)
 }
 
+// TestGetPolicyIncludesLastLog guards against a bug where GetPolicy always
+// passed a nil lastLog to policyInfoToAPI, so the policy detail page always
+// showed "never run" regardless of actual execution history - only
+// ListPolicies populated Policy.last_log.
+func TestGetPolicyIncludesLastLog(t *testing.T) {
+	s, e, r := newTestService(t)
+	trigger := registerManualTrigger(t, r, "trigger")
+	require.NoError(t, e.Register(&Policy{
+		ID:            "test.lastlog",
+		ConditionExpr: Use("trigger", struct{}{}),
+		Script:        "x=1",
+	}))
+
+	trigger.set(true)
+	require.Eventually(t, func() bool {
+		return len(e.LogsForPolicy("test.lastlog")) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	p, err := s.GetPolicy(context.Background(), &api2.GetPolicyRequest{Id: "test.lastlog"})
+	require.NoError(t, err)
+	require.NotNil(t, p.GetLastLog(), "GetPolicy should populate LastLog once the policy has run, same as ListPolicies")
+	assert.Equal(t, "test.lastlog", p.GetLastLog().GetPolicyId())
+}
+
 func TestSavePolicyCreatesPolicy(t *testing.T) {
 	s, e, r := newTestService(t)
 	registerManualTrigger(t, r, "trigger")
@@ -208,6 +232,30 @@ func TestListLogs(t *testing.T) {
 	stream = newFakeStream[*api2.ExecutionLog](nil)
 	require.NoError(t, s.ListLogs(&api2.ListLogsRequest{PolicyId: "nonexistent"}, stream))
 	assert.Empty(t, stream.Sent())
+}
+
+// TestListLogsRespectsLimit guards the server-side bound added so a caller
+// (e.g. adminui's logs page) doesn't have to stream and buffer every
+// matching log just to keep the newest few.
+func TestListLogsRespectsLimit(t *testing.T) {
+	s, e, r := newTestService(t)
+
+	for i, id := range []string{"test.limited.a", "test.limited.b", "test.limited.c"} {
+		trigger := registerManualTrigger(t, r, "trigger."+id)
+		require.NoError(t, e.Register(&Policy{
+			ID:            id,
+			ConditionExpr: Use("trigger."+id, struct{}{}),
+			Script:        "x=1",
+		}))
+		trigger.set(true)
+		require.Eventually(t, func() bool {
+			return len(e.LogsForPolicy(id)) == 1
+		}, time.Second, 10*time.Millisecond, "policy %d", i)
+	}
+
+	stream := newFakeStream[*api2.ExecutionLog](nil)
+	require.NoError(t, s.ListLogs(&api2.ListLogsRequest{Limit: 2}, stream))
+	assert.Len(t, stream.Sent(), 2)
 }
 
 func TestListConditionTypes(t *testing.T) {
