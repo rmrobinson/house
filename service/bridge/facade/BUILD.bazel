@@ -39,6 +39,7 @@ go_test(
         "//api",
         "//api/device",
         "//service/bridge",
+        "//service/lib/grpcutil",
         "@com_github_spf13_viper//:viper",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

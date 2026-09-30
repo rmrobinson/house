@@ -1,17 +1,19 @@
 {{define "content"}}
 <div id="page-content">
-  <p>
-    {{if eq .Filter "all"}}<strong>All</strong>{{else}}<a href="/devices?filter=all">All</a>{{end}}
-    ·
-    {{if eq .Filter "unlinked"}}<strong>Unlinked</strong>{{else}}<a href="/devices?filter=unlinked">Unlinked</a>{{end}}
+  <p class="filters">
+    Show only:
+    <a href="{{.Filter.ToggleUnlinked}}" class="filter-chip{{if .Filter.Unlinked}} filter-chip-on{{end}}">Unlinked</a>
+    <a href="{{.Filter.ToggleConnected}}" class="filter-chip{{if .Filter.Connected}} filter-chip-on{{end}}">Connected</a>
+    <span class="hint">{{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
   </p>
 
   <table>
-    <thead><tr><th colspan="2">Device</th><th>Location</th><th></th></tr></thead>
+    <thead><tr><th>Device</th><th>Manufacturer</th><th>Location</th><th></th></tr></thead>
     <tbody>
     {{range .Devices}}
       <tr>
         {{template "device_info" .}}
+        <td>{{.Manufacturer}}{{if .Model}}<br><span class="hint">{{.Model}}</span>{{end}}</td>
         <td>{{.RoomName}}</td>
         <td>
           <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">

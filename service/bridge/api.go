@@ -300,8 +300,8 @@ func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeSe
 			return nil
 		case msg, ok := <-sink.Messages():
 			if !ok {
-				logger.Info("sink stream closed")
-				return nil
+				logger.Warn("update stream fell behind, closing it")
+				return ErrStreamFellBehind
 			}
 
 			update, castOk := msg.(*api2.Update)

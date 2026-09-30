@@ -93,3 +93,25 @@ func TestMessaging(t *testing.T) {
 	messageReceivedWg.Wait()
 	assert.Equal(t, 0, len(s.sinks))
 }
+
+func TestSlowSinkIsDisconnectedNotSilentlyDropped(t *testing.T) {
+	s := NewSource(zaptest.NewLogger(t))
+	slow := s.NewSink()
+	defer slow.Close()
+
+	testMsg := &testMessage{"asdf123"}
+	for i := 0; i < sinkBufferSize+1; i++ {
+		s.SendMessage(testMsg)
+	}
+
+	// Everything buffered before the overflow is still delivered, then the
+	// channel is closed rather than the overflowing message vanishing.
+	for i := 0; i < sinkBufferSize; i++ {
+		msg, ok := <-slow.Messages()
+		assert.True(t, ok)
+		assert.Equal(t, testMsg, msg)
+	}
+	_, ok := <-slow.Messages()
+	assert.False(t, ok)
+	assert.Equal(t, 0, len(s.sinks))
+}

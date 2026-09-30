@@ -1,25 +1,32 @@
+{{/* Opened as a modal by layout.html's htmx:afterSwap handler once this is
+swapped into #picker; a successful Select closes it by way of respond's
+out-of-band clear of #picker. */}}
 {{define "room_picker"}}
-<div class="panel">
-  <h3>Link / move device</h3>
-  <table>
-    <thead><tr><th>Room</th><th></th></tr></thead>
-    <tbody>
-    {{range .Rooms}}
-      <tr>
-        <td>{{.Label}}</td>
-        <td>
-          <form class="inline" hx-post="/devices/{{$.DeviceID}}/link" hx-target="#page-content" hx-swap="outerHTML">
-            <input type="hidden" name="room_id" value="{{.ID}}">
-            <input type="hidden" name="version" value="{{$.Version}}">
-            <button type="submit">Select</button>
-          </form>
-        </td>
-      </tr>
-    {{else}}
-      <tr><td colspan="2">No rooms exist yet - create one under Buildings first.</td></tr>
-    {{end}}
-    </tbody>
-  </table>
-  <button type="button" class="btn-secondary" onclick="document.getElementById('picker').innerHTML=''">Cancel</button>
-</div>
+<dialog class="picker-dialog">
+  <h3>Link / move {{.DeviceName}}</h3>
+  <div class="picker-scroll">
+    <table>
+      <thead><tr><th>Room</th><th></th></tr></thead>
+      <tbody>
+      {{range .Rooms}}
+        <tr>
+          <td>{{.Label}}</td>
+          <td>
+            <form class="inline" hx-post="/devices/{{$.DeviceID}}/link" hx-target="#page-content" hx-swap="outerHTML">
+              <input type="hidden" name="room_id" value="{{.ID}}">
+              <input type="hidden" name="version" value="{{$.Version}}">
+              <button type="submit">Select</button>
+            </form>
+          </td>
+        </tr>
+      {{else}}
+        <tr><td colspan="2">No rooms exist yet - create one under Buildings first.</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  <div class="dialog-actions">
+    <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+  </div>
+</dialog>
 {{end}}

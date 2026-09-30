@@ -1,10 +1,13 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -53,12 +56,19 @@ type roomView struct {
 // RoomID/RoomLabel are populated by the caller when known (empty for a
 // device with no room link).
 type deviceView struct {
-	ID       string
-	Name     string
-	Kind     string
-	Online   bool
-	RoomID   string
-	RoomName string
+	ID   string
+	Name string
+	Kind string
+	// Manufacturer/Model are the bridge-reported, read-only identity of the
+	// hardware - shown alongside Name to tell apart devices whose configured
+	// names are vague or duplicated (e.g. several network clients all named
+	// after their chipset). Model is the marketing name if the bridge set
+	// one, else its model ID.
+	Manufacturer string
+	Model        string
+	Online       bool
+	RoomID       string
+	RoomName     string
 }
 
 func buildingToView(b *api2.Building) buildingView {
@@ -91,19 +101,41 @@ func roomToView(r *api2.Room) roomView {
 		Version:    r.GetVersion(),
 		Type:       r.GetConfig().GetType(),
 	}
-	for _, d := range r.GetDevices() {
+	for _, d := range sortDevices(r.GetDevices()) {
 		rv.Devices = append(rv.Devices, deviceToView(d))
 	}
 	return rv
 }
 
 func deviceToView(d *apiDevice.Device) deviceView {
-	return deviceView{
-		ID:     d.GetId(),
-		Name:   deviceDisplayName(d),
-		Kind:   deviceKind(d),
-		Online: d.GetAddress().GetIsReachable(),
+	model := d.GetModelName()
+	if model == "" {
+		model = d.GetModelId()
 	}
+	return deviceView{
+		ID:           d.GetId(),
+		Name:         deviceDisplayName(d),
+		Kind:         deviceKind(d),
+		Manufacturer: d.GetManufacturer(),
+		Model:        model,
+		Online:       d.GetAddress().GetIsReachable(),
+	}
+}
+
+// sortDevices sorts devices in place by display name (case-insensitively),
+// then manufacturer, then ID, and returns it - every device table and picker
+// in this app lists devices in this one order, rather than whatever order
+// the BridgeService facade happened to iterate its cache in (a Go map, so
+// different on every request).
+func sortDevices(devices []*apiDevice.Device) []*apiDevice.Device {
+	slices.SortFunc(devices, func(a, b *apiDevice.Device) int {
+		return cmp.Or(
+			cmp.Compare(strings.ToLower(deviceDisplayName(a)), strings.ToLower(deviceDisplayName(b))),
+			cmp.Compare(a.GetManufacturer(), b.GetManufacturer()),
+			cmp.Compare(a.GetId(), b.GetId()),
+		)
+	})
+	return devices
 }
 
 // deviceDisplayName falls back to d's ID when Config.Name is unset - a
@@ -224,13 +256,13 @@ func (s *Server) listRoomsByFloor(ctx context.Context, floorID string) ([]*api2.
 
 // listDevices wraps the BridgeService facade's ListDevices - unlike
 // HouseService's List* RPCs this one isn't server-streaming, so no recvAll
-// needed.
+// needed. The result is sorted (see sortDevices).
 func (s *Server) listDevices(ctx context.Context) ([]*apiDevice.Device, error) {
 	resp, err := s.bridge.ListDevices(ctx, &api2.ListDevicesRequest{})
 	if err != nil {
 		return nil, err
 	}
-	return resp.GetDevices(), nil
+	return sortDevices(resp.GetDevices()), nil
 }
 
 // roomOption is one entry in the flat building/floor/room picker used by the
