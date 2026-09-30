@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "configutil",
     srcs = ["secrets.go"],
-    importpath = "github.com/rmrobinson/house/configutil",
+    importpath = "github.com/rmrobinson/house/service/lib/configutil",
     visibility = ["//visibility:public"],
     deps = ["@in_gopkg_yaml_v3//:yaml_v3"],
 )

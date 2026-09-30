@@ -16,7 +16,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

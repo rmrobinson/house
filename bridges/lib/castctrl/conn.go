@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/rmrobinson/house/backoffutil"
+	"github.com/rmrobinson/house/service/lib/backoffutil"
 )
 
 const (

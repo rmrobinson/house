@@ -13,7 +13,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/configutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

@@ -19,7 +19,7 @@ import (
 	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/bridges/lib/homekitctrl"
-	"github.com/rmrobinson/house/configutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

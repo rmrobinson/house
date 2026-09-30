@@ -7,7 +7,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/clients/bridgecli/cmd/bridge"
 	"github.com/rmrobinson/house/clients/bridgecli/cmd/device"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 )

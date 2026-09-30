@@ -9,7 +9,7 @@ go_library(
         "//api",
         "//clients/bridgecli/cmd/bridge",
         "//clients/bridgecli/cmd/device",
-        "//grpcutil",
+        "//service/lib/grpcutil",
         "@com_github_spf13_cobra//:cobra",
         "@org_golang_google_grpc//:grpc",
     ],

@@ -11,7 +11,7 @@ import (
 
 	"tinygo.org/x/bluetooth"
 
-	"github.com/rmrobinson/house/configutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

@@ -3,6 +3,6 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "backoffutil",
     srcs = ["jitter.go"],
-    importpath = "github.com/rmrobinson/house/backoffutil",
+    importpath = "github.com/rmrobinson/house/service/lib/backoffutil",
     visibility = ["//visibility:public"],
 )
