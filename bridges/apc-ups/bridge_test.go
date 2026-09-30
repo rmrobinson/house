@@ -104,6 +104,26 @@ func TestRefresh_RealSerialNumber_Published(t *testing.T) {
 	require.Len(t, devices, 1)
 	assert.Equal(t, "0B2542L21100", devices[0].GetId())
 	assert.Nil(t, devices[0].GetConfig(), "no UPSNAME set on the UPS: Config must not be synthesized")
+	assert.True(t, devices[0].GetAddress().GetIsReachable(), "a successful status query is reachable")
+}
+
+func TestRefresh_CommLostStatus_MarkedUnreachable(t *testing.T) {
+	client := &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", Status: "COMMLOST", EndAPC: time.Now()},
+	}}
+	aub, svc := newTestBridge(t, client)
+
+	require.NoError(t, aub.Refresh(context.Background()))
+
+	devices := listDevices(t, svc)
+	require.Len(t, devices, 1)
+	assert.False(t, devices[0].GetAddress().GetIsReachable(), "COMMLOST means apcupsd has lost its link to the UPS")
+}
+
+func TestStatusToDevice_OnBattWithOtherFlags_StillCountsAsDischarging(t *testing.T) {
+	d := statusToDevice(&apcupsd.Status{SerialNumber: "0B2542L21100", Status: "ONBATT LOWBATT"})
+	assert.True(t, d.GetUps().GetBattery().GetState().GetDischarging(), `"ONBATT LOWBATT" must still count as discharging, not just an exact "ONBATT" match`)
+	assert.True(t, d.GetAddress().GetIsReachable(), "ONBATT/LOWBATT is not COMMLOST, so the UPS is still reachable")
 }
 
 func TestRefresh_UPSNameSet_UsedAsConfigName(t *testing.T) {
@@ -163,4 +183,71 @@ func TestRefresh_ReconnectedClientStillErrors_ReturnsError(t *testing.T) {
 	assert.Error(t, aub.Refresh(context.Background()))
 	assert.Same(t, stillFailing, aub.client, "the newly dialed client should still replace the old one even though it also errors")
 	assert.Empty(t, listDevices(t, svc))
+}
+
+func TestRefresh_DialFailsAfterPriorSuccess_RepublishesLastDeviceUnreachable(t *testing.T) {
+	working := &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", EndAPC: time.Now()},
+	}}
+	aub, svc := newTestBridgeWithDial(t, working, func() (statusClient, error) {
+		return nil, errors.New("ups unreachable")
+	})
+
+	require.NoError(t, aub.Refresh(context.Background()))
+	devices := listDevices(t, svc)
+	require.Len(t, devices, 1)
+	require.True(t, devices[0].GetAddress().GetIsReachable())
+
+	// Now the connection dies and the reconnect attempt itself fails.
+	aub.client = &erroringStatusClient{err: errors.New("connection reset")}
+	assert.Error(t, aub.Refresh(context.Background()))
+
+	devices = listDevices(t, svc)
+	require.Len(t, devices, 1, "the device should be republished unreachable, not removed")
+	assert.Equal(t, "0B2542L21100", devices[0].GetId())
+	assert.False(t, devices[0].GetAddress().GetIsReachable())
+}
+
+func TestRefresh_ReconnectedClientStillErrorsAfterPriorSuccess_RepublishesLastDeviceUnreachable(t *testing.T) {
+	working := &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", EndAPC: time.Now()},
+	}}
+	stillFailing := &erroringStatusClient{err: errors.New("still down")}
+	aub, svc := newTestBridgeWithDial(t, working, func() (statusClient, error) {
+		return stillFailing, nil
+	})
+
+	require.NoError(t, aub.Refresh(context.Background()))
+
+	aub.client = &erroringStatusClient{err: errors.New("connection reset")}
+	assert.Error(t, aub.Refresh(context.Background()))
+
+	devices := listDevices(t, svc)
+	require.Len(t, devices, 1)
+	assert.False(t, devices[0].GetAddress().GetIsReachable())
+}
+
+func TestRefresh_RecoversAfterFailure_MarkedReachableAgain(t *testing.T) {
+	working := &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", EndAPC: time.Now()},
+	}}
+	aub, svc := newTestBridgeWithDial(t, working, func() (statusClient, error) {
+		return nil, errors.New("ups unreachable")
+	})
+	require.NoError(t, aub.Refresh(context.Background()))
+
+	aub.client = &erroringStatusClient{err: errors.New("connection reset")}
+	require.Error(t, aub.Refresh(context.Background()))
+	devices := listDevices(t, svc)
+	require.Len(t, devices, 1)
+	require.False(t, devices[0].GetAddress().GetIsReachable())
+
+	aub.client = &fakeStatusClient{statuses: []*apcupsd.Status{
+		{SerialNumber: "0B2542L21100", Model: "Back-UPS ES 850G2", EndAPC: time.Now()},
+	}}
+	require.NoError(t, aub.Refresh(context.Background()))
+
+	devices = listDevices(t, svc)
+	require.Len(t, devices, 1)
+	assert.True(t, devices[0].GetAddress().GetIsReachable())
 }

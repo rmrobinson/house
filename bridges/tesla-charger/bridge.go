@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/spf13/viper"
 
@@ -16,13 +17,23 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
+// chargerClient is the subset of *Charger this bridge needs, narrowed to an interface so Refresh
+// can be tested against a fake - mirrors bridges/apc-ups's statusClient.
+type chargerClient interface {
+	State() (*ChargerState, error)
+}
+
 // ChargerBridge acts as the handler for Bridge requests for this charger.
 type ChargerBridge struct {
 	logger *zap.Logger
 	svc    *bridge.Service
 
-	charger *Charger
+	charger chargerClient
 	b       *api2.Bridge
+
+	// lastDevice is the most recently published device, kept so Refresh can republish it with
+	// Address.IsReachable = false when a poll fails.
+	lastDevice *device.Device
 }
 
 // NewChargerBridge creates a new charger bridge
@@ -89,11 +100,37 @@ func (cb *ChargerBridge) Refresh(ctx context.Context) error {
 	if err != nil {
 		cb.logger.Error("unable to get charger state",
 			zap.Error(err))
+		cb.markUnreachable()
 		return status.Error(codes.Internal, "unable to refresh charger state")
 	}
 
-	cb.svc.UpdateDevice(chargerState.toDevice())
+	d := chargerState.toDevice()
+	if d == nil {
+		// A partial response (missing vitals/version/lifetime) isn't trustworthy enough to
+		// build a device from - and passing nil straight to UpdateDevice would be fatal, since
+		// it treats a nil device as a programming error, not a data problem. Mark the charger
+		// unreachable instead of crashing the whole bridge process over one bad poll.
+		cb.logger.Warn("charger state incomplete, skipping this refresh")
+		cb.markUnreachable()
+		return nil
+	}
+
+	cb.lastDevice = d
+	cb.svc.UpdateDevice(d)
 	return nil
+}
+
+// markUnreachable republishes the last-known device with Address.IsReachable = false. A no-op
+// if Refresh has never successfully published a device yet.
+func (cb *ChargerBridge) markUnreachable() {
+	if cb.lastDevice == nil {
+		return
+	}
+
+	gone := proto.Clone(cb.lastDevice).(*device.Device)
+	gone.Address.IsReachable = false
+	cb.lastDevice = gone
+	cb.svc.UpdateDevice(gone)
 }
 
 // Run begins the process of polling the charger API and reporting back the state.

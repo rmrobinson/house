@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rmrobinson/omada"
@@ -23,17 +25,24 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
+// omClientInfoToDevice returns nil if s has no MAC address - clientMac is the device ID, so
+// without it there's nothing usable to build.
 func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
-	lastSeen := time.Unix(*s.LastSeen, 0)
+	if s.Mac == nil {
+		return nil
+	}
+
 	cleanMAC := strings.ReplaceAll(*s.Mac, "-", ":")
 	cleanMAC = strings.ToUpper(cleanMAC)
 
 	state := &trait.NetworkPresence_State{
 		HardwareAddress: cleanMAC,
 		IpAddresses:     []string{},
-		DeviceCategory:  *s.DeviceType,
 	}
 
+	if s.DeviceType != nil {
+		state.DeviceCategory = *s.DeviceType
+	}
 	if s.HostName != nil {
 		state.Hostname = *s.HostName
 	}
@@ -54,8 +63,7 @@ func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
 	}
 
 	d := &device.Device{
-		Id:       *s.Mac,
-		LastSeen: timestamppb.New(lastSeen),
+		Id: *s.Mac,
 		Details: &device.Device_ConnectedDevice{
 			ConnectedDevice: &device.ConnectedDevice{
 				NetworkPresence: &trait.NetworkPresence{
@@ -63,8 +71,17 @@ func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
 				},
 			},
 		},
+		// Everything GetGridActiveClients returns is, by definition, currently connected -
+		// Refresh is responsible for flipping this to false once a MAC stops appearing there.
+		Address: &device.Device_Address{IsReachable: true},
 	}
 
+	if s.LastSeen != nil {
+		d.LastSeen = timestamppb.New(time.Unix(*s.LastSeen, 0))
+	}
+	if s.Ip != nil {
+		d.Address.Address = *s.Ip
+	}
 	if s.HostName != nil {
 		d.Config = &device.Device_Config{Name: *s.HostName}
 	}
@@ -82,6 +99,14 @@ type OmadaBridge struct {
 	client *omada.Client
 	cid    string
 	siteID string
+
+	mu sync.Mutex
+	// lastDevices holds the most recently published device for every MAC this bridge has ever
+	// seen, keyed by device ID. Refresh needs this itself (bridge.Service's own device map is
+	// unexported) to notice a client that's dropped out of the current "active clients" page -
+	// without it a device that leaves the network would never be updated again and would stay
+	// reported reachable forever.
+	lastDevices map[string]*device.Device
 }
 
 // NewOmadaBridge creates a new Omada bridge from the supplied client.
@@ -112,13 +137,14 @@ func NewOmadaBridge(logger *zap.Logger, svc *bridge.Service, client *omada.Clien
 	}
 
 	return &OmadaBridge{
-		logger:     logger,
-		svc:        svc,
-		b:          b,
-		configPath: configPath,
-		client:     client,
-		siteID:     siteID,
-		cid:        cid,
+		logger:      logger,
+		svc:         svc,
+		b:           b,
+		configPath:  configPath,
+		client:      client,
+		siteID:      siteID,
+		cid:         cid,
+		lastDevices: make(map[string]*device.Device),
 	}
 }
 
@@ -152,24 +178,99 @@ func (omb *OmadaBridge) ProcessCommandAsync(ctx context.Context, cmd *command.Co
 // the Omada API and returns the current state of all the connected devices.
 func (omb *OmadaBridge) Refresh(ctx context.Context) error {
 	trueArg := "true"
-	req := &api.GetGridActiveClientsParams{
-		Page:            1,
-		PageSize:        50,
-		FiltersWireless: &trueArg,
-		SortsMac:        &trueArg,
-	}
-	resp, err := omb.client.GetGridActiveClientsWithResponse(context.Background(), omb.cid, omb.siteID, req)
-	if err != nil {
-		omb.logger.Error("unable to get status from API",
-			zap.Error(err), zap.String("site_id", omb.siteID))
-		return status.Error(codes.Internal, "unable to get status from API")
+	// NOTE: FiltersWireless restricts this to wireless clients only - wired clients are never
+	// reported by this bridge. Leaving this as-is matches the bridge's existing (pre-existing,
+	// not changed here) behaviour; revisit if wired client visibility is wanted too.
+	const pageSize = int32(50)
+
+	seen := make(map[string]bool)
+	page := int32(1)
+	for {
+		req := &api.GetGridActiveClientsParams{
+			Page:            page,
+			PageSize:        pageSize,
+			FiltersWireless: &trueArg,
+			SortsMac:        &trueArg,
+		}
+		resp, err := omb.client.GetGridActiveClientsWithResponse(context.Background(), omb.cid, omb.siteID, req)
+		if err != nil {
+			omb.logger.Error("unable to get status from API",
+				zap.Error(err), zap.String("site_id", omb.siteID))
+			omb.markAllUnreachable()
+			return status.Error(codes.Internal, "unable to get status from API")
+		}
+		if resp.JSON200 == nil || resp.JSON200.Result == nil {
+			omb.logger.Error("unable to get status from API: empty response",
+				zap.String("site_id", omb.siteID))
+			omb.markAllUnreachable()
+			return status.Error(codes.Internal, "unable to get status from API")
+		}
+
+		var clients []omapi.ClientInfo
+		if resp.JSON200.Result.Data != nil {
+			clients = *resp.JSON200.Result.Data
+		}
+
+		for i := range clients {
+			d := omClientInfoToDevice(&clients[i])
+			if d == nil {
+				omb.logger.Warn("skipping client with no mac address")
+				continue
+			}
+			seen[d.Id] = true
+
+			omb.mu.Lock()
+			omb.lastDevices[d.Id] = d
+			omb.mu.Unlock()
+
+			omb.svc.UpdateDevice(d)
+		}
+
+		if int32(len(clients)) < pageSize {
+			break
+		}
+		page++
 	}
 
-	for _, activeClient := range *resp.JSON200.Result.Data {
-		omb.svc.UpdateDevice(omClientInfoToDevice(&activeClient))
+	// Anything published on a previous poll but not seen in this one has left the network -
+	// republish it as unreachable rather than calling svc.RemoveDevice, since it may be linked
+	// to a room in housed and should come back as the same device if the client reconnects.
+	omb.mu.Lock()
+	var goneDevices []*device.Device
+	for id, d := range omb.lastDevices {
+		if seen[id] || !d.GetAddress().GetIsReachable() {
+			continue
+		}
+		gone := proto.Clone(d).(*device.Device)
+		gone.Address.IsReachable = false
+		omb.lastDevices[id] = gone
+		goneDevices = append(goneDevices, gone)
+	}
+	omb.mu.Unlock()
+
+	for _, d := range goneDevices {
+		omb.svc.UpdateDevice(d)
 	}
 
 	return nil
+}
+
+// markAllUnreachable flips every known device's reachability off in place, preserving its last
+// known state otherwise. Called when the Omada API itself couldn't be reached at all, so none of
+// the currently-known clients' state can be trusted.
+func (omb *OmadaBridge) markAllUnreachable() {
+	omb.mu.Lock()
+	defer omb.mu.Unlock()
+
+	for id, d := range omb.lastDevices {
+		if !d.GetAddress().GetIsReachable() {
+			continue
+		}
+		gone := proto.Clone(d).(*device.Device)
+		gone.Address.IsReachable = false
+		omb.lastDevices[id] = gone
+		omb.svc.UpdateDevice(gone)
+	}
 }
 
 // Run begins the process of polling the API and reporting back the state.
