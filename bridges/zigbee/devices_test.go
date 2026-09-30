@@ -41,6 +41,7 @@ func TestOnOffBuilder_Build(t *testing.T) {
 	assert.True(t, g.OnOff.Attributes.CanControl)
 	assert.False(t, g.OnOff.State.IsOn)
 	assert.Nil(t, g.Power)
+	assert.Equal(t, "plug1", d.Config.Name)
 }
 
 func TestOnOffBuilder_Build_WithPower(t *testing.T) {
@@ -162,6 +163,7 @@ func TestLightBuilder_Build_FullyFeatured(t *testing.T) {
 	assert.Equal(t, int32(2000), l.Colour.Attributes.ColourTemperatureRange.MinK) // 1e6/500
 	assert.Equal(t, int32(6667), l.Colour.Attributes.ColourTemperatureRange.MaxK) // round(1e6/150)
 	require.NotNil(t, l.Colour.State.Hsb)
+	assert.Equal(t, "lamp1", d.Config.Name)
 }
 
 func TestLightBuilder_Build_ColorTempOnly_NoHSB(t *testing.T) {
@@ -361,6 +363,7 @@ func TestSensorBuilder_Build_AllTraits(t *testing.T) {
 	require.NotNil(t, s.Fire)
 	require.NotNil(t, s.Metadata)
 	assert.True(t, s.Metadata.OnBattery)
+	assert.Equal(t, "sensor1", d.Config.Name)
 }
 
 func TestSensorBuilder_Build_OnlyTemperature(t *testing.T) {
@@ -526,6 +529,7 @@ func TestFanBuilder_Build(t *testing.T) {
 	require.NotNil(t, f.Speed)
 	assert.EqualValues(t, 0, f.Speed.Attributes.MinimumSpeed)
 	assert.EqualValues(t, 9, f.Speed.Attributes.MaximumSpeed)
+	assert.Equal(t, "office/air_purifier", d.Config.Name)
 	require.NotNil(t, f.Toggles)
 	assert.ElementsMatch(t, []string{"led_enable", "child_lock"}, f.Toggles.Attributes.AvailableToggles)
 }

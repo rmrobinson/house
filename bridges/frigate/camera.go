@@ -29,6 +29,7 @@ func (c *Camera) ToDevice() *device.Device {
 		ModelId:      c.ModelID,
 		Manufacturer: c.Manufacturer,
 		LastSeen:     timestamppb.New(c.LastActivity),
+		Config:       &device.Device_Config{Name: c.Name},
 		Address: &device.Device_Address{
 			Address:     c.Name,
 			IsReachable: c.Active,

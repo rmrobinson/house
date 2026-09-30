@@ -53,7 +53,7 @@ func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
 		state.NetworkDeviceId = *s.ApName
 	}
 
-	return &device.Device{
+	d := &device.Device{
 		Id:       *s.Mac,
 		LastSeen: timestamppb.New(lastSeen),
 		Details: &device.Device_ConnectedDevice{
@@ -64,6 +64,12 @@ func omClientInfoToDevice(s *omapi.ClientInfo) *device.Device {
 			},
 		},
 	}
+
+	if s.HostName != nil {
+		d.Config = &device.Device_Config{Name: *s.HostName}
+	}
+
+	return d
 }
 
 // OmadaBridge
