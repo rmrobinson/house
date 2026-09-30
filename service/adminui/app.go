@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/rmrobinson/house/service/lib/grpcutil"
+	"github.com/rmrobinson/house/service/lib/webassets"
 )
 
 // app owns the mux and the current *Server generation - the layer that
@@ -55,6 +56,7 @@ func newApp(rootCtx context.Context, logger *zap.Logger, configPath string, tlsC
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	webassets.Register(mux)
 
 	mux.HandleFunc("GET /{$}", a.handle((*Server).handleRoot))
 

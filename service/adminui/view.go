@@ -49,7 +49,7 @@ type roomView struct {
 	Type        int32
 	Devices     []deviceView
 	Aggregation aggregationView
-	Properties  propertiesView
+	Properties  houseview.Properties
 }
 
 // aggregationView mirrors Room.Config.aggregation, reshaped for the edit
@@ -63,20 +63,6 @@ type aggregationView struct {
 	LightStrategy       string
 	AirQualityStrategy  string
 	PowerStrategy       string
-}
-
-// propertiesView mirrors Room.Properties, pre-formatted for display -
-// each field is "" when that metric is unset (no linked device has
-// reported it yet), which room.html treats as "Unknown".
-type propertiesView struct {
-	Occupied        string
-	TemperatureC    string
-	LightLevelLux   string
-	AirQualityIndex string
-	Co2Ppm          string
-	VocPpb          string
-	RadonBqM3       string
-	PowerDrawW      string
 }
 
 // strategyToStr/strategyFromStr convert api2.AggregationConfig_Strategy to
@@ -137,45 +123,6 @@ func aggregationToView(a *api2.AggregationConfig) aggregationView {
 	}
 }
 
-// propertiesToView formats p's set fields for display, leaving an unset
-// metric (including every field, if p itself is nil - no linked device has
-// reported anything for this room yet) as "".
-func propertiesToView(p *api2.Room_Properties) propertiesView {
-	var pv propertiesView
-	if p == nil {
-		return pv
-	}
-	if p.Occupied != nil {
-		if p.GetOccupied() {
-			pv.Occupied = "Yes"
-		} else {
-			pv.Occupied = "No"
-		}
-	}
-	if p.TemperatureC != nil {
-		pv.TemperatureC = fmt.Sprintf("%.1f°C", p.GetTemperatureC())
-	}
-	if p.LightLevelLux != nil {
-		pv.LightLevelLux = fmt.Sprintf("%d lux", p.GetLightLevelLux())
-	}
-	if p.AirQualityIndex != nil {
-		pv.AirQualityIndex = fmt.Sprintf("%d", p.GetAirQualityIndex())
-	}
-	if p.Co2Ppm != nil {
-		pv.Co2Ppm = fmt.Sprintf("%d ppm", p.GetCo2Ppm())
-	}
-	if p.VocPpb != nil {
-		pv.VocPpb = fmt.Sprintf("%d ppb", p.GetVocPpb())
-	}
-	if p.RadonBqM3 != nil {
-		pv.RadonBqM3 = fmt.Sprintf("%d Bq/m³", p.GetRadonBqM3())
-	}
-	if p.PowerDrawW != nil {
-		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
-	}
-	return pv
-}
-
 // deviceView is shown both embedded in a room and on the flat /devices list.
 // RoomID/RoomLabel are populated by the caller when known (empty for a
 // device with no room link).
@@ -225,7 +172,7 @@ func roomToView(r *api2.Room) roomView {
 		Version:     r.GetVersion(),
 		Type:        r.GetConfig().GetType(),
 		Aggregation: aggregationToView(r.GetConfig().GetAggregation()),
-		Properties:  propertiesToView(r.GetProperties()),
+		Properties:  houseview.PropertiesToView(r.GetProperties()),
 	}
 	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		rv.Devices = append(rv.Devices, deviceToView(d))

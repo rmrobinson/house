@@ -6,6 +6,7 @@ package houseview
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -14,7 +15,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 )
 
 // SortDevices sorts devices in place by display name (case-insensitively),
@@ -135,4 +138,85 @@ func Message(err error) string {
 		return st.Message()
 	}
 	return err.Error()
+}
+
+// Properties mirrors Room.Properties, pre-formatted for display -
+// each field is "" when that metric is unset (no linked Sensor has
+// reported it yet), which the room templates treats as "Unknown".
+type Properties struct {
+	Occupied        string
+	TemperatureF    string
+	LightLevelLux   string
+	AirQualityIndex string
+	Co2Ppm          string
+	VocPpb          string
+	RadonBqM3       string
+	PowerDrawW      string
+}
+
+// PropertiesToView formats p's set fields for display, leaving an unset
+// metric (including every field, if p itself is nil - no linked Sensor has
+// reported anything for this room yet) as "".
+func PropertiesToView(p *api2.Room_Properties) Properties {
+	var pv Properties
+	if p == nil {
+		return pv
+	}
+	if p.Occupied != nil {
+		if p.GetOccupied() {
+			pv.Occupied = "Yes"
+		} else {
+			pv.Occupied = "No"
+		}
+	}
+	if p.TemperatureC != nil {
+		pv.TemperatureC = fmt.Sprintf("%.1f°C", p.GetTemperatureC())
+	}
+	if p.LightLevelLux != nil {
+		pv.LightLevelLux = fmt.Sprintf("%d lux", p.GetLightLevelLux())
+	}
+	if p.AirQualityIndex != nil {
+		pv.AirQualityIndex = fmt.Sprintf("%d", p.GetAirQualityIndex())
+	}
+	if p.Co2Ppm != nil {
+		pv.Co2Ppm = fmt.Sprintf("%d ppm", p.GetCo2Ppm())
+	}
+	if p.VocPpb != nil {
+		pv.VocPpb = fmt.Sprintf("%d ppb", p.GetVocPpb())
+	}
+	if p.RadonBqM3 != nil {
+		pv.RadonBqM3 = fmt.Sprintf("%d Bq/m³", p.GetRadonBqM3())
+	}
+	if p.PowerDrawW != nil {
+		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
+	}
+	return pv
+}
+
+// OnOff returns d's OnOff trait, or nil if its device type has none - the
+// trait sits at a different spot in each device type, so callers that just
+// want "can I toggle this" go through here instead of switching themselves.
+func OnOff(d *apiDevice.Device) *apiTrait.OnOff {
+	switch {
+	case d.GetLight() != nil:
+		return d.GetLight().GetOnOff()
+	case d.GetFan() != nil:
+		return d.GetFan().GetOnOff()
+	case d.GetAvReceiver() != nil:
+		return d.GetAvReceiver().GetOnOff()
+	case d.GetClock() != nil:
+		return d.GetClock().GetOnOff()
+	case d.GetEvCharger() != nil:
+		return d.GetEvCharger().GetOnOff()
+	case d.GetUps() != nil:
+		return d.GetUps().GetOnOff()
+	case d.GetTelevision() != nil:
+		return d.GetTelevision().GetOnOff()
+	case d.GetThermostat() != nil:
+		return d.GetThermostat().GetOnOff()
+	case d.GetGeneric() != nil:
+		return d.GetGeneric().GetOnOff()
+	default:
+		return nil
+	}
 }

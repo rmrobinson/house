@@ -20,8 +20,6 @@ go_library(
         "view.go",
     ],
     embedsrcs = [
-        "static/htmx-sse.js",
-        "static/htmx.min.js",
         "templates/building.html",
         "templates/buildings.html",
         "templates/devices.html",
@@ -55,6 +53,7 @@ go_library(
         "//service/lib/houseview",
         "//service/lib/htmxutil",
         "//service/lib/hub",
+        "//service/lib/webassets",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
