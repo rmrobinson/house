@@ -336,7 +336,7 @@ func (f *Facade) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.Bridg
 			return nil
 		case msg, ok := <-sink.Messages():
 			if !ok {
-				return nil
+				return bridge.ErrStreamFellBehind
 			}
 			update, castOk := msg.(*api2.Update)
 			if !castOk {

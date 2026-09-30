@@ -97,7 +97,11 @@ func (h *hub[T]) broadcast(v T) {
 // unsubscribe func the caller must call exactly once when done (e.g. via
 // defer) to stop receiving messages and release the channel.
 func (h *hub[T]) subscribe() (<-chan T, func()) {
-	ch := make(chan T, 16)
+	// Sized for a whole reconnect burst (one update per device of a bridge
+	// that just came back - see bridge.Source.SendMessage), not steady-state
+	// traffic: an SSE tab has no way to resync a dropped message short of a
+	// full page reload, so a burst must fit rather than be partly dropped.
+	ch := make(chan T, 1024)
 
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}

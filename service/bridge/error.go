@@ -19,4 +19,8 @@ var (
 	// ErrCommandTimeout is returned when a bridge writes a command to a device but doesn't
 	// observe the device confirm it within the bridge's own timeout.
 	ErrCommandTimeout = status.Error(codes.DeadlineExceeded, "device did not confirm command in time")
+	// ErrStreamFellBehind ends a StreamUpdates stream whose client stopped keeping up with
+	// updates (see Source.SendMessage). The client should reconnect to resync from a fresh
+	// initial snapshot.
+	ErrStreamFellBehind = status.Error(codes.Unavailable, "update stream fell behind; reconnect to resync")
 )
