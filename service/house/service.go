@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 
-	api2 "github.com/rmrobinson/house/api"
-	apiDevice "github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/service/house/db"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	api2 "github.com/rmrobinson/house/api"
+	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/house/db"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 // Service implements api2.HouseServiceServer: building/floor/room topology
@@ -23,14 +26,35 @@ type Service struct {
 
 	db           *db.Database
 	bridgeClient api2.BridgeServiceClient
+	agg          *aggregator
 }
 
-func NewService(logger *zap.Logger, db *db.Database, bridgeClient api2.BridgeServiceClient) *Service {
+// NewService constructs a Service, seeding its room-aggregation engine (see
+// aggregation.go) from db and, if bridgeAddr is non-empty, starting a
+// long-lived, reconnecting subscription to that endpoint's StreamUpdates
+// (via bridgeconn.Conn) to keep it current for the lifetime of ctx.
+// bridgeAddr/bridgeTLS should describe the same endpoint bridgeClient
+// itself dials - an empty bridgeAddr leaves the aggregation engine seeded
+// from the db but never updated live, the same "no bridge facade
+// configured" degradation bridgeClient == nil already causes elsewhere in
+// Service.
+func NewService(ctx context.Context, logger *zap.Logger, db *db.Database, bridgeClient api2.BridgeServiceClient, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig) (*Service, error) {
+	agg := newAggregator(logger)
+	if err := agg.load(ctx, db); err != nil {
+		return nil, err
+	}
+
+	if len(bridgeAddr) > 0 {
+		conn := bridgeconn.New(logger, bridgeAddr, bridgeTLS)
+		go conn.Run(ctx, agg.handleUpdate, nil)
+	}
+
 	return &Service{
 		logger:       logger,
 		db:           db,
 		bridgeClient: bridgeClient,
-	}
+		agg:          agg,
+	}, nil
 }
 
 // mapDBErr translates a db package sentinel error into the matching gRPC
@@ -229,7 +253,7 @@ func (s *Service) ListRooms(req *api2.ListRoomsRequest, stream api2.HouseService
 	devices := s.resolveDevices(ctx)
 
 	for _, r := range rooms {
-		if err := stream.Send(roomDBToAPI(r, linksByRoom[r.ID], devices)); err != nil {
+		if err := stream.Send(roomDBToAPI(r, linksByRoom[r.ID], devices, s.agg.getProperties(r.ID))); err != nil {
 			return err
 		}
 	}
@@ -250,9 +274,10 @@ func (s *Service) GetRoom(ctx context.Context, req *api2.GetRoomRequest) (*api2.
 
 func (s *Service) CreateRoom(ctx context.Context, req *api2.CreateRoomRequest) (*api2.Room, error) {
 	room := &db.Room{
-		FloorID: req.GetFloorId(),
-		Name:    req.GetConfig().GetName(),
-		Type:    db.RoomType(req.GetConfig().GetType()),
+		FloorID:     req.GetFloorId(),
+		Name:        req.GetConfig().GetName(),
+		Type:        db.RoomType(req.GetConfig().GetType()),
+		Aggregation: apiAggregationToDB(req.GetConfig().GetAggregation()),
 	}
 
 	res, err := s.db.CreateRoom(ctx, room)
@@ -260,16 +285,18 @@ func (s *Service) CreateRoom(ctx context.Context, req *api2.CreateRoomRequest) (
 		s.logger.Error("unable to create room", zap.String("floor_id", req.GetFloorId()), zap.Error(err))
 		return nil, mapDBErr(err, "floor")
 	}
+	s.agg.setRoomAggregation(res.ID, dbAggregationToAPI(res.Aggregation))
 
 	return s.roomToAPI(ctx, *res)
 }
 
 func (s *Service) UpdateRoom(ctx context.Context, req *api2.UpdateRoomRequest) (*api2.Room, error) {
 	room := &db.Room{
-		ID:      req.GetId(),
-		Version: req.GetVersion(),
-		Name:    req.GetConfig().GetName(),
-		Type:    db.RoomType(req.GetConfig().GetType()),
+		ID:          req.GetId(),
+		Version:     req.GetVersion(),
+		Name:        req.GetConfig().GetName(),
+		Type:        db.RoomType(req.GetConfig().GetType()),
+		Aggregation: apiAggregationToDB(req.GetConfig().GetAggregation()),
 	}
 
 	res, err := s.db.UpdateRoom(ctx, room)
@@ -277,6 +304,7 @@ func (s *Service) UpdateRoom(ctx context.Context, req *api2.UpdateRoomRequest) (
 		s.logger.Error("unable to update room", zap.String("room_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "room")
 	}
+	s.agg.setRoomAggregation(res.ID, dbAggregationToAPI(res.Aggregation))
 
 	return s.roomToAPI(ctx, *res)
 }
@@ -286,6 +314,7 @@ func (s *Service) DeleteRoom(ctx context.Context, req *api2.DeleteRoomRequest) (
 		s.logger.Error("unable to delete room", zap.String("room_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "room")
 	}
+	s.agg.removeRoom(req.GetId())
 	return &emptypb.Empty{}, nil
 }
 
@@ -305,6 +334,7 @@ func (s *Service) LinkDevice(ctx context.Context, req *api2.LinkDeviceRequest) (
 		s.logger.Error("unable to link device", zap.String("device_id", req.GetDeviceId()), zap.String("room_id", req.GetRoomId()), zap.Error(err))
 		return nil, mapDBErr(err, "device link")
 	}
+	s.agg.setDeviceRoom(req.GetDeviceId(), req.GetRoomId())
 
 	return &api2.LinkDeviceResponse{
 		Link: &api2.DeviceRoomLink{
@@ -321,6 +351,7 @@ func (s *Service) UnlinkDevice(ctx context.Context, req *api2.UnlinkDeviceReques
 		s.logger.Error("unable to unlink device", zap.String("device_id", req.GetDeviceId()), zap.Error(err))
 		return nil, status.Error(codes.Internal, "unable to unlink device")
 	}
+	s.agg.removeDeviceRoom(req.GetDeviceId())
 	return &emptypb.Empty{}, nil
 }
 
@@ -376,7 +407,7 @@ func (s *Service) roomToAPI(ctx context.Context, room db.Room) (*api2.Room, erro
 		return nil, status.Error(codes.Internal, "unable to list room devices")
 	}
 
-	return roomDBToAPI(room, links, s.resolveLinkedDevices(ctx, links)), nil
+	return roomDBToAPI(room, links, s.resolveLinkedDevices(ctx, links), s.agg.getProperties(room.ID)), nil
 }
 
 // resolveLinkedDevices fetches full Device state for exactly links via
@@ -411,17 +442,21 @@ func (s *Service) resolveLinkedDevices(ctx context.Context, links []db.Device) m
 // devices is keyed by device ID (see resolveDevices); a link whose device
 // isn't present there (bridge unreachable, device since removed, or no
 // bridge client configured) is still included as a minimal ID-only stub
-// rather than silently dropped - the link itself is still real.
-func roomDBToAPI(room db.Room, links []db.Device, devices map[string]*apiDevice.Device) *api2.Room {
+// rather than silently dropped - the link itself is still real. properties
+// is the caller's aggregator.getProperties(room.ID) result - nil if no
+// linked Sensor device has reported yet.
+func roomDBToAPI(room db.Room, links []db.Device, devices map[string]*apiDevice.Device, properties *api2.Room_Properties) *api2.Room {
 	ret := &api2.Room{
 		Id:         room.ID,
 		BuildingId: room.BuildingID,
 		FloorId:    room.FloorID,
 		Version:    room.Version,
 		Config: &api2.Room_Config{
-			Name: room.Name,
-			Type: int32(room.Type),
+			Name:        room.Name,
+			Type:        int32(room.Type),
+			Aggregation: dbAggregationToAPI(room.Aggregation),
 		},
+		Properties: properties,
 	}
 
 	for _, link := range links {

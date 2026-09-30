@@ -18,6 +18,8 @@ go_library(
         "migrations/000003_add_floors_and_versions.up.sql",
         "migrations/000004_add_device_room_version.down.sql",
         "migrations/000004_add_device_room_version.up.sql",
+        "migrations/000005_add_room_aggregation.down.sql",
+        "migrations/000005_add_room_aggregation.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/house/db",
     visibility = ["//visibility:public"],

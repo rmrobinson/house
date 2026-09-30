@@ -348,8 +348,9 @@ func (db *Database) CreateRoom(ctx context.Context, r *Room) (*Room, error) {
 	newID := uuid.NewString()
 	newVersion := uuid.NewString()
 
-	_, err = db.db.ExecContext(ctx, "INSERT INTO room (id, building_id, floor_id, name, type, version) VALUES (?, ?, ?, ?, ?, ?)",
-		newID, floor.BuildingID, r.FloorID, r.Name, r.Type, newVersion)
+	occ, temp, light, aq, power := aggregationToColumns(r.Aggregation)
+	_, err = db.db.ExecContext(ctx, "INSERT INTO room (id, building_id, floor_id, name, type, version, agg_occupancy_strategy, agg_temperature_strategy, agg_light_strategy, agg_air_quality_strategy, agg_power_strategy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		newID, floor.BuildingID, r.FloorID, r.Name, r.Type, newVersion, occ, temp, light, aq, power)
 	if err != nil {
 		db.logger.Error("unable to create room", zap.Error(err))
 		return nil, err
@@ -367,8 +368,9 @@ func (db *Database) CreateRoom(ctx context.Context, r *Room) (*Room, error) {
 func (db *Database) UpdateRoom(ctx context.Context, r *Room) (*Room, error) {
 	newVersion := uuid.NewString()
 
-	res, err := db.db.ExecContext(ctx, "UPDATE room SET name=?,type=?,version=? WHERE id=? AND version=?",
-		r.Name, r.Type, newVersion, r.ID, r.Version)
+	occ, temp, light, aq, power := aggregationToColumns(r.Aggregation)
+	res, err := db.db.ExecContext(ctx, "UPDATE room SET name=?,type=?,version=?,agg_occupancy_strategy=?,agg_temperature_strategy=?,agg_light_strategy=?,agg_air_quality_strategy=?,agg_power_strategy=? WHERE id=? AND version=?",
+		r.Name, r.Type, newVersion, occ, temp, light, aq, power, r.ID, r.Version)
 	if err != nil {
 		db.logger.Error("unable to update room", zap.String("room_id", r.ID), zap.Error(err))
 		return nil, err
@@ -387,24 +389,64 @@ func (db *Database) DeleteRoom(ctx context.Context, roomID, version string) erro
 	return db.deleteWithChildCheck(ctx, "room", "device_room", "room_id", roomID, version)
 }
 
+// roomColumns is the column list scanRoom expects, shared by every SELECT
+// against room so adding a column only means editing scanRoom and this
+// constant together.
+const roomColumns = "id,building_id,floor_id,name,type,version,agg_occupancy_strategy,agg_temperature_strategy,agg_light_strategy,agg_air_quality_strategy,agg_power_strategy"
+
 // scanRoom scans one room row, tolerating a NULL floor_id - rooms created
 // before migration 000003 added the column predate any floor assignment, so
 // NULL there means "not yet assigned to a floor" rather than data
-// corruption; it surfaces as FloorID == "" rather than a scan error.
+// corruption; it surfaces as FloorID == "" rather than a scan error. The
+// five agg_* columns are NULL together on any room with no configured
+// aggregation override - see columnsToAggregation.
 func scanRoom(row interface{ Scan(...any) error }, r *Room) error {
 	var floorID sql.NullString
-	if err := row.Scan(&r.ID, &r.BuildingID, &floorID, &r.Name, &r.Type, &r.Version); err != nil {
+	var occ, temp, light, aq, power sql.NullInt64
+	if err := row.Scan(&r.ID, &r.BuildingID, &floorID, &r.Name, &r.Type, &r.Version, &occ, &temp, &light, &aq, &power); err != nil {
 		return err
 	}
 	r.FloorID = floorID.String
+	r.Aggregation = columnsToAggregation(occ, temp, light, aq, power)
 	return nil
+}
+
+// aggregationToColumns converts a (possibly nil) AggregationConfig to the
+// five nullable column values CreateRoom/UpdateRoom write: nil becomes five
+// NULLs, non-nil becomes five concrete ints (AggregationUnspecified, i.e.
+// 0, for any field the caller left unconfigured) - the inverse of
+// columnsToAggregation.
+func aggregationToColumns(a *AggregationConfig) (occ, temp, light, aq, power any) {
+	if a == nil {
+		return nil, nil, nil, nil, nil
+	}
+	return int32(a.OccupancyStrategy), int32(a.TemperatureStrategy), int32(a.LightStrategy), int32(a.AirQualityStrategy), int32(a.PowerStrategy)
+}
+
+// columnsToAggregation is the inverse of aggregationToColumns: nil if every
+// column is NULL (no override ever configured for this room), otherwise an
+// AggregationConfig built from whichever columns are set - a column that's
+// unexpectedly NULL while its siblings aren't (shouldn't happen given the
+// all-or-nothing writes above) defaults to AggregationUnspecified rather
+// than erroring, the same tolerant-of-partial-data stance as FloorID above.
+func columnsToAggregation(occ, temp, light, aq, power sql.NullInt64) *AggregationConfig {
+	if !occ.Valid && !temp.Valid && !light.Valid && !aq.Valid && !power.Valid {
+		return nil
+	}
+	return &AggregationConfig{
+		OccupancyStrategy:   AggregationStrategy(occ.Int64),
+		TemperatureStrategy: AggregationStrategy(temp.Int64),
+		LightStrategy:       AggregationStrategy(light.Int64),
+		AirQualityStrategy:  AggregationStrategy(aq.Int64),
+		PowerStrategy:       AggregationStrategy(power.Int64),
+	}
 }
 
 // GetRoom retrieves the room with the specified ID, or nil if it doesn't
 // exist. It does not populate Devices - use ListDeviceLinks for that.
 func (db *Database) GetRoom(ctx context.Context, roomID string) (*Room, error) {
 	room := &Room{}
-	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,floor_id,name,type,version FROM room WHERE id=?", roomID)
+	row := db.db.QueryRowContext(ctx, "SELECT "+roomColumns+" FROM room WHERE id=?", roomID)
 
 	if err := scanRoom(row, room); err == sql.ErrNoRows {
 		return nil, nil
@@ -418,7 +460,7 @@ func (db *Database) GetRoom(ctx context.Context, roomID string) (*Room, error) {
 // ListRooms retrieves rooms scoped to floorID if set, otherwise every room
 // across every floor of buildingID.
 func (db *Database) ListRooms(ctx context.Context, buildingID, floorID *string) ([]Room, error) {
-	query := "SELECT id,building_id,floor_id,name,type,version FROM room"
+	query := "SELECT " + roomColumns + " FROM room"
 	var args []any
 	switch {
 	case floorID != nil:

@@ -2,13 +2,18 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "house",
-    srcs = ["service.go"],
+    srcs = [
+        "aggregation.go",
+        "service.go",
+    ],
     importpath = "github.com/rmrobinson/house/service/house",
     visibility = ["//visibility:public"],
     deps = [
         "//api",
         "//api/device",
         "//service/house/db",
+        "//service/lib/bridgeconn",
+        "//service/lib/grpcutil",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//types/known/emptypb",
@@ -18,18 +23,23 @@ go_library(
 
 go_test(
     name = "house_test",
-    srcs = ["service_test.go"],
+    srcs = [
+        "aggregation_test.go",
+        "service_test.go",
+    ],
     embed = [":house"],
     deps = [
         "//api",
         "//api/command",
         "//api/device",
+        "//api/trait",
         "//service/house/db",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/timestamppb",
         "@org_uber_go_zap//zaptest",
     ],
 )

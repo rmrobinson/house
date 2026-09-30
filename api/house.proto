@@ -7,17 +7,44 @@ option go_package = "github.com/rmrobinson/house/api";
 import "api/device/device.proto";
 import "google/protobuf/empty.proto";
 
+// AggregationConfig selects, per metric, how a room's linked Sensor devices
+// are combined into that room's Properties. See Room.Config.aggregation for
+// the documented default per metric.
+message AggregationConfig {
+  enum Strategy {
+    STRATEGY_UNSPECIFIED = 0;
+    LATEST = 1;
+    AVERAGE = 2;
+    MIN = 3;
+    MAX = 4;
+    SUM = 5;
+    ANY = 6; // boolean OR - the default for occupancy
+  }
+  Strategy occupancy_strategy = 1;   // default ANY
+  Strategy temperature_strategy = 2; // default AVERAGE
+  Strategy light_strategy = 3;       // default AVERAGE
+  Strategy air_quality_strategy = 4; // default AVERAGE
+  Strategy power_strategy = 5;       // default SUM
+}
+
 message Room {
   message Config {
     string name = 1;
     // TODO: use an enum for the Room type
     int32 type = 2;
+    // Overrides the per-metric aggregation defaults below. Unset means every
+    // metric uses its documented default strategy.
+    optional AggregationConfig aggregation = 3;
   }
+  // Properties holds values computed server-side from the room's linked
+  // Sensor-kind devices, per AggregationConfig - not independently settable
+  // by clients. Unset means no linked device currently reports that metric.
   message Properties {
-    // Air quality
-    // Light level
-    // Power consumption?
-    // Presence
+    optional bool occupied = 1;
+    optional double temperature_f = 2;
+    optional int32 light_level_lux = 3;
+    optional int32 air_quality_index = 4;
+    optional double power_draw_w = 5;
   }
 
   string id = 1;

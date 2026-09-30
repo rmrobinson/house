@@ -79,7 +79,9 @@ func newTestService(t *testing.T, bridgeClient api2.BridgeServiceClient) *Servic
 	database, err := db.NewDatabase(zaptest.NewLogger(t), sqlDB)
 	require.NoError(t, err)
 
-	return NewService(zaptest.NewLogger(t), database, bridgeClient)
+	svc, err := NewService(context.Background(), zaptest.NewLogger(t), database, bridgeClient, "", nil)
+	require.NoError(t, err)
+	return svc
 }
 
 func createTestRoom(t *testing.T, s *Service) *api2.Room {
