@@ -9,7 +9,7 @@ import (
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/bridgeconn"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
 )
 
 // upstreamConn manages one upstream BridgeService connection: dialing and

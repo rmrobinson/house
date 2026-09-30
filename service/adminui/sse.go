@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/htmxutil"
+	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
 // handleSSE relays the shared deviceHub's updates as Server-Sent Events for

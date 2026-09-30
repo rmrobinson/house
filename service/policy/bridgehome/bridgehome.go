@@ -22,7 +22,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/bridgeconn"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/policy"
 )

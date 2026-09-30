@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"go.uber.org/zap"
 )
@@ -30,8 +30,8 @@ type Store interface {
 	GetLogs(policyID string, limit int) ([]ExecutionLog, error)
 }
 
-// SQLiteStore is a Store backed by SQLite via github.com/mattn/go-sqlite3,
-// following the same golang-migrate/embed.FS convention as
+// SQLiteStore is a Store backed by SQLite via modernc.org/sqlite (pure Go,
+// no cgo), following the same golang-migrate/embed.FS convention as
 // service/house/db.
 type SQLiteStore struct {
 	logger   *zap.Logger
@@ -51,12 +51,12 @@ func NewSQLiteStore(logger *zap.Logger, db *sql.DB, registry *ConditionRegistry)
 		logger.Error("unable to open embedded migrations", zap.Error(err))
 		return nil, err
 	}
-	driver, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+	driver, err := sqlite.WithInstance(db, &sqlite.Config{})
 	if err != nil {
 		logger.Error("unable to create migration driver", zap.Error(err))
 		return nil, err
 	}
-	m, err := migrate.NewWithInstance("iofs", migrations, "sqlite3", driver)
+	m, err := migrate.NewWithInstance("iofs", migrations, "sqlite", driver)
 	if err != nil {
 		logger.Error("unable to create migration", zap.Error(err))
 		return nil, err

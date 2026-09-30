@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 // fakeHouseServer answers GetBuilding with a fixed response - the only RPC

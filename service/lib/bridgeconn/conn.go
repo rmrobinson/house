@@ -17,8 +17,8 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/backoffutil"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/backoffutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 const (

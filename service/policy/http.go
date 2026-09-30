@@ -13,7 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/rmrobinson/house/htmxutil"
+	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
 //go:embed templates/*.html

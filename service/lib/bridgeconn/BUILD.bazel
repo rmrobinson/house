@@ -3,12 +3,12 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "bridgeconn",
     srcs = ["conn.go"],
-    importpath = "github.com/rmrobinson/house/bridgeconn",
+    importpath = "github.com/rmrobinson/house/service/lib/bridgeconn",
     visibility = ["//visibility:public"],
     deps = [
         "//api",
-        "//backoffutil",
-        "//grpcutil",
+        "//service/lib/backoffutil",
+        "//service/lib/grpcutil",
         "@org_uber_go_zap//:zap",
     ],
 )

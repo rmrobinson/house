@@ -11,10 +11,9 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//api",
-        "//grpcutil",
+        "//service/lib/grpcutil",
         "//service/policy",
         "//service/policy/bridgehome",
-        "@com_github_mattn_go_sqlite3//:go-sqlite3",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -31,6 +30,7 @@ go_test(
     embed = [":policyd_lib"],
     deps = [
         "//api",
+        "//service/lib/grpcutil",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
@@ -18,7 +17,7 @@ func newTestSQLiteStore(t *testing.T, registry *ConditionRegistry) *SQLiteStore 
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "policy.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
 

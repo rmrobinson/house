@@ -32,10 +32,10 @@ go_library(
     deps = [
         "//api",
         "//api/device",
-        "//htmxutil",
         "//service/lib/backoffutil",
         "//service/lib/configutil",
         "//service/lib/grpcutil",
+        "//service/lib/htmxutil",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",

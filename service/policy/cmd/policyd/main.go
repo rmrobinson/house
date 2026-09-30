@@ -32,11 +32,10 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
 	"github.com/rmrobinson/house/service/policy/bridgehome"
 )
@@ -70,7 +69,7 @@ func main() {
 	}
 
 	dsn := fmt.Sprintf("file:%s?parseTime=true", *dbPath)
-	sqlDB, err := sql.Open("sqlite3", dsn)
+	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		logger.Fatal("unable to open db", zap.Error(err))
 	}

@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/htmxutil"
+	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
 // Server holds the two gRPC clients this admin UI depends on and serves
