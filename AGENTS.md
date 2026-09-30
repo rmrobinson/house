@@ -126,6 +126,19 @@ The shape is consistent across every bridge:
 4. New bridge directory needs its own `BUILD.bazel` (`go_library` +
    `go_binary`, generate with gazelle), a `README.md`, and a
    `<name>.example.yaml` showing the config shape.
+5. When building each `device.Device`, set `Config.Name` from whatever
+   natural human-readable name the upstream protocol/config already gives
+   you (a friendly name, hostname, configured device name, etc.) — keep it
+   distinct from `Address.Address`, which is documented in
+   `api/device/device.proto` as the *network* address the bridge reaches
+   the device at (host/IP/MAC/UDN), not a display name. Skipping
+   `Config.Name` isn't just a missing nice-to-have: `service/adminui`
+   falls back to the raw `Device.Id` (often an IEEE address, MAC, or
+   serial number) when it's unset, so the device shows up unreadably in
+   the UI. This exact bug hit zigbee, omada, apc-ups, and zwave (missing
+   `Config.Name` despite a name being in hand) and frigate (worse:
+   `Address.Address` was set to the camera's name instead of its network
+   endpoint) — see git history around 2026-09-30 for the fix.
 
 ## Proto/API conventions (`api/`)
 
