@@ -49,7 +49,37 @@ var (
 	lat        = flag.Float64("lat", 0, "Building latitude in degrees, used if --house-addr is empty; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
 	lon        = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
 	locationTZ = flag.String("location-tz", "", "IANA timezone (e.g. America/Toronto), used if --house-addr is empty; defaults to the engine process's local zone")
+
+	// Optional mutual TLS for both --bridge-addr and --house-addr - all three
+	// of tlsCertFile/tlsKeyFile/tlsCAFile are required together, or all left
+	// blank to dial plaintext gRPC (the default), matching bridgecli's own
+	// --tls-cert/--tls-key/--tls-ca convention. One identity for both
+	// connections, same as adminui's single tlsCfg for house/bridge/policy.
+	tlsCertFile   = flag.String("tls-cert", "", "client certificate file for mutual TLS to --bridge-addr/--house-addr")
+	tlsKeyFile    = flag.String("tls-key", "", "client key file for mutual TLS")
+	tlsCAFile     = flag.String("tls-ca", "", "CA file trusted to verify --bridge-addr/--house-addr's certificate")
+	tlsServerName = flag.String("tls-server-name", "", "hostname to verify the server's certificate against, if different from --bridge-addr/--house-addr")
 )
+
+// clientTLSConfig builds a *grpcutil.ClientTLSConfig from the --tls-* flags,
+// or nil for plaintext gRPC if none are set.
+func clientTLSConfig(logger *zap.Logger) *grpcutil.ClientTLSConfig {
+	set := 0
+	for _, f := range []string{*tlsCertFile, *tlsKeyFile, *tlsCAFile} {
+		if f != "" {
+			set++
+		}
+	}
+	switch set {
+	case 0:
+		return nil
+	case 3:
+		return &grpcutil.ClientTLSConfig{CertFile: *tlsCertFile, KeyFile: *tlsKeyFile, CAFile: *tlsCAFile, ServerName: *tlsServerName}
+	default:
+		logger.Fatal("--tls-cert, --tls-key, and --tls-ca are required together - only some of them were set")
+		return nil
+	}
+}
 
 func main() {
 	flag.Parse()
@@ -84,10 +114,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	tlsCfg := clientTLSConfig(logger)
+
 	var home policy.HomeAPI
 	var adapter *bridgehome.Adapter
 	if *bridgeAddr != "" {
-		adapter = bridgehome.New(logger, *bridgeAddr, nil)
+		adapter = bridgehome.New(logger, *bridgeAddr, tlsCfg)
 		home = adapter
 	} else {
 		logger.Warn("using stub HomeAPI: no real device/house integration yet, see stubhome.go")
@@ -109,7 +141,7 @@ func main() {
 			logger.Fatal("--building-id is required when --house-addr is set")
 		}
 
-		houseConn, err := grpcutil.DialInsecure(*houseAddr)
+		houseConn, err := grpcutil.Dial(*houseAddr, tlsCfg)
 		if err != nil {
 			logger.Fatal("unable to dial house service", zap.String("address", *houseAddr), zap.Error(err))
 		}
