@@ -392,12 +392,12 @@ func (e *Engine) Unregister(id string) error {
 		return fmt.Errorf("policy %q not registered", id)
 	}
 
-	if e.store != nil {
-		if err := e.store.DeletePolicy(id); err != nil {
-			return fmt.Errorf("policy %q: unpersisting: %w", id, err)
-		}
-	}
-
+	// Cancel id's condition evaluation (and, for Interrupt, its running
+	// script instances) unconditionally, before touching the store: rp is
+	// already gone from e.policies above, so a store error below must not
+	// leave its goroutine and bus subscription running with no way to
+	// retry the unregister (the map entry can't be re-added to retry
+	// against).
 	rp.cancel()
 	if rp.policy.OnConditionFalse == Interrupt {
 		rp.mu.Lock()
@@ -405,6 +405,12 @@ func (e *Engine) Unregister(id string) error {
 			ce.cancel()
 		}
 		rp.mu.Unlock()
+	}
+
+	if e.store != nil {
+		if err := e.store.DeletePolicy(id); err != nil {
+			return fmt.Errorf("policy %q: unpersisting: %w", id, err)
+		}
 	}
 
 	e.bus.Publish(Event{Topic: uiPolicyChangedTopic, Payload: id})
@@ -480,9 +486,20 @@ func (e *Engine) LastLogs() map[string]ExecutionLog {
 	return out
 }
 
+// maxInMemoryLogs bounds e.logs: without a cap, a long-running engine with
+// frequently-firing policies accumulates one ExecutionLog per trigger
+// forever, growing memory (and the cost of every Logs/LogsForPolicy/LastLogs
+// scan) without bound. Full history remains available through Store, when
+// one is configured (see WithStore); e.logs is only the in-memory tail used
+// to serve those three methods without a store round-trip.
+const maxInMemoryLogs = 1000
+
 func (e *Engine) appendLog(l ExecutionLog) {
 	e.logsMu.Lock()
 	e.logs = append(e.logs, l)
+	if len(e.logs) > maxInMemoryLogs {
+		e.logs = e.logs[len(e.logs)-maxInMemoryLogs:]
+	}
 	e.logsMu.Unlock()
 
 	if e.store != nil {

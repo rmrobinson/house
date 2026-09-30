@@ -64,7 +64,7 @@ func startFakeServer(t *testing.T, s api2.BridgeServiceServer) string {
 func TestRun_DeliversUpdatesAndSetsClient(t *testing.T) {
 	addr := startFakeServer(t, &fakeServer{updates: []*api2.Update{{Action: api2.Update_INITIAL}}})
 
-	c := New(zaptest.NewLogger(t), addr)
+	c := New(zaptest.NewLogger(t), addr, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -89,7 +89,7 @@ func TestRun_ClientClearedAndOnDropCalledWhenConnectionEnds(t *testing.T) {
 	srv := &fakeServer{updates: []*api2.Update{{Action: api2.Update_INITIAL}}}
 	addr := startFakeServer(t, srv)
 
-	c := New(zaptest.NewLogger(t), addr)
+	c := New(zaptest.NewLogger(t), addr, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -117,7 +117,7 @@ func TestRun_BackoffOnlyResetsAfterFirstMessage(t *testing.T) {
 	t.Run("grows when the stream never delivers a message", func(t *testing.T) {
 		addr := startFakeServer(t, &neverSendsServer{})
 
-		c := New(zaptest.NewLogger(t), addr)
+		c := New(zaptest.NewLogger(t), addr, nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -131,7 +131,7 @@ func TestRun_BackoffOnlyResetsAfterFirstMessage(t *testing.T) {
 	t.Run("resets once a message is actually received", func(t *testing.T) {
 		addr := startFakeServer(t, &fakeServer{updates: []*api2.Update{{Action: api2.Update_INITIAL}}})
 
-		c := New(zaptest.NewLogger(t), addr)
+		c := New(zaptest.NewLogger(t), addr, nil)
 		// Seed a high value, as if prior failures had already grown it - a
 		// successful connection should collapse it back to the minimum.
 		c.backoff.Store(int64(MaxBackoff))

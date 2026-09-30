@@ -87,7 +87,7 @@ func main() {
 	var home policy.HomeAPI
 	var adapter *bridgehome.Adapter
 	if *bridgeAddr != "" {
-		adapter = bridgehome.New(logger, *bridgeAddr)
+		adapter = bridgehome.New(logger, *bridgeAddr, nil)
 		home = adapter
 	} else {
 		logger.Warn("using stub HomeAPI: no real device/house integration yet, see stubhome.go")
@@ -95,6 +95,15 @@ func main() {
 	}
 
 	loc := buildingLocation{lat: *lat, lon: *lon, tz: *locationTZ}
+	// haveLocation tracks whether a location was actually configured, rather
+	// than re-deriving it from loc's fields once --house-addr is in play: a
+	// real building fetched from HouseService can legitimately have an unset
+	// Config (lat=0, lon=0, tz="", the proto zero value), which must still
+	// count as "configured" - the fetch itself is the caller's explicit
+	// intent to use location-based conditions - not be silently
+	// indistinguishable from "no --lat/--lon/--location-tz and no
+	// --house-addr at all".
+	haveLocation := *lat != 0 || *lon != 0 || *locationTZ != ""
 	if *houseAddr != "" {
 		if *buildingID == "" {
 			logger.Fatal("--building-id is required when --house-addr is set")
@@ -113,11 +122,17 @@ func main() {
 		if err != nil {
 			logger.Fatal("unable to fetch building location", zap.Error(err))
 		}
+		haveLocation = true
+
+		if loc.lat == 0 && loc.lon == 0 && loc.tz == "" {
+			logger.Warn("building has no location configured in house service; schedule.sun-event/daylight/date-range conditions will use lat=0,lon=0 and the local timezone",
+				zap.String("building_id", *buildingID))
+		}
 		logger.Info("using location from house service",
 			zap.String("building_id", *buildingID), zap.Float64("lat", loc.lat), zap.Float64("lon", loc.lon), zap.String("tz", loc.tz))
 	}
 
-	if loc.lat != 0 || loc.lon != 0 || loc.tz != "" {
+	if haveLocation {
 		home = policy.NewLocationHomeAPI(home, loc.lat, loc.lon, loc.tz)
 	}
 

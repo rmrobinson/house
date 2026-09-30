@@ -224,7 +224,7 @@ func TestAdapter_StreamedUpdatesDriveCacheAndSystemEvents(t *testing.T) {
 
 			addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
 
-			adapter := New(zaptest.NewLogger(t), addr)
+			adapter := New(zaptest.NewLogger(t), addr, nil)
 			engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 			defer engine.Close()
 
@@ -289,7 +289,7 @@ func TestAdapter_NilDeviceOnNonRemovedUpdateDoesNotClobberCache(t *testing.T) {
 
 	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -322,7 +322,7 @@ func TestAdapter_NoMotionEventOnColdStartWithMotionAlreadyActive(t *testing.T) {
 	updates := initialAsBulk("b1", []*device.Device{sensorDevice("sensor-1", true, false)})
 	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -351,7 +351,7 @@ func TestAdapter_SetLight(t *testing.T) {
 	}
 	addr := startFakeServer(t, srv)
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -384,7 +384,7 @@ func TestAdapter_SetLight_PropagatesError(t *testing.T) {
 	}
 	addr := startFakeServer(t, srv)
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -418,7 +418,7 @@ func newStartedAdapter(t *testing.T, srv *fakeBridgeServer) (*Adapter, *policy.E
 	}
 
 	addr := startFakeServer(t, srv)
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	t.Cleanup(engine.Close)
 
@@ -529,7 +529,7 @@ func TestAdapter_SetState_ValueMustBeATable(t *testing.T) {
 }
 
 func TestAdapter_SetState_ErrNotReadyBeforeStart(t *testing.T) {
-	adapter := New(zaptest.NewLogger(t), "127.0.0.1:0")
+	adapter := New(zaptest.NewLogger(t), "127.0.0.1:0", nil)
 	err := adapter.SetState("light-1", "brightness_absolute", map[string]any{"brightness_percent": float64(50)})
 	assert.ErrorIs(t, err, ErrNotReady)
 }
@@ -563,7 +563,7 @@ func TestAdapter_CameraMotionPublishesMotionDetected(t *testing.T) {
 
 	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -593,7 +593,7 @@ func TestAdapter_UpdateDeviceStateTagsEngineCacheWithKind(t *testing.T) {
 	})
 	addr := startFakeServer(t, &fakeBridgeServer{updates: updates})
 
-	adapter := New(zaptest.NewLogger(t), addr)
+	adapter := New(zaptest.NewLogger(t), addr, nil)
 	engine := policy.NewEngine(adapter, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -612,7 +612,7 @@ func TestAdapter_UpdateDeviceStateTagsEngineCacheWithKind(t *testing.T) {
 }
 
 func TestAdapter_ErrNotReadyBeforeStart(t *testing.T) {
-	adapter := New(zaptest.NewLogger(t), "unused:0")
+	adapter := New(zaptest.NewLogger(t), "unused:0", nil)
 
 	_, err := adapter.GetLight("x")
 	assert.ErrorIs(t, err, ErrNotReady)

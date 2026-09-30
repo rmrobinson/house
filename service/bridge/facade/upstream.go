@@ -32,7 +32,7 @@ func newUpstreamConn(f *Facade, addr string) *upstreamConn {
 	return &upstreamConn{
 		addr: addr,
 		f:    f,
-		conn: bridgeconn.New(f.logger, addr),
+		conn: bridgeconn.New(f.logger, addr, f.clientTLS),
 	}
 }
 

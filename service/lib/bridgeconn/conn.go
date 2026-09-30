@@ -32,6 +32,7 @@ const (
 type Conn struct {
 	addr   string
 	logger *zap.Logger
+	tlsCfg *grpcutil.ClientTLSConfig
 
 	// backoff is nanoseconds, reset to MinBackoff once the connection has
 	// actually delivered a message (see connectOnce) so a brief blip after a
@@ -43,9 +44,11 @@ type Conn struct {
 	client api2.BridgeServiceClient
 }
 
-// New creates a Conn that will dial addr once Run is called.
-func New(logger *zap.Logger, addr string) *Conn {
-	c := &Conn{logger: logger, addr: addr}
+// New creates a Conn that will dial addr once Run is called. tlsCfg, if
+// non-nil, is used for the connection (see grpcutil.Dial); nil means
+// plaintext gRPC.
+func New(logger *zap.Logger, addr string, tlsCfg *grpcutil.ClientTLSConfig) *Conn {
+	c := &Conn{logger: logger, addr: addr, tlsCfg: tlsCfg}
 	c.backoff.Store(int64(MinBackoff))
 	return c
 }
@@ -83,7 +86,7 @@ func (c *Conn) Run(ctx context.Context, onUpdate func(*api2.Update), onDrop func
 }
 
 func (c *Conn) connectOnce(ctx context.Context, onUpdate func(*api2.Update), onDrop func()) error {
-	conn, err := grpcutil.DialInsecure(c.addr)
+	conn, err := grpcutil.Dial(c.addr, c.tlsCfg)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

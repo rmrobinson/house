@@ -11,6 +11,7 @@ go_library(
         "//api/device",
         "//service/bridge",
         "//service/lib/bridgeconn",
+        "//service/lib/grpcutil",
         "//service/policy",
         "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_golang_google_protobuf//reflect/protoregistry",

@@ -22,8 +22,9 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/bridge"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
 )
 
@@ -50,6 +51,14 @@ var ErrNotReady = errors.New("bridgehome: adapter not started")
 // names (see SetState's doc comment).
 var commandDescriptor = (&command.Command{}).ProtoReflect().Descriptor()
 
+// updateQueueSize bounds Adapter's pending-update channel (see handleUpdate/
+// processUpdates): large enough that an ordinary burst (e.g. a facade's
+// per-device INITIAL replay) never blocks the connection's own Recv loop,
+// while still bounded so a genuinely stuck applyUpdate (rather than just a
+// slow one) eventually applies backpressure instead of growing without
+// limit.
+const updateQueueSize = 256
+
 // Adapter is a policy.HomeAPI backed by exactly one BridgeService connection.
 // It owns no local device->bridge routing table: if addr is a facade
 // aggregating several upstream bridges, resolving which one owns a given
@@ -57,6 +66,15 @@ var commandDescriptor = (&command.Command{}).ProtoReflect().Descriptor()
 type Adapter struct {
 	logger *zap.Logger
 	conn   *bridgeconn.Conn
+
+	// updates queues Updates from handleUpdate (called synchronously from
+	// conn.Run's stream.Recv() loop) for processUpdates to apply on its own
+	// goroutine, in the same order they arrived - so a bulk InitialUpdate's
+	// device-by-device application (which can take a while for a large
+	// snapshot) never delays picking up the connection's next message, while
+	// every update - InitialUpdate included - is still applied strictly in
+	// receive order, exactly as if handleUpdate had applied it inline.
+	updates chan *api2.Update
 
 	mu     sync.Mutex
 	ctx    context.Context
@@ -69,11 +87,13 @@ type Adapter struct {
 }
 
 // New creates an Adapter that will connect to addr once Start is called.
-// Every HomeAPI method returns ErrNotReady until then.
-func New(logger *zap.Logger, addr string) *Adapter {
+// Every HomeAPI method returns ErrNotReady until then. tlsCfg, if non-nil,
+// is used for the connection; nil means plaintext gRPC.
+func New(logger *zap.Logger, addr string, tlsCfg *grpcutil.ClientTLSConfig) *Adapter {
 	return &Adapter{
-		logger: logger,
-		conn:   bridgeconn.New(logger, addr),
+		logger:  logger,
+		conn:    bridgeconn.New(logger, addr, tlsCfg),
+		updates: make(chan *api2.Update, updateQueueSize),
 	}
 }
 
@@ -87,7 +107,23 @@ func (a *Adapter) Start(ctx context.Context, engine *policy.Engine) {
 	a.engine = engine
 	a.mu.Unlock()
 
+	go a.processUpdates(ctx)
 	go a.conn.Run(ctx, a.handleUpdate, a.onDrop)
+}
+
+// processUpdates applies every Update handleUpdate enqueues, one at a time
+// and in order, until ctx is done. Running on its own goroutine keeps
+// applying an update (in particular, a bulk InitialUpdate's device loop)
+// from ever delaying conn.Run's stream.Recv() loop.
+func (a *Adapter) processUpdates(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case u := <-a.updates:
+			a.applyUpdate(u)
+		}
+	}
 }
 
 // onDrop marks the connection no longer live. Called once each time the
@@ -107,17 +143,38 @@ func (a *Adapter) isLive() bool {
 	return a.live
 }
 
-// handleUpdate applies u to the engine's cache/bus. It handles every shape
+// handleUpdate is bridgeconn.Conn.Run's onUpdate callback: called
+// synchronously from its stream.Recv() loop (see that doc comment), so it
+// must return quickly. It marks the connection live, then hands u to
+// processUpdates via a.updates for the actual (potentially slow, for a bulk
+// InitialUpdate) application - a blocking send is used deliberately, so a
+// full queue applies backpressure onto the connection rather than growing
+// without bound, at the cost of delaying the next Recv() only when
+// processUpdates has fallen far behind.
+func (a *Adapter) handleUpdate(u *api2.Update) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.live = true
+	a.mu.Unlock()
+
+	select {
+	case a.updates <- u:
+	case <-ctx.Done():
+	}
+}
+
+// applyUpdate applies u to the engine's cache/bus, called only from
+// processUpdates so every update - InitialUpdate included - is applied
+// strictly in the order handleUpdate received it. It handles every shape
 // bridge.proto documents as legal for Update, not just the one the currently
 // configured addr happens to send: a bulk Update_InitialUpdate (what an
 // individual bridge's own server sends) and a per-device Update_DeviceUpdate
 // for any Action including INITIAL (what service/bridge/facade currently
 // sends instead) are treated as equally expected, not one primary path and
 // one fallback.
-func (a *Adapter) handleUpdate(u *api2.Update) {
+func (a *Adapter) applyUpdate(u *api2.Update) {
 	a.mu.Lock()
 	engine := a.engine
-	a.live = true
 	a.mu.Unlock()
 	if engine == nil {
 		return
