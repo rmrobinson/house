@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/mdlayher/apcupsd"
@@ -73,10 +74,14 @@ type APCUPSBridge struct {
 	b      *api2.Bridge
 
 	client statusClient
+	// dial reconnects to the UPS daemon, replacing client when a Status call fails - e.g. after
+	// apcupsd itself restarts and closes the long-lived connection client was opened on.
+	dial func() (statusClient, error)
 }
 
-// NewAPCUPSBridge creates a new bridge to the specified APC UPS daemon
-func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client statusClient, upsIPAddr string, upsPort int) *APCUPSBridge {
+// NewAPCUPSBridge creates a new bridge to the specified APC UPS daemon. dial is used to
+// reconnect if the connection underlying client is ever lost.
+func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client statusClient, dial func() (statusClient, error), upsIPAddr string, upsPort int) *APCUPSBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -102,6 +107,7 @@ func NewAPCUPSBridge(logger *zap.Logger, svc *bridge.Service, client statusClien
 		svc:    svc,
 		b:      b,
 		client: client,
+		dial:   dial,
 	}
 
 	return aub
@@ -137,9 +143,27 @@ func (aub *APCUPSBridge) ProcessCommandAsync(ctx context.Context, cmd *command.C
 func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
 	s, err := aub.client.Status()
 	if err != nil {
-		aub.logger.Error("unable to get status from ups",
+		aub.logger.Warn("status query failed, reconnecting to ups",
 			zap.Error(err))
-		return status.Error(codes.Internal, "unable to get status from ups")
+
+		newClient, dialErr := aub.dial()
+		if dialErr != nil {
+			aub.logger.Error("unable to reconnect to ups",
+				zap.Error(dialErr))
+			return status.Error(codes.Internal, "unable to get status from ups")
+		}
+		if closer, ok := aub.client.(io.Closer); ok {
+			closer.Close()
+		}
+		aub.client = newClient
+
+		s, err = aub.client.Status()
+		if err != nil {
+			aub.logger.Error("unable to get status from ups after reconnecting",
+				zap.Error(err))
+			return status.Error(codes.Internal, "unable to get status from ups")
+		}
+		aub.logger.Info("reconnected to ups")
 	}
 
 	// apcupsd can answer the STATUS query successfully before it's finished its own
