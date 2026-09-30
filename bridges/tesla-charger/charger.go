@@ -14,6 +14,10 @@ import (
 	"github.com/rmrobinson/house/api/trait"
 )
 
+// chargerPort is the fixed local HTTP port the Tesla Wall Connector's onboard API is served on -
+// see Charger.getDataFromAPI, which never appends a port of its own.
+const chargerPort = 80
+
 // TODO: <IP>/api/1/wifi_status
 
 // returned from <IP>/api/1/vitals
@@ -75,9 +79,13 @@ type ChargerState struct {
 	lifetime *lifetimeAPIResponse
 	version  *versionAPIResponse
 
+	ipAddr      string
 	retrievedAt time.Time
 }
 
+// toDevice returns nil if any of vitals/version/lifetime is missing - a partial poll isn't
+// trustworthy enough to build a device from. Callers must not pass a nil result straight to
+// bridge.Service.UpdateDevice, which treats a nil device as a fatal error.
 func (cs *ChargerState) toDevice() *device.Device {
 	if cs.vitals == nil || cs.version == nil || cs.lifetime == nil {
 		return nil
@@ -111,6 +119,11 @@ func (cs *ChargerState) toDevice() *device.Device {
 		Manufacturer: "Tesla",
 		ModelName:    &modelName,
 		LastSeen:     timestamppb.New(cs.retrievedAt),
+		// A ChargerState only ever exists because the HTTP poll that built it succeeded.
+		Address: &device.Device_Address{
+			Address:     fmt.Sprintf("%s:%d", cs.ipAddr, chargerPort),
+			IsReachable: true,
+		},
 		Details: &device.Device_EvCharger{
 			EvCharger: &device.EVCharger{
 				OnOff: &trait.OnOff{
@@ -224,6 +237,7 @@ func (c *Charger) State() (*ChargerState, error) {
 		vitals:      vitals,
 		lifetime:    lifetime,
 		version:     version,
+		ipAddr:      c.ipAddr,
 		retrievedAt: time.Now(),
 	}, nil
 }

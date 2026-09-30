@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mdlayher/apcupsd"
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	api2 "github.com/rmrobinson/house/api"
@@ -19,6 +21,18 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
+// hasStatusFlag reports whether apcupsd's space-separated STATUS field (e.g. "ONLINE",
+// "ONBATT", "ONLINE LOWBATT", "COMMLOST") contains the given flag. STATUS is a flag list, not a
+// single value, so this must be used instead of straight string equality.
+func hasStatusFlag(status, flag string) bool {
+	for _, f := range strings.Fields(status) {
+		if f == flag {
+			return true
+		}
+	}
+	return false
+}
+
 func statusToDevice(s *apcupsd.Status) *device.Device {
 	d := &device.Device{
 		Id:           s.SerialNumber,
@@ -26,6 +40,9 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 		Manufacturer: "APC",
 		ModelName:    &s.Model,
 		LastSeen:     timestamppb.New(s.EndAPC),
+		// COMMLOST is apcupsd's status when it has lost its link to the UPS itself, as opposed
+		// to the UPS being fine but on battery/low battery/etc - everything else is reachable.
+		Address: &device.Device_Address{IsReachable: !hasStatusFlag(s.Status, "COMMLOST")},
 		Details: &device.Device_Ups{
 			Ups: &device.UPS{
 				OnOff: &trait.OnOff{
@@ -38,7 +55,7 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 				},
 				Battery: &trait.Battery{
 					State: &trait.Battery_State{
-						Discharging:           s.Status == "ONBATT",
+						Discharging:           hasStatusFlag(s.Status, "ONBATT"),
 						Status:                s.Status,
 						CapacityRemainingPct:  100 - int32(s.BatteryChargePercent),
 						CapacityRemainingMins: int32(s.TimeLeft.Minutes()),
@@ -77,6 +94,10 @@ type APCUPSBridge struct {
 	// dial reconnects to the UPS daemon, replacing client when a Status call fails - e.g. after
 	// apcupsd itself restarts and closes the long-lived connection client was opened on.
 	dial func() (statusClient, error)
+
+	// lastDevice is the most recently published device, kept so Refresh can republish it with
+	// Address.IsReachable = false if the status query still fails after a reconnect attempt.
+	lastDevice *device.Device
 }
 
 // NewAPCUPSBridge creates a new bridge to the specified APC UPS daemon. dial is used to
@@ -150,6 +171,7 @@ func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
 		if dialErr != nil {
 			aub.logger.Error("unable to reconnect to ups",
 				zap.Error(dialErr))
+			aub.markUnreachable()
 			return status.Error(codes.Internal, "unable to get status from ups")
 		}
 		if closer, ok := aub.client.(io.Closer); ok {
@@ -161,6 +183,7 @@ func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
 		if err != nil {
 			aub.logger.Error("unable to get status from ups after reconnecting",
 				zap.Error(err))
+			aub.markUnreachable()
 			return status.Error(codes.Internal, "unable to get status from ups")
 		}
 		aub.logger.Info("reconnected to ups")
@@ -173,14 +196,31 @@ func (aub *APCUPSBridge) Refresh(ctx context.Context) error {
 	// keys its device map by Id, publishing that would create a permanent phantom
 	// second device (empty id, all-zero state) alongside the real one a later,
 	// fully-synced poll adds - it doesn't get overwritten because it lives under a
-	// different (empty string) key. Skip it and retry on the next poll instead.
+	// different (empty string) key. Skip it and retry on the next poll instead. This isn't
+	// the UPS being unreachable, so it's deliberately not routed through markUnreachable.
 	if s.SerialNumber == "" {
 		aub.logger.Warn("ups status missing serial number, skipping this refresh (apcupsd may still be syncing with the ups)")
 		return nil
 	}
 
-	aub.svc.UpdateDevice(statusToDevice(s))
+	d := statusToDevice(s)
+	aub.lastDevice = d
+	aub.svc.UpdateDevice(d)
 	return nil
+}
+
+// markUnreachable republishes the last-known device with Address.IsReachable = false, called
+// when the status query to apcupsd still fails even after a reconnect attempt. A no-op if
+// Refresh has never successfully published a device yet.
+func (aub *APCUPSBridge) markUnreachable() {
+	if aub.lastDevice == nil {
+		return
+	}
+
+	gone := proto.Clone(aub.lastDevice).(*device.Device)
+	gone.Address.IsReachable = false
+	aub.lastDevice = gone
+	aub.svc.UpdateDevice(gone)
 }
 
 // Run begins the process of polling the sensor and reporting back the state.
