@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
 // handleSSE relays the shared deviceHub's updates as Server-Sent Events for
@@ -71,26 +72,9 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", oneLine(frag.String())); err != nil {
+		if _, err := fmt.Fprintf(w, "event: message\ndata: %s\n\n", htmxutil.OneLine(frag.String())); err != nil {
 			return
 		}
 		flusher.Flush()
 	}
-}
-
-// oneLine collapses s to a single line - the SSE wire format terminates a
-// data field at the first newline, so a multi-line HTML fragment must be
-// sent as consecutive "data: " lines instead of one. html/template's output
-// here is compact enough (see templates/partials/device_row.html) that
-// stripping newlines outright is simpler than splitting into multiple
-// "data:" lines and doesn't change the rendered HTML.
-func oneLine(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' || s[i] == '\r' {
-			continue
-		}
-		out = append(out, s[i])
-	}
-	return string(out)
 }

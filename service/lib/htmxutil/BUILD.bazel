@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "htmxutil",
+    srcs = ["htmxutil.go"],
+    importpath = "github.com/rmrobinson/house/service/lib/htmxutil",
+    visibility = ["//visibility:public"],
+)

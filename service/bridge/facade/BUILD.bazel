@@ -14,7 +14,7 @@ go_library(
         "//api/command",
         "//api/device",
         "//service/bridge",
-        "//service/lib/backoffutil",
+        "//service/lib/bridgeconn",
         "//service/lib/configutil",
         "//service/lib/grpcutil",
         "@com_github_google_uuid//:uuid",

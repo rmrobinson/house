@@ -16,8 +16,8 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/bridge"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 var (
@@ -122,12 +122,7 @@ func (f *Facade) Connect(ctx context.Context, addr, serverName string) {
 		tlsCfg = &override
 	}
 
-	uc := &upstreamConn{
-		addr:   addr,
-		f:      f,
-		tlsCfg: tlsCfg,
-	}
-	uc.backoff.Store(int64(minReconnectBackoff))
+	uc := newUpstreamConn(f, addr, tlsCfg)
 	go uc.run(ctx)
 }
 
@@ -191,8 +186,13 @@ func (f *Facade) upstreamClientFor(deviceID string) (api2.BridgeServiceClient, s
 	if !ok {
 		return nil, bridgeID, ErrBridgeUnreachable
 	}
+	// live and client are read from two separately-locked fields
+	// (upstreamConn.mu and bridgeconn.Conn.mu) that aren't updated
+	// atomically together, so a client of nil is possible even when live
+	// briefly still reads true - checked explicitly rather than trusted to
+	// follow from live alone.
 	client, live := uc.snapshot()
-	if !live {
+	if !live || client == nil {
 		return nil, bridgeID, ErrBridgeUnreachable
 	}
 	return client, bridgeID, nil

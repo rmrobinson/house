@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bridgeconn",
+    srcs = ["conn.go"],
+    importpath = "github.com/rmrobinson/house/service/lib/bridgeconn",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//service/lib/backoffutil",
+        "//service/lib/grpcutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "bridgeconn_test",
+    srcs = ["conn_test.go"],
+    embed = [":bridgeconn"],
+    deps = [
+        "//api",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

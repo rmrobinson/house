@@ -2,61 +2,52 @@ package facade
 
 import (
 	"context"
-	"fmt"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/device"
-	"github.com/rmrobinson/house/service/lib/backoffutil"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
-const (
-	minReconnectBackoff = time.Second
-	maxReconnectBackoff = 30 * time.Second
-)
-
-// upstreamConn manages one upstream BridgeService connection: dialing,
-// streaming updates into the Facade's cache, and reconnecting (with jittered
-// backoff) on drop. bridgeID is unknown until the first InitialUpdate
-// arrives, since addresses - not bridge IDs - are what's configured.
+// upstreamConn manages one upstream BridgeService connection: dialing and
+// streaming (delegated to a bridgeconn.Conn) and the extra bookkeeping the
+// Facade needs on top - bridgeID (unknown until the first InitialUpdate
+// arrives, since addresses, not bridge IDs, are what's configured) and live,
+// which additionally requires that InitialUpdate to have actually arrived on
+// the current connection, not just a dial having succeeded.
 type upstreamConn struct {
 	addr string
 	f    *Facade
-
-	// tlsCfg, if non-nil, is used to dial addr over mutual TLS instead of
-	// plaintext gRPC - derived from the owning Facade's clientTLS at Connect
-	// time, with ServerName possibly overridden per upstream (see
-	// Facade.Connect).
-	tlsCfg *grpcutil.ClientTLSConfig
-
-	// backoff is nanoseconds, reset to minReconnectBackoff once the
-	// connection has actually delivered a message (see connectOnce) so a
-	// brief blip after a long stable connection doesn't pay for backoff
-	// accumulated by earlier, unrelated failures - mirrors bridges/lib/
-	// webosctrl/conn.go's Conn.backoff. Deliberately not reset on a bare
-	// successful Dial - grpcutil.DialInsecure dials lazily and essentially
-	// never fails synchronously, so that would prove nothing about whether
-	// the upstream is actually reachable.
-	backoff atomic.Int64
+	conn *bridgeconn.Conn
 
 	mu       sync.Mutex
 	bridgeID string
-	client   api2.BridgeServiceClient
 	live     bool
+}
+
+// newUpstreamConn creates an upstreamConn that will dial addr once run is
+// called. tlsCfg is the ClientTLSConfig to use for this specific connection -
+// the owning Facade's clientTLS, with ServerName possibly overridden per
+// upstream (see Facade.Connect) - not necessarily f.clientTLS itself.
+func newUpstreamConn(f *Facade, addr string, tlsCfg *grpcutil.ClientTLSConfig) *upstreamConn {
+	return &upstreamConn{
+		addr: addr,
+		f:    f,
+		conn: bridgeconn.New(f.logger, addr, tlsCfg),
+	}
 }
 
 // snapshot returns the current client and whether the connection is live,
 // safe to call concurrently with the connection's own goroutine.
 func (u *upstreamConn) snapshot() (api2.BridgeServiceClient, bool) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.client, u.live
+	live := u.live
+	u.mu.Unlock()
+	return u.conn.Client(), live
 }
 
 func (u *upstreamConn) connected() bool {
@@ -68,78 +59,26 @@ func (u *upstreamConn) connected() bool {
 // reconnecting with jittered exponential backoff whenever the connection
 // drops.
 func (u *upstreamConn) run(ctx context.Context) {
-	for ctx.Err() == nil {
-		if err := u.connectOnce(ctx); err != nil && ctx.Err() == nil {
-			u.f.logger.Warn("upstream bridge connection ended, will retry",
-				zap.String("addr", u.addr), zap.Error(err))
-		}
-
-		backoff := time.Duration(u.backoff.Load())
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoffutil.Jitter(backoff)):
-		}
-
-		u.backoff.Store(int64(min(backoff*2, maxReconnectBackoff)))
-	}
+	u.conn.Run(ctx, u.handleUpdate, u.onDrop)
 }
 
-func (u *upstreamConn) connectOnce(ctx context.Context) error {
-	conn, err := grpcutil.Dial(u.addr, u.tlsCfg)
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+func (u *upstreamConn) handleUpdate(update *api2.Update) {
+	if iu := update.GetInitialUpdate(); iu != nil {
+		u.f.ingestInitial(u, iu)
+		return
 	}
-	defer conn.Close()
+	u.f.ingestPassthrough(update)
+}
 
-	client := api2.NewBridgeServiceClient(conn)
-
+// onDrop marks this connection no longer live and flags its bridge (and
+// devices) unreachable. Called once each time the underlying connection is
+// lost, including on shutdown while connected.
+func (u *upstreamConn) onDrop() {
 	u.mu.Lock()
-	u.client = client
+	bridgeID := u.bridgeID
+	u.live = false
 	u.mu.Unlock()
-
-	defer func() {
-		u.mu.Lock()
-		bridgeID := u.bridgeID
-		u.live = false
-		u.mu.Unlock()
-		u.f.markUnreachable(bridgeID)
-	}()
-
-	stream, err := client.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
-	if err != nil {
-		return fmt.Errorf("stream updates: %w", err)
-	}
-
-	first := true
-	for {
-		update, err := stream.Recv()
-		if err != nil {
-			return fmt.Errorf("recv: %w", err)
-		}
-
-		if first {
-			// The connection is only confirmed live once a message has
-			// actually been received from it - neither a successful Dial
-			// (grpcutil.DialInsecure dials lazily and essentially never
-			// fails synchronously) nor a successful StreamUpdates call
-			// (which can still return a stream that errors on the first
-			// Recv) proves the upstream is reachable. Resetting backoff
-			// here, rather than right after Dial, means a
-			// persistently-failing upstream actually backs off toward
-			// maxReconnectBackoff instead of retrying at the minimum
-			// forever.
-			u.backoff.Store(int64(minReconnectBackoff))
-			first = false
-		}
-
-		if iu := update.GetInitialUpdate(); iu != nil {
-			u.f.ingestInitial(u, iu)
-			continue
-		}
-		u.f.ingestPassthrough(update)
-	}
+	u.f.markUnreachable(bridgeID)
 }
 
 // ingestInitial applies a full-snapshot InitialUpdate from uc's upstream

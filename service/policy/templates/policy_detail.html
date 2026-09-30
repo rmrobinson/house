@@ -1,0 +1,60 @@
+{{define "policy_detail_page"}}
+<!doctype html>
+<html>
+<head>{{template "head" .}}</head>
+{{template "body_open" .}}
+<main>
+  {{template "policy_detail_content" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "policy_detail_content"}}
+<div id="page-content">
+  <h1>{{.Info.ID}}</h1>
+
+  <div class="card">
+    <p>
+      State: {{template "policy_status_cell" .Info}}
+      &nbsp; On condition false: <strong>{{onConditionFalseStr .Info.OnConditionFalse}}</strong>
+    </p>
+    <div id="simulate" hx-get="/policies/{{.Info.ID}}/simulate" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+  </div>
+
+  <div class="card">
+    <h2>Condition</h2>
+    <pre>{{conditionPretty .Info.ConditionExpr}}</pre>
+  </div>
+
+  <div class="card">
+    <h2>Script</h2>
+    <pre>{{.Info.Script}}</pre>
+  </div>
+
+  <div class="actions">
+    <a class="btn" href="/policies/{{.Info.ID}}/edit">Edit</a>
+    <form hx-post="/policies/{{.Info.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Unregister {{.Info.ID}}?" style="display:inline">
+      <button class="btn btn-danger" type="submit">Unregister</button>
+    </form>
+  </div>
+
+  <h2>Recent executions</h2>
+  <table>
+    <thead><tr><th>Policy</th><th>Started</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
+    <tbody id="logs-tbody-{{.Info.ID}}">
+    {{range .Logs}}{{template "log_row" .}}{{else}}
+      <tr><td colspan="5" class="hint">No executions yet.</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{define "policy_simulate_fragment"}}
+{{if .Registered}}
+  <p>Combined condition currently evaluates to: <strong>{{if .Result}}TRUE (would fire){{else}}false{{end}}</strong></p>
+{{else}}
+  <p class="hint">Policy no longer registered.</p>
+{{end}}
+{{end}}
