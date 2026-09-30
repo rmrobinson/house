@@ -63,14 +63,17 @@ func main() {
 		proto = "tcp"
 	}
 
-	apcUPSClient, err := apcupsd.Dial(proto, fmt.Sprintf("%s:%d", ipAddr, port))
+	dial := func() (statusClient, error) {
+		return apcupsd.Dial(proto, fmt.Sprintf("%s:%d", ipAddr, port))
+	}
+	apcUPSClient, err := dial()
 	if err != nil {
 		logger.Fatal("unable to connect to ups", zap.Error(err))
 	}
 
 	svc := bridge.NewService(logger)
 
-	upsb := NewAPCUPSBridge(logger, svc, apcUPSClient, ipAddr, port)
+	upsb := NewAPCUPSBridge(logger, svc, apcUPSClient, dial, ipAddr, port)
 
 	// Once we've successfully gotten the device state, register the handler and device with the service
 	svc.RegisterHandler(upsb, upsb.b)
