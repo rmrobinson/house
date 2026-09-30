@@ -116,3 +116,8 @@ bridge_image(
     name = "adminui",
     binary = "//service/adminui",
 )
+
+bridge_image(
+    name = "viewerui",
+    binary = "//service/viewerui",
+)

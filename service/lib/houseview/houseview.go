@@ -5,6 +5,7 @@ package houseview
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -219,4 +220,37 @@ func OnOff(d *apiDevice.Device) *apiTrait.OnOff {
 	default:
 		return nil
 	}
+}
+
+// ListBuildings/ListFloors/ListRoomsByFloor wrap HouseService's streaming
+// List* RPCs into a plain slice - every caller wants the whole list at once
+// (home-scale result sets, not worth consuming the stream incrementally).
+func ListBuildings(ctx context.Context, house api2.HouseServiceClient) ([]*api2.Building, error) {
+	return StreamAll(func(cb func(*api2.Building) error) error {
+		stream, err := house.ListBuildings(ctx, &api2.ListBuildingsRequest{})
+		if err != nil {
+			return err
+		}
+		return RecvAll(stream, cb)
+	})
+}
+
+func ListFloors(ctx context.Context, house api2.HouseServiceClient, buildingID string) ([]*api2.Floor, error) {
+	return StreamAll(func(cb func(*api2.Floor) error) error {
+		stream, err := house.ListFloors(ctx, &api2.ListFloorsRequest{BuildingId: buildingID})
+		if err != nil {
+			return err
+		}
+		return RecvAll(stream, cb)
+	})
+}
+
+func ListRoomsByFloor(ctx context.Context, house api2.HouseServiceClient, floorID string) ([]*api2.Room, error) {
+	return StreamAll(func(cb func(*api2.Room) error) error {
+		stream, err := house.ListRooms(ctx, &api2.ListRoomsRequest{FloorId: &floorID})
+		if err != nil {
+			return err
+		}
+		return RecvAll(stream, cb)
+	})
 }

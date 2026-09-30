@@ -231,38 +231,18 @@ func (s *Server) roomLabel(ctx context.Context, roomID string) (string, error) {
 	return fmt.Sprintf("%s · %s · %s", building.GetConfig().GetName(), floor.GetName(), room.GetConfig().GetName()), nil
 }
 
-// listBuildings/listFloors/listRoomsByFloor wrap HouseService's streaming
-// List* RPCs into a plain slice - every caller in this app wants the whole
-// list at once (admin-tool traffic, not a large enough result set to
-// justify consuming the stream incrementally).
+// listBuildings/listFloors/listRoomsByFloor are houseview's List* helpers
+// bound to this Server's HouseService client.
 func (s *Server) listBuildings(ctx context.Context) ([]*api2.Building, error) {
-	return houseview.StreamAll(func(cb func(*api2.Building) error) error {
-		stream, err := s.house.ListBuildings(ctx, &api2.ListBuildingsRequest{})
-		if err != nil {
-			return err
-		}
-		return houseview.RecvAll(stream, cb)
-	})
+	return houseview.ListBuildings(ctx, s.house)
 }
 
 func (s *Server) listFloors(ctx context.Context, buildingID string) ([]*api2.Floor, error) {
-	return houseview.StreamAll(func(cb func(*api2.Floor) error) error {
-		stream, err := s.house.ListFloors(ctx, &api2.ListFloorsRequest{BuildingId: buildingID})
-		if err != nil {
-			return err
-		}
-		return houseview.RecvAll(stream, cb)
-	})
+	return houseview.ListFloors(ctx, s.house, buildingID)
 }
 
 func (s *Server) listRoomsByFloor(ctx context.Context, floorID string) ([]*api2.Room, error) {
-	return houseview.StreamAll(func(cb func(*api2.Room) error) error {
-		stream, err := s.house.ListRooms(ctx, &api2.ListRoomsRequest{FloorId: &floorID})
-		if err != nil {
-			return err
-		}
-		return houseview.RecvAll(stream, cb)
-	})
+	return houseview.ListRoomsByFloor(ctx, s.house, floorID)
 }
 
 // listDevices wraps the BridgeService facade's ListDevices - unlike

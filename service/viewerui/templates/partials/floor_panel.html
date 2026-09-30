@@ -1,0 +1,15 @@
+{{define "floor_panel"}}<div class="box">
+  <div class="box-title">FLOORS</div>
+  <ul class="list">
+  {{$b := .BuildingID}}
+  {{range .Floors}}<li class="{{if .Active}}active{{end}}"><button class="row" hx-get="/buildings/{{$b}}/floors/{{.ID}}" hx-target="#floor-panel" hx-swap="innerHTML">{{.Name}}</button></li>
+  {{else}}<li class="pad dim">No floors.</li>
+  {{end}}</ul>
+</div>
+<div class="box" id="room-list">
+  <div class="box-title">ROOMS</div>
+  <ul class="list">
+  {{range .Rooms}}<li class="{{if .Active}}active{{end}}"><button class="row" hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML"><span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}"></span>{{.Name}}</button></li>
+  {{else}}<li class="pad dim">No rooms.</li>
+  {{end}}</ul>
+</div>{{end}}

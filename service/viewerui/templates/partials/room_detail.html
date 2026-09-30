@@ -1,0 +1,21 @@
+{{define "room_detail"}}<div class="box">
+  <div class="box-title">{{.Name}}</div>
+  {{template "room_props" .}}
+</div>
+<div class="box">
+  <div class="box-title">DEVICES</div>
+  <table class="devices"><tbody>
+  {{range .Devices}}{{template "device_row" .}}
+  {{else}}<tr><td class="dim">No devices linked.</td></tr>
+  {{end}}</tbody></table>
+  {{if .Camera}}<div class="pad"><button class="action" hx-get="/rooms/{{.ID}}/camera/{{.Camera.ID}}" hx-target="#detail" hx-swap="innerHTML">[ VIEW CAMERA ]</button></div>{{end}}
+</div>{{end}}
+
+{{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}
+{{define "room_props"}}<div id="room-props-{{.ID}}" class="stats">{{template "room_props_cells" .}}</div>{{end}}
+
+{{define "room_props_cells"}}<div class="stat"><div class="label">Occupied</div><div class="val">{{if .Properties.Occupied}}{{.Properties.Occupied}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureF}}{{.Properties.TemperatureF}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Light</div><div class="val">{{if .Properties.LightLevelLux}}{{.Properties.LightLevelLux}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Air quality</div><div class="val">{{if .Properties.AirQualityIndex}}{{.Properties.AirQualityIndex}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Power</div><div class="val">{{if .Properties.PowerDrawW}}{{.Properties.PowerDrawW}}{{else}}—{{end}}</div></div>{{end}}

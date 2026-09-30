@@ -1,0 +1,9 @@
+{{/* device_row is one linked device's row. device_row_oob is the same markup
+with hx-swap-oob, used as the entire payload of a live SSE push (sse.go) - a
+separate block because an oob attribute on the normal render would make htmx
+drop a row with no matching id yet (same reasoning as adminui's
+device_info.html). */}}
+{{define "device_row"}}<tr id="device-{{.ID}}">{{template "device_row_cells" .}}</tr>{{end}}
+{{define "device_row_oob"}}<tr id="device-{{.ID}}" hx-swap-oob="true">{{template "device_row_cells" .}}</tr>{{end}}
+{{define "device_row_cells"}}<td>{{.Name}}<span class="badge">{{.Kind}}</span>{{if not .Online}}<span class="badge offline">offline</span>{{end}}{{if .Error}}<div class="err">{{.Error}}</div>{{end}}</td>
+<td style="text-align:right">{{if .CanToggle}}<button class="toggle {{if .On}}on{{end}}" hx-post="/devices/{{.ID}}/commands" hx-vals='{"on": "{{if .On}}false{{else}}true{{end}}"}' hx-target="#device-{{.ID}}" hx-swap="outerHTML">{{if .On}}[ ON ]{{else}}[ OFF ]{{end}}</button>{{end}}</td>{{end}}

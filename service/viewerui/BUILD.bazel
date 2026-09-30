@@ -1,0 +1,64 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "viewerui_lib",
+    srcs = [
+        "handlers.go",
+        "main.go",
+        "server.go",
+        "sse.go",
+        "templates.go",
+        "view.go",
+    ],
+    embedsrcs = [
+        "templates/building.html",
+        "templates/buildings.html",
+        "templates/layout.html",
+        "templates/partials/camera.html",
+        "templates/partials/device_row.html",
+        "templates/partials/floor_panel.html",
+        "templates/partials/room_detail.html",
+        "templates/partials/room_update.html",
+    ],
+    importpath = "github.com/rmrobinson/house/service/viewerui",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//service/lib/configutil",
+        "//service/lib/grpcutil",
+        "//service/lib/houseview",
+        "//service/lib/htmxutil",
+        "//service/lib/hub",
+        "//service/lib/webassets",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "viewerui",
+    embed = [":viewerui_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "viewerui_test",
+    srcs = ["server_test.go"],
+    embed = [":viewerui_lib"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/lib/grpcutil",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//zaptest",
+    ],
+)
