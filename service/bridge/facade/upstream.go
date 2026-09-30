@@ -30,8 +30,9 @@ type upstreamConn struct {
 	f    *Facade
 
 	// tlsCfg, if non-nil, is used to dial addr over mutual TLS instead of
-	// plaintext gRPC - copied from the owning Facade's clientTLS at Connect
-	// time.
+	// plaintext gRPC - derived from the owning Facade's clientTLS at Connect
+	// time, with ServerName possibly overridden per upstream (see
+	// Facade.Connect).
 	tlsCfg *grpcutil.ClientTLSConfig
 
 	// backoff is nanoseconds, reset to minReconnectBackoff once the

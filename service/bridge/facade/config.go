@@ -26,12 +26,26 @@ type Config struct {
 	// SelfAddress is the network address downstream clients use to reach
 	// this facade - published as the Address of every device it proxies.
 	SelfAddress string
-	// UpstreamAddrs are the BridgeService addresses this facade aggregates.
-	UpstreamAddrs []string
+	// UpstreamBridges are the BridgeServices this facade aggregates.
+	UpstreamBridges []UpstreamBridge
 	// ClientTLS configures mutual TLS for every one of those upstream
 	// connections (see NewFromConfig -> Facade.Connect). Nil means plaintext
 	// gRPC.
 	ClientTLS *grpcutil.ClientTLSConfig
+}
+
+// UpstreamBridge is one BridgeService this facade aggregates, as read from
+// one entry of facade.bridges.
+type UpstreamBridge struct {
+	// Address is the host:port this facade dials.
+	Address string `mapstructure:"address"`
+	// ServerName overrides the hostname ClientTLS verifies this upstream's
+	// certificate against - required whenever Address isn't the name the
+	// upstream's certificate was actually issued for, e.g. dialing by IP, or
+	// several bridges sharing a hostname like "localhost", while cert-agent
+	// issues each bridge its own cert for "<name>.<host>.house.internal".
+	// Ignored when ClientTLS is nil (plaintext gRPC).
+	ServerName string `mapstructure:"server_name"`
 }
 
 // LoadConfig reads a Config from viper's bridge.*/facade.bridges keys -
@@ -60,11 +74,11 @@ type Config struct {
 // which always embeds one, treats a nil Config as a fatal config error
 // instead.
 func LoadConfig(logger *zap.Logger, listenPort int, configPath string) (*Config, error) {
-	var addrs []string
-	if err := viper.UnmarshalKey("facade.bridges", &addrs); err != nil {
+	var bridges []UpstreamBridge
+	if err := viper.UnmarshalKey("facade.bridges", &bridges); err != nil {
 		return nil, fmt.Errorf("unable to parse facade.bridges config: %w", err)
 	}
-	if len(addrs) < 1 {
+	if len(bridges) < 1 {
 		return nil, nil
 	}
 
@@ -90,8 +104,8 @@ func LoadConfig(logger *zap.Logger, listenPort int, configPath string) (*Config,
 	// cache as if they came from a real upstream bridge. This only catches
 	// an exact string match (e.g. a copy-pasted address); it can't detect
 	// e.g. "localhost:X" aliasing "192.168.1.5:X".
-	for _, addr := range addrs {
-		if addr == selfAddress {
+	for _, b := range bridges {
+		if b.Address == selfAddress {
 			return nil, fmt.Errorf("facade.bridges cannot include this facade's own address (%s)", selfAddress)
 		}
 	}
@@ -123,13 +137,13 @@ func LoadConfig(logger *zap.Logger, listenPort int, configPath string) (*Config,
 		BridgeName:        viper.GetString("bridge.name"),
 		BridgeDescription: viper.GetString("bridge.description"),
 		SelfAddress:       selfAddress,
-		UpstreamAddrs:     addrs,
+		UpstreamBridges:   bridges,
 		ClientTLS:         clientTLS,
 	}, nil
 }
 
 // NewFromConfig builds a Facade from cfg and starts (ctx-scoped) connections
-// to every upstream bridge in cfg.UpstreamAddrs. Callers must register the
+// to every upstream bridge in cfg.UpstreamBridges. Callers must register the
 // returned Facade as a BridgeServiceServer themselves - it holds no opinion
 // on what port/listener it's served from, since an embedding caller (see
 // cmd/housed) may share one with other registered services.
@@ -146,9 +160,9 @@ func NewFromConfig(ctx context.Context, logger *zap.Logger, cfg *Config) *Facade
 	}
 
 	f := New(logger, self, cfg.SelfAddress, cfg.ClientTLS)
-	for _, addr := range cfg.UpstreamAddrs {
-		logger.Info("connecting to upstream bridge", zap.String("address", addr))
-		f.Connect(ctx, addr)
+	for _, b := range cfg.UpstreamBridges {
+		logger.Info("connecting to upstream bridge", zap.String("address", b.Address), zap.String("server_name", b.ServerName))
+		f.Connect(ctx, b.Address, b.ServerName)
 	}
 	return f
 }

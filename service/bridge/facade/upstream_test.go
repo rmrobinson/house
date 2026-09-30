@@ -65,7 +65,7 @@ func TestConnect_SeedsCacheFromLiveUpstream(t *testing.T) {
 	f := newTestFacade(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f.Connect(ctx, addr)
+	f.Connect(ctx, addr, "")
 
 	require.Eventually(t, func() bool {
 		b, err := f.GetBridge(context.Background(), &api2.GetBridgeRequest{Id: "b1"})
@@ -85,7 +85,7 @@ func TestConnect_MarksUnreachableOnDisconnectThenReachableOnReconnect(t *testing
 	f := newTestFacade(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f.Connect(ctx, addr)
+	f.Connect(ctx, addr, "")
 
 	require.Eventually(t, func() bool {
 		b, err := f.GetBridge(context.Background(), &api2.GetBridgeRequest{Id: "b1"})
