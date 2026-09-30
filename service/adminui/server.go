@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -13,60 +15,70 @@ import (
 	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
-// Server holds the two gRPC clients this admin UI depends on and serves
-// every route. Every page render reads current state fresh from
-// HouseService/BridgeService on each request, matching v1's single-editor
-// scope (see admin-ui-implementation.md) - the one exception is hub, which
-// holds the single shared BridgeService.StreamUpdates subscription every
-// SSE client is fanned out from (see hub.go/sse.go).
+// policyConfigured reports whether the current Server generation has a
+// policy client - read by navFuncs' policyAvailable (templates.go) so every
+// page's nav can grey out the Policies/Execution Log links. It is set by
+// app.newApp (the first generation) and app.rebuild (settings.go, every
+// generation after a Settings save) only once that generation is actually
+// the one serving requests - never by newServer itself, which runs before a
+// rebuild's persistence step: setting it there would let a rebuild that
+// dials successfully but then fails to persist leave this reflecting the
+// abandoned generation instead of the old one that's still live.
+//
+// This is a package-level var rather than a *Server field because
+// html/template's FuncMap is fixed when each page's *template.Template is
+// parsed at package init (see templates.go's `pages` var), before any
+// *Server exists to close over - adminui only ever runs one Server per
+// process at a time (rebuild fully swaps generations, never runs two), so a
+// singleton is safe. house_addr has no equivalent var: it's mandatory (see
+// main.go), so there's no "not configured" state for it to track.
+var policyConfigured atomic.Bool
+
+// Server holds the gRPC clients one "generation" of this admin UI depends on
+// and implements every route's business logic. Every page render reads
+// current state fresh from HouseService/BridgeService on each request,
+// matching v1's single-editor scope (see admin-ui-implementation.md) - the
+// one exception is hub, which holds the single shared BridgeService.
+// StreamUpdates subscription every SSE client is fanned out from (see
+// hub.go/sse.go).
+//
+// A *Server is immutable once built - endpoints, conns, and cancelHubs exist
+// only so app.rebuild (settings.go) can tear this generation down after
+// building and swapping in a new one, when the Settings page changes
+// adminui.house_addr/bridge_facade_addr/policy_addr live. Route registration
+// itself lives on *app (app.go), not here: it has to indirect through
+// whichever generation is current at request time rather than close over one
+// fixed *Server, since a rebuild happens without an app restart.
 type Server struct {
-	logger *zap.Logger
-	house  api2.HouseServiceClient
-	bridge api2.BridgeServiceClient
-	hub    *deviceHub
-	mux    *http.ServeMux
+	logger    *zap.Logger
+	house     api2.HouseServiceClient
+	bridge    api2.BridgeServiceClient
+	policy    api2.PolicyServiceClient
+	hub       *deviceHub
+	policyHub *policyHub
+
+	endpoints  endpoints
+	conns      []*grpc.ClientConn
+	cancelHubs func()
 }
 
-// newServer wires up every route and starts the shared device update hub,
-// which runs for the lifetime of ctx.
-func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient) *Server {
+// newServer starts the shared device/policy update hubs, which run until
+// cancelHubs (set by the caller - see dialServer) is called, and returns the
+// Server wrapping them. policySvc may be nil - adminui.policy_addr is
+// optional; the /policies and /logs routes still register, but requirePolicy
+// renders the policy_unavailable page (with setup instructions) instead of
+// calling into a nil client for every one of them.
+func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient, policySvc api2.PolicyServiceClient) *Server {
 	hub := newDeviceHub(logger, bridge)
-	go hub.run(ctx)
+	go hub.run(ctx, "bridge update stream ended, reconnecting")
 
-	s := &Server{logger: logger, house: house, bridge: bridge, hub: hub}
+	var pHub *policyHub
+	if policySvc != nil {
+		pHub = newPolicyHub(logger, policySvc)
+		go pHub.run(ctx, "policy event stream ended, reconnecting")
+	}
 
-	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.FileServerFS(staticFS))
-
-	mux.HandleFunc("GET /{$}", s.handleRoot)
-
-	mux.HandleFunc("GET /buildings", s.handleBuildingsList)
-	mux.HandleFunc("POST /buildings", s.handleBuildingCreate)
-	mux.HandleFunc("GET /buildings/{id}", s.handleBuildingGet)
-	mux.HandleFunc("POST /buildings/{id}", s.handleBuildingUpdate)
-	mux.HandleFunc("POST /buildings/{id}/delete", s.handleBuildingDelete)
-	mux.HandleFunc("POST /buildings/{id}/floors", s.handleFloorCreate)
-
-	mux.HandleFunc("GET /floors/{id}", s.handleFloorGet)
-	mux.HandleFunc("POST /floors/{id}", s.handleFloorUpdate)
-	mux.HandleFunc("POST /floors/{id}/delete", s.handleFloorDelete)
-	mux.HandleFunc("POST /floors/{id}/rooms", s.handleRoomCreate)
-
-	mux.HandleFunc("GET /rooms/{id}", s.handleRoomGet)
-	mux.HandleFunc("POST /rooms/{id}", s.handleRoomUpdate)
-	mux.HandleFunc("POST /rooms/{id}/delete", s.handleRoomDelete)
-	mux.HandleFunc("GET /rooms/{id}/device-picker", s.handleRoomDevicePicker)
-	mux.HandleFunc("POST /rooms/{id}/link", s.handleRoomLinkDevice)
-	mux.HandleFunc("POST /rooms/{id}/unlink", s.handleRoomUnlinkDevice)
-
-	mux.HandleFunc("GET /devices", s.handleDevicesList)
-	mux.HandleFunc("GET /devices/{id}/room-picker", s.handleDeviceRoomPicker)
-	mux.HandleFunc("POST /devices/{id}/link", s.handleDeviceLink)
-
-	mux.HandleFunc("GET /events", s.handleSSE)
-
-	s.mux = mux
-	return s
+	return &Server{logger: logger, house: house, bridge: bridge, policy: policySvc, hub: hub, policyHub: pHub}
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {

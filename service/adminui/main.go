@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
-	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
@@ -39,49 +38,43 @@ func main() {
 		logger.Fatal("unable to read config", zap.Error(err))
 	}
 
-	houseAddr := viper.GetString("adminui.house_addr")
-	if len(houseAddr) < 1 {
-		logger.Fatal("adminui.house_addr is required: address of the housed HouseService")
+	// house_addr/bridge_facade_addr/policy_addr (endpoints, settings.go) are
+	// the addresses this process dials - read once here for the first
+	// generation, but from then on editable live from the Settings page,
+	// which persists a change back into configPath via
+	// configutil.PersistValues rather than requiring a restart.
+	ep := endpoints{
+		HouseAddr:        viper.GetString("adminui.house_addr"),
+		BridgeFacadeAddr: viper.GetString("adminui.bridge_facade_addr"),
+		PolicyAddr:       viper.GetString("adminui.policy_addr"),
 	}
-
-	// bridge_facade_addr defaults to house_addr: the common deployment is
-	// housed embedding the BridgeService facade on its own listener (see
-	// service/house/cmd/housed), so the same address serves both services.
-	// Set this explicitly only when the facade runs as its own process.
-	bridgeFacadeAddr := viper.GetString("adminui.bridge_facade_addr")
-	if len(bridgeFacadeAddr) < 1 {
-		bridgeFacadeAddr = houseAddr
+	if len(ep.HouseAddr) < 1 {
+		logger.Fatal("adminui.house_addr is required: address of the housed HouseService")
 	}
 
 	// Optional mutual TLS - blank (the default) dials plaintext gRPC, same
 	// as every other client in this repo. One cert/key for adminui as a
-	// single principal talking to both housed and (if separate) the facade.
+	// single principal talking to housed/the facade/policyd, whichever
+	// addresses those end up being - not itself editable from the Settings
+	// page (see endpoints' doc comment in settings.go).
 	var tlsCfg *grpcutil.ClientTLSConfig
 	if certFile := viper.GetString("adminui.tls.cert_file"); len(certFile) > 0 {
 		tlsCfg = &grpcutil.ClientTLSConfig{
-			CertFile: certFile,
-			KeyFile:  viper.GetString("adminui.tls.key_file"),
-			CAFile:   viper.GetString("adminui.tls.ca_file"),
+			CertFile:   certFile,
+			KeyFile:    viper.GetString("adminui.tls.key_file"),
+			CAFile:     viper.GetString("adminui.tls.ca_file"),
+			ServerName: viper.GetString("adminui.tls.server_name"),
 		}
 	}
 
-	houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
+	a, err := newApp(context.Background(), logger, configPath, tlsCfg, ep)
 	if err != nil {
-		logger.Fatal("unable to dial house service", zap.String("address", houseAddr), zap.Error(err))
+		logger.Fatal("unable to start admin ui", zap.Error(err))
 	}
-	houseClient := api2.NewHouseServiceClient(houseConn)
-
-	bridgeConn, err := grpcutil.Dial(bridgeFacadeAddr, tlsCfg)
-	if err != nil {
-		logger.Fatal("unable to dial bridge facade", zap.String("address", bridgeFacadeAddr), zap.Error(err))
-	}
-	bridgeClient := api2.NewBridgeServiceClient(bridgeConn)
-
-	srv := newServer(context.Background(), logger, houseClient, bridgeClient)
 
 	port := viper.GetInt("adminui.listen_port")
 	logger.Info("serving admin ui", zap.Int("port", port))
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), srv.mux); err != nil {
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), a.mux); err != nil {
 		logger.Fatal("http server stopped", zap.Error(err))
 	}
 }

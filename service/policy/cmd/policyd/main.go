@@ -1,13 +1,15 @@
-// policyd runs the policy execution engine's HTTP UI as a standalone
-// daemon.
+// policyd runs the policy execution engine as a standalone daemon, exposing
+// it over api2.PolicyServiceServer - it has no UI of its own; that lives in
+// service/adminui, driven entirely by this gRPC API (see service/policy/
+// grpc.go).
 //
 // With --bridge-addr, its HomeAPI is bridgehome.Adapter, wired to a real
 // BridgeService endpoint (a single bridge, a standalone bridgefacaded, or a
 // housed process with the facade embedded — policyd doesn't distinguish).
 // With no --bridge-addr, it falls back to stubHomeAPI, an in-memory
 // placeholder (see stubhome.go) that logs every call instead of touching
-// real device/house state, so the engine and its UI stay runnable and
-// visually verifiable with no bridge configured.
+// real device/house state, so the engine stays runnable with no bridge
+// configured.
 //
 // With --house-addr and --building-id, the schedule.sun-event/
 // schedule.daylight/schedule.date-range condition types' location is
@@ -23,16 +25,16 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"flag"
 	"fmt"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
@@ -42,7 +44,7 @@ import (
 
 var (
 	dbPath     = flag.String("db", "policy.db", "Path to the SQLite database to use")
-	addr       = flag.String("addr", "localhost:8080", "Address for the HTTP UI to listen on")
+	addr       = flag.String("addr", "localhost:8080", "Address for the PolicyService gRPC API to listen on")
 	bridgeAddr = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
 	houseAddr  = flag.String("house-addr", "", "HouseService address to fetch --building-id's location (lat/lon/tz) from at startup, for the schedule.sun-event/schedule.daylight/schedule.date-range condition types; if empty, falls back to --lat/--lon/--location-tz")
 	buildingID = flag.String("building-id", "", "Building ID to fetch location from; required if --house-addr is set")
@@ -188,25 +190,42 @@ func main() {
 		adapter.Start(ctx, engine)
 	}
 
-	server := policy.NewServer(engine, registry, logger)
-	httpServer := &http.Server{
-		Addr:    *addr,
-		Handler: server.Handler(),
+	lis, err := net.Listen("tcp", *addr)
+	if err != nil {
+		logger.Fatal("error listening", zap.Error(err), zap.String("address", *addr))
 	}
 
+	grpcServer := grpc.NewServer()
+	api2.RegisterPolicyServiceServer(grpcServer, policy.NewService(logger, engine, registry))
+
 	go func() {
-		logger.Info("serving policy UI", zap.String("address", *addr))
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatal("http server error", zap.Error(err))
+		logger.Info("serving policy API", zap.String("address", *addr))
+		if err := grpcServer.Serve(lis); err != nil {
+			logger.Fatal("grpc server error", zap.Error(err))
 		}
 	}()
 
 	<-ctx.Done()
 	logger.Info("shutting down")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		logger.Error("error shutting down http server", zap.Error(err))
+	// GracefulStop waits for every in-flight RPC to finish, including a
+	// StreamEvents call (adminui's policyHub holds one open indefinitely by
+	// design - see service/adminui/policy_hub.go) that only ends once its
+	// own ctx is cancelled or the connection drops - neither of which
+	// GracefulStop itself triggers. Bounded the same way the old HTTP
+	// server's Shutdown(10s) was, so a connected adminui (or any other
+	// long-lived StreamEvents client) can no longer wedge shutdown
+	// indefinitely; Stop forcibly cuts any RPC still running past the
+	// deadline.
+	stopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		logger.Warn("graceful shutdown timed out; forcing stop")
+		grpcServer.Stop()
 	}
 }

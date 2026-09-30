@@ -1,15 +1,20 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "adminui_lib",
     srcs = [
+        "app.go",
         "handlers_building.go",
         "handlers_device.go",
         "handlers_floor.go",
+        "handlers_policy.go",
         "handlers_room.go",
         "hub.go",
         "main.go",
+        "policy_hub.go",
+        "policy_view.go",
         "server.go",
+        "settings.go",
         "sse.go",
         "templates.go",
         "view.go",
@@ -26,6 +31,19 @@ go_library(
         "templates/partials/device_picker.html",
         "templates/partials/room_picker.html",
         "templates/room.html",
+        "static/codemirror.min.css",
+        "static/codemirror.min.js",
+        "static/lua.min.js",
+        "templates/logs.html",
+        "templates/partials/log_row.html",
+        "templates/partials/policy_simulate.html",
+        "templates/partials/policy_status.html",
+        "templates/policies.html",
+        "templates/policy_delete_failed.html",
+        "templates/policy_detail.html",
+        "templates/policy_editor.html",
+        "templates/policy_unavailable.html",
+        "templates/settings.html",
     ],
     importpath = "github.com/rmrobinson/house/service/adminui",
     visibility = ["//visibility:private"],
@@ -37,8 +55,10 @@ go_library(
         "//service/lib/grpcutil",
         "//service/lib/htmxutil",
         "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_google_protobuf//types/known/emptypb",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -47,4 +67,23 @@ go_binary(
     name = "adminui",
     embed = [":adminui_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "adminui_test",
+    srcs = [
+        "handlers_policy_test.go",
+        "server_test.go",
+        "settings_test.go",
+    ],
+    embed = [":adminui_lib"],
+    deps = [
+        "//api",
+        "//service/lib/grpcutil",
+        "//service/policy",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//zaptest",
+    ],
 )

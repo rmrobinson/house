@@ -1,0 +1,28 @@
+{{/* Editing and saving here doesn't just persist to adminui.yaml - it
+rebuilds and hot-swaps every gRPC client/hub this process runs (see
+app.rebuild in settings.go), so a save can change which nav links are
+greyed out (policyAvailable, templates.go) and which page a currently-open
+tab's live updates come from. */}}
+{{define "content"}}
+<div id="page-content">
+  <h1>Settings</h1>
+
+  <form hx-post="/settings" hx-target="#page-content" hx-swap="outerHTML">
+    <label for="house_addr">House service address</label>
+    <input type="text" id="house_addr" name="house_addr" value="{{.HouseAddr}}" placeholder="192.168.1.5:1337" required>
+    <div class="hint">HouseService/BridgeService facade - the adminui.house_addr this instance dials.</div>
+
+    <label for="bridge_facade_addr">Bridge facade address</label>
+    <input type="text" id="bridge_facade_addr" name="bridge_facade_addr" value="{{.BridgeFacadeAddr}}" placeholder="defaults to house service address above">
+    <div class="hint">Only needed if the BridgeService facade runs separately from housed - see adminui.example.yaml.</div>
+
+    <label for="policy_addr">Policy engine address</label>
+    <input type="text" id="policy_addr" name="policy_addr" value="{{.PolicyAddr}}" placeholder="leave blank to disable Policies/Execution Log">
+    <div class="hint">policyd's PolicyService address. Leave blank and the Policies/Execution Log nav links stay dimmed.</div>
+
+    <div class="actions">
+      <button class="btn" type="submit">Save &amp; reconnect</button>
+    </div>
+  </form>
+</div>
+{{end}}

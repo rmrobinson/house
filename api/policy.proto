@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+option go_package = "github.com/rmrobinson/house/api";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// OnConditionFalse controls what happens to a policy's running script
+// instances when its condition transitions from true to false. Mirrors
+// service/policy.OnConditionFalse.
+enum OnConditionFalse {
+  INTERRUPT = 0;
+  COMPLETE = 1;
+}
+
+// ExecutionLog is one record of a single policy script execution.
+message ExecutionLog {
+  string policy_id = 1;
+  google.protobuf.Timestamp started_at = 2;
+  // Unset while the execution is still running.
+  google.protobuf.Timestamp ended_at = 3;
+  // "running"/"success"/"failure"/"error" - see service/policy.ExecutionStatus.
+  string status = 4;
+  string error = 5;
+}
+
+// Policy is a condition/script pair managed by the policy engine.
+//
+// condition_expr_json carries the condition expression tree in exactly the
+// same JSON wire format service/policy.MarshalConditionExpr/
+// UnmarshalConditionExpr already round-trip through the engine's own SQLite
+// store - the API deliberately doesn't model the expression tree itself as
+// proto messages, since only the connected policyd knows the full set of
+// registered condition types needed to validate/build one.
+message Policy {
+  string id = 1;
+  string condition_expr_json = 2;
+  string script = 3;
+  OnConditionFalse on_condition_false = 4;
+  // Active is the condition's last-known evaluated value. Read-only; ignored
+  // on SavePolicy.
+  bool active = 5;
+  // Populated by ListPolicies (as a single-pass join against the engine's
+  // execution log, so the list page doesn't need a second RPC per row) and
+  // by GetPolicy. Unset on SavePolicy's response and on the policy_changed
+  // event in StreamEvents, which is always immediately paired with the log
+  // event that changed it.
+  ExecutionLog last_log = 6;
+}
+
+// PolicyEvent is one live update, relayed over StreamEvents.
+message PolicyEvent {
+  oneof event {
+    // A policy was created/updated, or its Active state changed.
+    Policy policy_changed = 1;
+    // A policy (by id) was deleted.
+    string policy_removed = 2;
+    ExecutionLog log_appended = 3;
+  }
+}
+
+message ListPoliciesRequest {
+}
+
+message GetPolicyRequest {
+  string id = 1;
+}
+
+// SavePolicyRequest upserts a policy keyed on id, matching
+// service/policy.Engine.Register's create-or-replace semantics - unlike
+// HouseService's resources, there is deliberately no separate Create/Update
+// split here.
+message SavePolicyRequest {
+  string id = 1;
+  string condition_expr_json = 2;
+  string script = 3;
+  OnConditionFalse on_condition_false = 4;
+}
+
+message DeletePolicyRequest {
+  string id = 1;
+}
+
+message SimulatePolicyRequest {
+  string id = 1;
+}
+
+message SimulatePolicyResponse {
+  bool result = 1;
+  // False if id isn't currently registered, in which case result is always
+  // false and meaningless.
+  bool registered = 2;
+}
+
+message ListLogsRequest {
+  // Empty means every policy's logs, matching Engine.Logs().
+  string policy_id = 1;
+  // Caps how many logs are returned, newest first. 0 means unlimited.
+  // Bounding this server-side (rather than every caller streaming the full
+  // matching history and truncating client-side) matters once history
+  // grows large - see service/policy.Engine.RecentLogs.
+  int32 limit = 2;
+}
+
+message ListConditionTypesResponse {
+  repeated string type_names = 1;
+}
+
+message StreamEventsRequest {
+}
+
+service PolicyService {
+  rpc ListPolicies(ListPoliciesRequest) returns (stream Policy) {}
+  rpc GetPolicy(GetPolicyRequest) returns (Policy) {}
+  rpc SavePolicy(SavePolicyRequest) returns (Policy) {}
+  rpc DeletePolicy(DeletePolicyRequest) returns (google.protobuf.Empty) {}
+  rpc SimulatePolicy(SimulatePolicyRequest) returns (SimulatePolicyResponse) {}
+
+  rpc ListLogs(ListLogsRequest) returns (stream ExecutionLog) {}
+  rpc ListConditionTypes(google.protobuf.Empty) returns (ListConditionTypesResponse) {}
+
+  // StreamEvents relays every policy_changed/policy_removed/log_appended
+  // event for the lifetime of the call - the gRPC analogue of
+  // BridgeService.StreamUpdates, fanned out by adminui the same way
+  // (service/adminui/hub.go) to every open browser tab's SSE connection.
+  rpc StreamEvents(StreamEventsRequest) returns (stream PolicyEvent) {}
+}

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -15,6 +16,12 @@ import (
 // defaultExecutionTimeout is the maximum runtime for a single script
 // execution when the engine isn't configured with WithExecutionTimeout.
 const defaultExecutionTimeout = 30 * time.Second
+
+// ErrPolicyNotRegistered is returned by Unregister when id has no
+// registered policy - distinct from a persistence failure partway through
+// unregistering one that was, so a caller (e.g. the gRPC Service) can map
+// the two to different status codes.
+var ErrPolicyNotRegistered = errors.New("policy not registered")
 
 // UI-facing Bus topics, published whenever something a UI would want to
 // live-update on. uiPolicyChangedTopic's Payload is the changed policy's ID
@@ -389,7 +396,7 @@ func (e *Engine) Unregister(id string) error {
 	e.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("policy %q not registered", id)
+		return fmt.Errorf("policy %q: %w", id, ErrPolicyNotRegistered)
 	}
 
 	// Cancel id's condition evaluation (and, for Interrupt, its running
@@ -468,6 +475,48 @@ func (e *Engine) LogsForPolicy(policyID string) []ExecutionLog {
 		}
 	}
 	return out
+}
+
+// LastLog returns policyID's most recent ExecutionLog, or ok=false if it has
+// none.
+func (e *Engine) LastLog(policyID string) (l ExecutionLog, ok bool) {
+	e.logsMu.Lock()
+	defer e.logsMu.Unlock()
+
+	for _, entry := range e.logs {
+		if entry.PolicyID == policyID {
+			l, ok = entry, true
+		}
+	}
+	return l, ok
+}
+
+// RecentLogs returns up to limit ExecutionLogs matching policyID (every
+// policy's, if empty), newest first; limit <= 0 means unlimited. It prefers
+// Store.GetLogs when a store is configured - a bounded, indexed query -
+// rather than always scanning e.logs (itself bounded to maxInMemoryLogs, see
+// appendLog) and reversing/truncating it in memory, which is only done as a
+// fallback for a store-less Engine.
+func (e *Engine) RecentLogs(policyID string, limit int) ([]ExecutionLog, error) {
+	if e.store != nil {
+		return e.store.GetLogs(policyID, limit)
+	}
+
+	var all []ExecutionLog
+	if policyID != "" {
+		all = e.LogsForPolicy(policyID)
+	} else {
+		all = e.Logs()
+	}
+
+	if limit <= 0 || limit > len(all) {
+		limit = len(all)
+	}
+	out := make([]ExecutionLog, limit)
+	for i := 0; i < limit; i++ {
+		out[i] = all[len(all)-1-i]
+	}
+	return out, nil
 }
 
 // LastLogs returns the most recent ExecutionLog for every policy that has

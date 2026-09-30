@@ -1,16 +1,4 @@
-{{define "policy_editor_page"}}
-<!doctype html>
-<html>
-<head>{{template "head" .}}</head>
-{{template "body_open" .}}
-<main>
-  {{template "policy_editor_content" .}}
-</main>
-</body>
-</html>
-{{end}}
-
-{{define "policy_editor_content"}}
+{{define "content"}}
 <div id="page-content">
   <h1>{{if .IsNew}}New Policy{{else}}Edit {{.ID}}{{end}}</h1>
 
