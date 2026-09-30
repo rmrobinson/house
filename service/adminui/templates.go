@@ -37,6 +37,12 @@ var pages = map[string]*template.Template{
 	"policy_editor":        mustParsePageFuncs(policyTemplateFuncs, "templates/policy_editor.html"),
 	"logs":                 mustParsePageFuncs(policyTemplateFuncs, "templates/logs.html", "templates/partials/log_row.html"),
 	"policy_delete_failed": mustParsePage("templates/policy_delete_failed.html"),
+	// Shown by requirePolicy (app.go) in place of any /policies or /logs
+	// route when adminui.policy_addr isn't configured.
+	"policy_unavailable": mustParsePage("templates/policy_unavailable.html"),
+	// Edits adminui.house_addr/bridge_facade_addr/policy_addr live - see
+	// settings.go's app.rebuild.
+	"settings": mustParsePage("templates/settings.html"),
 }
 
 // fragments are partials rendered standalone (no layout) - pickers,
@@ -52,11 +58,25 @@ var fragments = map[string]*template.Template{
 	"policy_simulate": template.Must(template.ParseFS(templatesFS, "templates/partials/policy_simulate.html")),
 }
 
+// navFuncs are needed by every page, not just the policy ones - layout.html's
+// nav (shared by all of them) calls policyAvailable to grey out the
+// Policies/Execution Log links when adminui.policy_addr isn't configured.
+var navFuncs = template.FuncMap{
+	"policyAvailable": func() bool { return policyConfigured.Load() },
+}
+
 func mustParsePage(files ...string) *template.Template {
 	return mustParsePageFuncs(nil, files...)
 }
 
 func mustParsePageFuncs(funcs template.FuncMap, files ...string) *template.Template {
 	all := append([]string{"templates/layout.html"}, files...)
-	return template.Must(template.New("layout.html").Funcs(funcs).ParseFS(templatesFS, all...))
+	merged := template.FuncMap{}
+	for k, v := range navFuncs {
+		merged[k] = v
+	}
+	for k, v := range funcs {
+		merged[k] = v
+	}
+	return template.Must(template.New("layout.html").Funcs(merged).ParseFS(templatesFS, all...))
 }

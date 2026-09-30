@@ -1,0 +1,13 @@
+{{/* Rendered by requirePolicy (server.go) for every /policies and /logs
+route when adminui.policy_addr isn't configured, instead of letting the
+route's own handler call a nil PolicyServiceClient. */}}
+{{define "content"}}
+<h1>Policy engine not connected</h1>
+<div class="card">
+  <p>This page needs a running <code>policyd</code> instance, but adminui isn't configured to reach one.</p>
+  <p>To enable it, set <code>adminui.policy_addr</code> in your <code>adminui.yaml</code> to that policyd's <code>PolicyService</code> address, then restart adminui:</p>
+  <pre>adminui:
+  policy_addr: "192.168.1.5:1338"</pre>
+  <p class="hint">See <code>adminui.example.yaml</code> for the full config shape. The Policies and Execution Log links stay dimmed in the nav until this is set.</p>
+</div>
+{{end}}

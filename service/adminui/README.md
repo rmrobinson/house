@@ -44,6 +44,7 @@ for the `/policies`/`/logs` pages; leave it unset to run without them.
 | `/policies/new`, `/policies/{id}/edit` | Create/edit a policy (condition JSON + Lua script) |
 | `/policies/{id}` | Detail, live simulate, recent executions, unregister |
 | `/logs` | Execution log, optionally filtered by `?policy=<id>` |
+| `/settings` | Edit house_addr/bridge_facade_addr/policy_addr live (see below) |
 
 Top-level navigation between pages is a plain `<a href>` (full page load);
 only in-page actions (create/update/delete/link/unlink, and the two pickers)
@@ -66,6 +67,35 @@ go through htmx and swap `#page-content` in place.
   - it's built by walking `ListBuildings` → `ListFloors` → `ListRooms`. Known
   scaling gap once room counts grow - deferred per
   `admin-ui-implementation.md`.
+- **Optional dependency, greyed out rather than broken.** `adminui.policy_addr`
+  is the only optional dependency (house/bridge are mandatory - see main.go).
+  Left unset, the Policies/Execution Log nav links are dimmed (`policyAvailable`
+  in `templates.go`, backed by the `policyConfigured` package var `newServer`
+  sets on every generation - see below) and every `/policies`/`/logs` route
+  renders `policy_unavailable.html` with setup instructions instead of calling
+  into the nil `PolicyServiceClient` (`requirePolicy` in `app.go`).
+- **Live reconfiguration, not just config-file editing.** `/settings`
+  (`settings.go`) edits `adminui.house_addr`/`bridge_facade_addr`/
+  `policy_addr` and applies them without a restart: `app.rebuild` dials a
+  brand new `*Server` generation (fresh gRPC conns, fresh device/policy
+  hubs), persists the change into `adminui.yaml` via
+  `configutil.PersistValues` (the same safe partial-write helper every
+  bridge's `SetBridgeConfig` uses, not `viper.WriteConfig`), and only then
+  atomically swaps it in as `app.current` - the old generation's hubs are
+  cancelled and its conns closed once nothing new can be routed to them.
+  Every other route indirects through `app.current` per request (`app.go`'s
+  `handle`) rather than closing over one fixed `*Server`, which is what
+  makes the swap possible without restarting the listener. `grpc.Dial` is
+  lazy, so a save "succeeding" only means the new address was well-formed
+  and persisted, not that anything is listening there yet - an unreachable
+  address surfaces the same way it always has, as an ordinary RPC error on
+  whatever page is opened next. A tab's `/events` connection is bound to
+  whichever generation was current when it opened, so it goes quiet once
+  that generation's hubs are torn down - `handleSettingsSave` responds to a
+  successful save with `HX-Redirect` back to `/settings` rather than an
+  in-place htmx swap, forcing the saving tab to reload and reopen `/events`
+  against the new generation. Any *other* already-open tab doesn't get this
+  for free and still needs a manual reload.
 - **Live updates.** `sse.go` relays `BridgeService.StreamUpdates` as SSE,
   re-emitting each `DeviceUpdate` as an out-of-band swap of that device's
   `<td id="device-info-<id>">` cell (`templates/partials/device_info.html`) -

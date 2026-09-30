@@ -20,6 +20,14 @@
   nav a { color: #e8e8e8; text-decoration: none; margin-right: 1.5rem; font-weight: 600; }
   nav a:hover { color: #fff; }
   nav a.active { color: #fff; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+  /* A nav link whose dependency isn't configured (policyAvailable false, see
+     navFuncs in templates.go) - still a plain <a href>, so it stays
+     clickable and lands on that route's own "not connected" page with setup
+     instructions (e.g. policy_unavailable.html), rather than being disabled
+     outright. */
+  nav a.nav-disabled { color: #8a8a8e; }
+  nav a.nav-disabled:hover { color: #b0b0b5; }
+  nav .nav-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: #8a8a8e; border: 1px solid #4a4a4e; border-radius: 3px; padding: 0.05rem 0.3rem; margin-left: 0.3rem; vertical-align: middle; }
   main { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
@@ -103,8 +111,9 @@
 <nav>
   <a href="/buildings">Buildings</a>
   <a href="/devices">Devices</a>
-  <a href="/policies">Policies</a>
-  <a href="/logs">Execution Log</a>
+  <a href="/policies" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Policies{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
+  <a href="/logs" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Execution Log{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
+  <a href="/settings">Settings</a>
 </nav>
 <div id="flash"></div>
 <div id="picker"></div>
@@ -133,6 +142,7 @@ document.addEventListener('click', function (e) {
     : /^\/devices(\/|$)/.test(location.pathname) ? '/devices'
     : /^\/policies(\/|$)/.test(location.pathname) ? '/policies'
     : /^\/logs(\/|$)/.test(location.pathname) ? '/logs'
+    : /^\/settings(\/|$)/.test(location.pathname) ? '/settings'
     : null;
   if (section) {
     var link = document.querySelector('nav a[href="' + section + '"]');

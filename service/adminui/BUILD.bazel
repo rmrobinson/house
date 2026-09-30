@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 go_library(
     name = "adminui_lib",
     srcs = [
+        "app.go",
         "handlers_building.go",
         "handlers_device.go",
         "handlers_floor.go",
@@ -13,6 +14,7 @@ go_library(
         "policy_hub.go",
         "policy_view.go",
         "server.go",
+        "settings.go",
         "sse.go",
         "templates.go",
         "view.go",
@@ -40,6 +42,8 @@ go_library(
         "templates/policy_delete_failed.html",
         "templates/policy_detail.html",
         "templates/policy_editor.html",
+        "templates/policy_unavailable.html",
+        "templates/settings.html",
     ],
     importpath = "github.com/rmrobinson/house/service/adminui",
     visibility = ["//visibility:private"],
@@ -51,6 +55,7 @@ go_library(
         "//service/lib/grpcutil",
         "//service/lib/htmxutil",
         "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//types/known/emptypb",
@@ -66,7 +71,11 @@ go_binary(
 
 go_test(
     name = "adminui_test",
-    srcs = ["handlers_policy_test.go"],
+    srcs = [
+        "handlers_policy_test.go",
+        "server_test.go",
+        "settings_test.go",
+    ],
     embed = [":adminui_lib"],
     deps = [
         "//api",
