@@ -20,6 +20,10 @@
 // --location-tz remain as a fallback for running with no house service
 // configured (e.g. local testing); --house-addr takes precedence over them
 // when both are set.
+//
+// --tls-cert/--tls-key/--tls-ca configure mutual TLS for every role this
+// process plays: dialing --bridge-addr/--house-addr as a client, and --addr's
+// own PolicyService listener as a server (see the flags' doc comments).
 package main
 
 import (
@@ -52,14 +56,19 @@ var (
 	lon        = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
 	locationTZ = flag.String("location-tz", "", "IANA timezone (e.g. America/Toronto), used if --house-addr is empty; defaults to the engine process's local zone")
 
-	// Optional mutual TLS for both --bridge-addr and --house-addr - all three
-	// of tlsCertFile/tlsKeyFile/tlsCAFile are required together, or all left
-	// blank to dial plaintext gRPC (the default), matching bridgecli's own
-	// --tls-cert/--tls-key/--tls-ca convention. One identity for both
-	// connections, same as adminui's single tlsCfg for house/bridge/policy.
-	tlsCertFile   = flag.String("tls-cert", "", "client certificate file for mutual TLS to --bridge-addr/--house-addr")
-	tlsKeyFile    = flag.String("tls-key", "", "client key file for mutual TLS")
-	tlsCAFile     = flag.String("tls-ca", "", "CA file trusted to verify --bridge-addr/--house-addr's certificate")
+	// Optional mutual TLS, one identity for every role this process plays -
+	// same three files serve as this process's client certificate when
+	// dialing --bridge-addr/--house-addr *and* as its server certificate for
+	// --addr's own PolicyService listener (adminui, or any other
+	// StreamEvents/PolicyService caller, dials back in using the same CA).
+	// All three of tlsCertFile/tlsKeyFile/tlsCAFile are required together, or
+	// all left blank to stay on plaintext gRPC (the default) for both roles -
+	// matching bridgecli's own --tls-cert/--tls-key/--tls-ca convention, and
+	// housed's house.tls.* reused for both its server and self-dial client
+	// roles.
+	tlsCertFile   = flag.String("tls-cert", "", "certificate file for mutual TLS: this process's client identity when dialing --bridge-addr/--house-addr, and its server identity on --addr")
+	tlsKeyFile    = flag.String("tls-key", "", "key file for mutual TLS")
+	tlsCAFile     = flag.String("tls-ca", "", "CA file trusted to verify --bridge-addr/--house-addr's certificate, and to verify callers connecting to --addr")
 	tlsServerName = flag.String("tls-server-name", "", "hostname to verify the server's certificate against, if different from --bridge-addr/--house-addr")
 )
 
@@ -195,7 +204,22 @@ func main() {
 		logger.Fatal("error listening", zap.Error(err), zap.String("address", *addr))
 	}
 
-	grpcServer := grpc.NewServer()
+	var serverOpts []grpc.ServerOption
+	if tlsCfg != nil {
+		// Reuses the same cert/key/ca as the client role above - see the
+		// tls-cert flag's doc comment for why one identity covers both.
+		tlsOpt, err := grpcutil.ServerTLS(grpcutil.ServerTLSConfig{
+			CertFile:     tlsCfg.CertFile,
+			KeyFile:      tlsCfg.KeyFile,
+			ClientCAFile: tlsCfg.CAFile,
+		})
+		if err != nil {
+			logger.Fatal("unable to configure server TLS", zap.Error(err))
+		}
+		serverOpts = append(serverOpts, tlsOpt)
+	}
+
+	grpcServer := grpc.NewServer(serverOpts...)
 	api2.RegisterPolicyServiceServer(grpcServer, policy.NewService(logger, engine, registry))
 
 	go func() {
