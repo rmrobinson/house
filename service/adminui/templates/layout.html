@@ -17,16 +17,19 @@
      visited never changes color, unlike the browser default. */
   a, a:visited { color: #1a5fb4; }
   nav { background: #202124; padding: 0.75rem 1.5rem; }
-  nav a { color: #e8e8e8; text-decoration: none; margin-right: 1.5rem; font-weight: 600; }
-  nav a:hover { color: #fff; }
-  nav a.active { color: #fff; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+  /* :visited listed explicitly on every nav rule - "a:visited" above is
+     more specific than a bare "nav a", so without it any nav link already
+     in the browser's history turned blue while unvisited ones stayed light. */
+  nav a, nav a:visited { color: #e8e8e8; text-decoration: none; margin-right: 1.5rem; font-weight: 600; }
+  nav a:hover, nav a:visited:hover { color: #fff; }
+  nav a.active, nav a.active:visited { color: #fff; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
   /* A nav link whose dependency isn't configured (policyAvailable false, see
      navFuncs in templates.go) - still a plain <a href>, so it stays
      clickable and lands on that route's own "not connected" page with setup
      instructions (e.g. policy_unavailable.html), rather than being disabled
      outright. */
-  nav a.nav-disabled { color: #8a8a8e; }
-  nav a.nav-disabled:hover { color: #b0b0b5; }
+  nav a.nav-disabled, nav a.nav-disabled:visited { color: #8a8a8e; }
+  nav a.nav-disabled:hover, nav a.nav-disabled:visited:hover { color: #b0b0b5; }
   nav .nav-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: #8a8a8e; border: 1px solid #4a4a4e; border-radius: 3px; padding: 0.05rem 0.3rem; margin-left: 0.3rem; vertical-align: middle; }
   main { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
