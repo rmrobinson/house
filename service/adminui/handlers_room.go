@@ -124,9 +124,10 @@ func (s *Server) handleRoomDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 type devicePickerEntry struct {
-	ID       string
-	Name     string
-	Location string
+	ID           string
+	Name         string
+	Manufacturer string
+	Location     string
 	// Version is this device's current link version (empty if unlinked) -
 	// carried through as a hidden field on its Select form, so
 	// handleRoomLinkDevice can enforce it hasn't changed since this picker
@@ -182,10 +183,11 @@ func (s *Server) handleRoomDevicePicker(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		data.Devices = append(data.Devices, devicePickerEntry{
-			ID:       d.GetId(),
-			Name:     deviceDisplayName(d),
-			Location: label,
-			Version:  current.Version,
+			ID:           d.GetId(),
+			Name:         deviceDisplayName(d),
+			Manufacturer: d.GetManufacturer(),
+			Location:     label,
+			Version:      current.Version,
 		})
 	}
 

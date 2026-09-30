@@ -39,7 +39,7 @@ for the `/policies`/`/logs` pages; leave it unset to run without them.
 | `/buildings/{id}` | List + create floors in a building; delete building |
 | `/floors/{id}` | Edit name/sort_order; list + create rooms; delete floor |
 | `/rooms/{id}` | Linked devices, unlink, add-device picker; delete room |
-| `/devices` | All devices, All/Unlinked toggle, link/move picker |
+| `/devices` | All devices sorted by name, combinable Unlinked/Connected filters (`?unlinked=1&connected=1`, kept across a link/move), link/move picker |
 | `/policies` | List policies with live status |
 | `/policies/new`, `/policies/{id}/edit` | Create/edit a policy (condition JSON + Lua script) |
 | `/policies/{id}` | Detail, live simulate, recent executions, unregister |

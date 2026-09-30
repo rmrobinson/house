@@ -72,6 +72,7 @@ go_binary(
 go_test(
     name = "adminui_test",
     srcs = [
+        "handlers_device_test.go",
         "handlers_policy_test.go",
         "server_test.go",
         "settings_test.go",
@@ -79,6 +80,7 @@ go_test(
     embed = [":adminui_lib"],
     deps = [
         "//api",
+        "//api/device",
         "//service/lib/grpcutil",
         "//service/policy",
         "@com_github_stretchr_testify//assert",

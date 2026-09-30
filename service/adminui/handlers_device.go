@@ -3,14 +3,72 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 
 	api2 "github.com/rmrobinson/house/api"
 )
 
 type devicesPageData struct {
 	Devices []deviceView
-	// Filter is "all" or "unlinked" - which tab is active on /devices.
-	Filter string
+	Filter  devicesFilter
+}
+
+// devicesFilter is /devices' set of independent, combinable filters, carried
+// in its query string (?unlinked=1&connected=1) so a filtered view is
+// bookmarkable and survives a reload.
+type devicesFilter struct {
+	// Unlinked shows only devices not linked to any room.
+	Unlinked bool
+	// Connected shows only devices their bridge currently reports reachable.
+	Connected bool
+}
+
+func parseDevicesFilter(q url.Values) devicesFilter {
+	return devicesFilter{
+		Unlinked:  q.Get("unlinked") == "1",
+		Connected: q.Get("connected") == "1",
+	}
+}
+
+// devicesFilterFromRequest reads the filter from r's own query string on a
+// plain page load, or - for an htmx action like a link/move, whose POST URL
+// carries no query string of its own - from the HX-Current-URL header htmx
+// sends with every request, so the re-rendered list keeps whatever filters
+// the page was showing when the action was taken.
+func devicesFilterFromRequest(r *http.Request) devicesFilter {
+	if r.Header.Get("HX-Request") == "true" {
+		if u, err := url.Parse(r.Header.Get("HX-Current-URL")); err == nil {
+			return parseDevicesFilter(u.Query())
+		}
+	}
+	return parseDevicesFilter(r.URL.Query())
+}
+
+// URL returns /devices with f applied.
+func (f devicesFilter) URL() string {
+	q := url.Values{}
+	if f.Unlinked {
+		q.Set("unlinked", "1")
+	}
+	if f.Connected {
+		q.Set("connected", "1")
+	}
+	if len(q) == 0 {
+		return "/devices"
+	}
+	return "/devices?" + q.Encode()
+}
+
+// ToggleUnlinked/ToggleConnected return the /devices URL with that one
+// filter flipped and the other left as-is - the href of each filter toggle.
+func (f devicesFilter) ToggleUnlinked() string {
+	f.Unlinked = !f.Unlinked
+	return f.URL()
+}
+
+func (f devicesFilter) ToggleConnected() string {
+	f.Connected = !f.Connected
+	return f.URL()
 }
 
 func (s *Server) loadDevicesPageData(r *http.Request) (devicesPageData, error) {
@@ -37,15 +95,14 @@ func (s *Server) loadDevicesPageData(r *http.Request) (devicesPageData, error) {
 		return label, nil
 	}
 
-	filter := r.URL.Query().Get("filter")
-	if filter != "unlinked" {
-		filter = "all"
-	}
-
+	filter := devicesFilterFromRequest(r)
 	data := devicesPageData{Filter: filter}
 	for _, d := range devices {
 		roomID := links[d.GetId()].RoomID
-		if filter == "unlinked" && roomID != "" {
+		if filter.Unlinked && roomID != "" {
+			continue
+		}
+		if filter.Connected && !d.GetAddress().GetIsReachable() {
 			continue
 		}
 
@@ -89,6 +146,11 @@ func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	deviceName := deviceID
+	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
+		deviceName = deviceDisplayName(d)
+	}
+
 	current := links[deviceID]
 	filtered := opts[:0]
 	for _, opt := range opts {
@@ -99,14 +161,16 @@ func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.renderFragment(w, "room_picker", roomPickerData{
-		DeviceID: deviceID,
-		Version:  current.Version,
-		Rooms:    filtered,
+		DeviceID:   deviceID,
+		DeviceName: deviceName,
+		Version:    current.Version,
+		Rooms:      filtered,
 	})
 }
 
 type roomPickerData struct {
-	DeviceID string
+	DeviceID   string
+	DeviceName string
 	// Version is deviceID's current link version (empty if it isn't linked
 	// yet) - carried through as a hidden field on every room option's Select
 	// form, so handleDeviceLink can enforce it hasn't changed since this
