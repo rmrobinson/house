@@ -13,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 
-	"github.com/rmrobinson/house/backoffutil"
+	"github.com/rmrobinson/house/service/lib/backoffutil"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 
-	"github.com/rmrobinson/house/configutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

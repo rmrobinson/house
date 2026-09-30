@@ -12,7 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/rmrobinson/house/bridges/frigate/frigate"
-	"github.com/rmrobinson/house/configutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
 )
 

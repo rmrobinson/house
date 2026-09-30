@@ -6,7 +6,7 @@ go_library(
         "dial.go",
         "server.go",
     ],
-    importpath = "github.com/rmrobinson/house/grpcutil",
+    importpath = "github.com/rmrobinson/house/service/lib/grpcutil",
     visibility = ["//visibility:public"],
     deps = [
         "@org_golang_google_grpc//:grpc",

@@ -7,11 +7,11 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//api",
-        "//configutil",
-        "//grpcutil",
         "//service/bridge/facade",
         "//service/house",
         "//service/house/db",
+        "//service/lib/configutil",
+        "//service/lib/grpcutil",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",

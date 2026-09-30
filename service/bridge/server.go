@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 // TLSConfigFromViper reads bridge.tls.{cert,key,client_ca}_file from viper

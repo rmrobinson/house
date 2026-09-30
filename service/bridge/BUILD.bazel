@@ -16,7 +16,7 @@ go_library(
         "//api",
         "//api/command",
         "//api/device",
-        "//grpcutil",
+        "//service/lib/grpcutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",

@@ -28,6 +28,29 @@ full vision; the short version:
 An automation engine and UI layer are described in the vision doc but live in
 separate repos not present here — don't go looking for them in this tree.
 
+## Repo structure conventions
+
+The repo root is reserved for the fixed set of top-level surfaces above —
+`bridges/`, `clients/`, `service/`, `api/` — plus non-Go plumbing
+(`scripts/`, `tools/`, `platforms/`, `images/`). New Go packages and
+services do **not** get their own root-level directory:
+
+- A Go helper shared by more than one **bridge** goes under
+  `bridges/lib/<name>` (e.g. `bridges/lib/castctrl`, `bridges/lib/webosctrl`,
+  `bridges/lib/homekitctrl`) — never at the repo root.
+- A Go helper shared across **services/clients** (not bridge-specific) goes
+  under `service/lib/<name>` (e.g. `service/lib/backoffutil`,
+  `service/lib/configutil`, `service/lib/grpcutil`) — never at the repo
+  root.
+- A new standalone service/daemon (alongside `service/house` and
+  `service/bridge`) is added as `service/<name>` (e.g. `service/adminui`),
+  not as its own root-level directory.
+
+If you find yourself about to add a bare root-level directory that's a Go
+helper package or a service rather than one of the fixed surfaces above,
+that's a sign it belongs under `bridges/lib`, `service/lib`, or
+`service/<name>` instead.
+
 ## Build system: Bazel + Gazelle (Go modules are secondary)
 
 This is a Bazel workspace (bzlmod, `MODULE.bazel`), not a plain Go module,

@@ -14,8 +14,8 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/configutil"
-	"github.com/rmrobinson/house/grpcutil"
+	"github.com/rmrobinson/house/service/lib/configutil"
+	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
 
 func main() {
