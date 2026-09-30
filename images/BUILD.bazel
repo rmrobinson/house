@@ -106,3 +106,13 @@ bridge_image(
     name = "example",
     binary = "//bridges/example",
 )
+
+bridge_image(
+    name = "policyd",
+    binary = "//service/policy/cmd/policyd",
+)
+
+bridge_image(
+    name = "adminui",
+    binary = "//service/adminui",
+)
