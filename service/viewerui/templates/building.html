@@ -6,11 +6,11 @@ a set of hx-swap-oob fragments (sse.go), so the element itself swaps nothing. */
 <div class="cols">
   <div id="floor-panel" class="col-list">{{template "floor_panel" .Panel}}</div>
   <div id="detail" class="col-detail">
-    {{if .Room}}{{template "room_detail" .Room}}{{else}}<p class="dim">Select a room.</p>{{end}}
+    {{if .Room}}{{template "room_detail" .Room}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}
   </div>
 </div>
 <div class="box">
   <div class="box-title">EVENTS</div>
-  <ul id="event-log" class="log"></ul>
+  <div id="event-log" class="log"></div>
 </div>
 {{end}}

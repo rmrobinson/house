@@ -18,13 +18,13 @@
   .box-title { padding: 0.25rem 0.75rem; border-bottom: 1px solid var(--line); color: var(--dim); letter-spacing: 0.15em; font-size: 0.75rem; }
   .cols { display: grid; grid-template-columns: minmax(14rem, 18rem) 1fr; gap: 1rem; margin-bottom: 1rem; }
   @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
-  ul.list, ul.log { list-style: none; margin: 0; padding: 0; }
+  ul.list { list-style: none; margin: 0; padding: 0; }
   ul.list li { border-bottom: 1px solid var(--line); }
   ul.list li:last-child { border-bottom: none; }
   ul.list li > a, ul.list li > button.row { display: block; width: 100%; box-sizing: border-box; text-align: left; padding: 0.4rem 0.75rem; background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
   ul.list li.active > a, ul.list li.active > button.row { color: var(--accent); background: #121815; }
   ul.list li > a:hover, ul.list li > button.row:hover { background: #121815; }
-  ul.log { max-height: 12rem; overflow-y: auto; padding: 0.25rem 0.75rem; color: var(--dim); font-size: 0.8rem; }
+  .log { max-height: 12rem; overflow-y: auto; padding: 0.25rem 0.75rem; color: var(--dim); font-size: 0.8rem; }
   .dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.5rem; border: 1px solid var(--dim); }
   .dot-yes { background: var(--accent); border-color: var(--accent); }
   .dot-no { background: transparent; }
@@ -50,5 +50,15 @@
 <main>
 {{template "content" .}}
 </main>
+<script>
+// Clicking a room moves the active marker; the room list itself isn't
+// re-rendered by a room swap (only the detail pane is).
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('#room-list button.row');
+  if (!b) return;
+  document.querySelectorAll('#room-list li.active').forEach(function (l) { l.classList.remove('active'); });
+  b.parentElement.classList.add('active');
+});
+</script>
 </body>
 </html>{{end}}

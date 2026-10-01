@@ -42,11 +42,11 @@ func (f *fakeHouse) ListRooms(_ *api2.ListRoomsRequest, s api2.HouseService_List
 	return s.Send(&api2.Room{Id: "r1", Config: &api2.Room_Config{Name: "Bath"}})
 }
 func (f *fakeHouse) GetRoom(context.Context, *api2.GetRoomRequest) (*api2.Room, error) {
-	temp := 70.5
+	temp := 21.4
 	return &api2.Room{
 		Id: "r1", FloorId: "f1", BuildingId: "b1",
 		Config:     &api2.Room_Config{Name: "Bath"},
-		Properties: &api2.Room_Properties{TemperatureF: &temp},
+		Properties: &api2.Room_Properties{TemperatureC: &temp},
 		Devices:    []*apiDevice.Device{lamp(false), cam()},
 	}, nil
 }
@@ -164,6 +164,21 @@ func TestBuildingPageListsFloorsInOrderAndFirstFloorRooms(t *testing.T) {
 	assert.Contains(t, body, `sse-connect="/buildings/b1/events"`)
 }
 
+func TestBuildingPageSelectsFirstRoomByDefault(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/buildings/b1").Body.String()
+	assert.Contains(t, body, `<li class="active"><button class="row" hx-get="/rooms/r1"`, "Bath (first by name) is active")
+	assert.Contains(t, body, "21.4°C", "its detail is rendered, not a placeholder")
+	assert.NotContains(t, body, "Select a room")
+}
+
+func TestFloorFragmentAlsoSwapsDetailToFirstRoom(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/buildings/b1/floors/f2").Body.String()
+	assert.Contains(t, body, `<div id="detail" class="col-detail" hx-swap-oob="innerHTML">`)
+	assert.Contains(t, body, "21.4°C")
+}
+
 func TestFloorFragmentMarksActiveFloor(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/buildings/b1/floors/f2").Body.String()
@@ -175,7 +190,7 @@ func TestRoomDetailShowsPropertiesTogglesAndCameraButton(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
 
-	assert.Contains(t, body, "70.5°F")
+	assert.Contains(t, body, "21.4°C", "70.5°F shown in Celsius")
 	assert.Contains(t, body, "[ OFF ]")
 	assert.Contains(t, body, `hx-post="/devices/lamp/commands"`)
 	assert.Contains(t, body, `hx-vals='{"on": "true"}'`)
@@ -190,7 +205,7 @@ func TestRoomDirectNavigationRedirectsToFullPage(t *testing.T) {
 	assert.Equal(t, "/buildings/b1?room=r1", rec.Header().Get("Location"))
 
 	page := get(s, "/buildings/b1?room=r1").Body.String()
-	assert.Contains(t, page, "70.5°F", "room pre-rendered in the detail pane")
+	assert.Contains(t, page, "21.4°C", "room pre-rendered in the detail pane")
 	assert.Contains(t, page, `class="active"><button class="row" hx-get="/rooms/r1"`)
 }
 
@@ -252,7 +267,7 @@ func TestEventsStreamsRoomUpdateAsOOB(t *testing.T) {
 		case got := <-done:
 			assert.Contains(t, got, `id="room-dot-r1"`)
 			assert.Contains(t, got, "dot-yes")
-			assert.Contains(t, got, `hx-swap-oob="afterbegin:#event-log"`)
+			assert.Contains(t, got, `<div hx-swap-oob="afterbegin:#event-log"><div>Bath:`, "each entry is its own block")
 			assert.Contains(t, got, "Bath:")
 			return
 		case <-time.After(50 * time.Millisecond):

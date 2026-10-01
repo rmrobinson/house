@@ -13,3 +13,8 @@
   {{else}}<li class="pad dim">No rooms.</li>
   {{end}}</ul>
 </div>{{end}}
+
+{{/* floor_panel_select is a floor switch's response: the panel, plus an
+out-of-band swap of the detail pane to the floor's first room. */}}
+{{define "floor_panel_select"}}{{template "floor_panel" .Panel}}
+<div id="detail" class="col-detail" hx-swap-oob="innerHTML">{{if .Room}}{{template "room_detail" .Room}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}</div>{{end}}

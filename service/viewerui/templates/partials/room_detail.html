@@ -15,7 +15,7 @@
 {{define "room_props"}}<div id="room-props-{{.ID}}" class="stats">{{template "room_props_cells" .}}</div>{{end}}
 
 {{define "room_props_cells"}}<div class="stat"><div class="label">Occupied</div><div class="val">{{if .Properties.Occupied}}{{.Properties.Occupied}}{{else}}—{{end}}</div></div>
-  <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureF}}{{.Properties.TemperatureF}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureC}}{{.Properties.TemperatureC}}{{else}}—{{end}}</div></div>
   <div class="stat"><div class="label">Light</div><div class="val">{{if .Properties.LightLevelLux}}{{.Properties.LightLevelLux}}{{else}}—{{end}}</div></div>
   <div class="stat"><div class="label">Air quality</div><div class="val">{{if .Properties.AirQualityIndex}}{{.Properties.AirQualityIndex}}{{else}}—{{end}}</div></div>
   <div class="stat"><div class="label">Power</div><div class="val">{{if .Properties.PowerDrawW}}{{.Properties.PowerDrawW}}{{else}}—{{end}}</div></div>{{end}}

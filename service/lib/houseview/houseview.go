@@ -146,7 +146,7 @@ func Message(err error) string {
 // reported it yet), which the room templates treats as "Unknown".
 type Properties struct {
 	Occupied        string
-	TemperatureF    string
+	TemperatureC    string
 	LightLevelLux   string
 	AirQualityIndex string
 	Co2Ppm          string
@@ -156,8 +156,9 @@ type Properties struct {
 }
 
 // PropertiesToView formats p's set fields for display, leaving an unset
-// metric (including every field, if p itself is nil - no linked Sensor has
-// reported anything for this room yet) as "".
+// metric (including every field, if p itself is nil - no linked device has
+// reported anything for this room yet) as "". Temperature is always Celsius,
+// matching Room.Properties.
 func PropertiesToView(p *api2.Room_Properties) Properties {
 	var pv Properties
 	if p == nil {

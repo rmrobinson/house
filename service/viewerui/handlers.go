@@ -101,8 +101,13 @@ func (s *Server) handleBuilding(w http.ResponseWriter, r *http.Request) {
 		s.httpError(w, r, err)
 		return
 	}
-	for i := range data.Panel.Rooms {
-		data.Panel.Rooms[i].Active = data.Room != nil && data.Panel.Rooms[i].ID == data.Room.ID
+	selected := ""
+	if data.Room != nil {
+		selected = data.Room.ID
+	}
+	if data.Room, err = s.selectRoom(r, &data.Panel, selected); err != nil {
+		s.httpError(w, r, err)
+		return
 	}
 	s.renderPage(w, "building", data)
 }
@@ -113,7 +118,36 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request) {
 		s.httpError(w, r, err)
 		return
 	}
-	s.renderFragment(w, "floor_panel", panel)
+	room, err := s.selectRoom(r, &panel, "")
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	s.renderFragment(w, "floor_panel_select", struct {
+		Panel floorPanelView
+		Room  *roomDetailView
+	}{panel, room})
+}
+
+// selectRoom marks roomID (default: the panel's first room) active in panel
+// and loads its detail. Returns nil with no error when the floor has no
+// rooms.
+func (s *Server) selectRoom(r *http.Request, panel *floorPanelView, roomID string) (*roomDetailView, error) {
+	if roomID == "" && len(panel.Rooms) > 0 {
+		roomID = panel.Rooms[0].ID
+	}
+	if roomID == "" {
+		return nil, nil
+	}
+	for i := range panel.Rooms {
+		panel.Rooms[i].Active = panel.Rooms[i].ID == roomID
+	}
+	room, err := s.house.GetRoom(r.Context(), &api2.GetRoomRequest{Id: roomID})
+	if err != nil {
+		return nil, err
+	}
+	rv := roomToDetail(room)
+	return &rv, nil
 }
 
 func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
