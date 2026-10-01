@@ -9,9 +9,33 @@ message MediaStream {
   message Attributes {
     // can_control is absent since this is a read only trait.
   }
+
+  // Protocol describes how to consume an Endpoint. Clients MUST ignore
+  // endpoints with a protocol they don't recognise (UNSPECIFIED included).
+  enum Protocol {
+    PROTOCOL_UNSPECIFIED = 0;
+    RTSP = 1;        // rtsp:// or rtsps://
+    WEBRTC_WHEP = 2;  // http(s) WHEP endpoint: POST an SDP offer (application/sdp), receive the SDP answer
+    HLS = 3;          // http(s) .m3u8 playlist
+    MSE = 4;          // go2rtc-style fMP4 over websocket/HTTP for Media Source Extensions
+    MJPEG = 5;        // multipart/x-mixed-replace
+  }
+
+  message Endpoint {
+    Protocol protocol = 1;
+    // Fully qualified URL, reachable from the client (not just from the bridge).
+    string url = 2;
+  }
+
   message State {
-    // Where to connect to access the stream. This is a fully qualified URL including the protocol type exposed.
+    // DEPRECATED: single URL, kept so existing clients keep working. Bridges
+    // SHOULD keep populating it with the endpoint they consider the primary one
+    // (the current Frigate bridge: the RTSP URL) until all clients read endpoints.
     string url = 1;
+
+    // Every way this stream can be consumed. Order is preference order
+    // (most preferred first); clients pick the first protocol they support.
+    repeated Endpoint endpoints = 2;
   }
 
   Attributes attributes = 1;

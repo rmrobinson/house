@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/rmrobinson/house/bridges/frigate/frigate"
-	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/bridge"
+	"github.com/rmrobinson/house/service/lib/configutil"
 )
 
 func main() {
@@ -25,6 +25,7 @@ func main() {
 	viper.SetConfigType("yaml")
 	viper.SetDefault("bridge.refresh_interval", 60)
 	viper.SetDefault("bridge.listen_port", 17008)
+	viper.SetDefault("frigate.restream_http_port", 1984)
 
 	configPath, err := configutil.FindConfigFile("frigate", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
 	if err != nil {
@@ -74,7 +75,7 @@ func main() {
 
 	svc := bridge.NewService(logger)
 
-	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr)
+	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr, viper.GetInt("frigate.restream_http_port"))
 
 	var cameraConfigs []CameraConfig
 	if err := viper.UnmarshalKey("frigate.cameras", &cameraConfigs); err != nil {

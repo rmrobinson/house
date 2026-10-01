@@ -21,7 +21,8 @@ import (
 )
 
 const (
-	cameraRestreamFormat = "rtsp://%s:8554/%s"
+	cameraRestreamFormat     = "rtsp://%s:8554/%s"
+	cameraRestreamWHEPFormat = "http://%s:%d/api/webrtc?src=%s"
 )
 
 // CameraConfig includes basic configuration data for a specific camera identified using its Name
@@ -39,12 +40,13 @@ type FrigateBridge struct {
 
 	client                 *frigate.Client
 	cameraRestreamHostname string
+	cameraRestreamHTTPPort int
 
 	cameras map[string]*Camera
 }
 
 // NewFrigateBridge returns a new instance of the Frigate bridge.
-func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.Client, cameraRestreamHostname string) *FrigateBridge {
+func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.Client, cameraRestreamHostname string, cameraRestreamHTTPPort int) *FrigateBridge {
 	b := &api2.Bridge{
 		Id:           viper.GetString("bridge.id"),
 		IsReachable:  true,
@@ -70,6 +72,7 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		b:                      b,
 		client:                 client,
 		cameraRestreamHostname: cameraRestreamHostname,
+		cameraRestreamHTTPPort: cameraRestreamHTTPPort,
 		cameras:                map[string]*Camera{},
 	}
 }
@@ -118,10 +121,16 @@ func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) erro
 			fb.logger.Error("unable to parse camera restream endpoint as url", zap.Error(err))
 			return err
 		}
+		whepEp, err := url.Parse(fmt.Sprintf(cameraRestreamWHEPFormat, fb.cameraRestreamHostname, fb.cameraRestreamHTTPPort, cameraName))
+		if err != nil {
+			fb.logger.Error("unable to parse camera restream WHEP endpoint as url", zap.Error(err))
+			return err
+		}
 
 		if camera, cameraPresent := fb.cameras[cameraName]; cameraPresent {
 			camera.Enabled = frigateCameraConfig.Enabled
 			camera.Endpoint = ep
+			camera.WHEPEndpoint = whepEp
 
 			if cameraStats, statsPresent := stats.Cameras[cameraName]; statsPresent {
 				camera.Active = (cameraStats.CameraFPS > 0)
@@ -135,6 +144,7 @@ func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) erro
 			camera := fb.newCamera(CameraConfig{Name: frigateCameraConfig.Name, Manufacturer: "Unknown", ModelID: "Unknown"})
 			camera.Enabled = frigateCameraConfig.Enabled
 			camera.Endpoint = ep
+			camera.WHEPEndpoint = whepEp
 
 			if cameraStats, statsPresent := stats.Cameras[cameraName]; statsPresent {
 				camera.Active = (cameraStats.CameraFPS > 0)
