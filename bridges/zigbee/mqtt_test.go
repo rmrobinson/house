@@ -43,15 +43,58 @@ func TestWriteState_Success(t *testing.T) {
 	assert.Contains(t, fc.publishedTopics(), "zigbee2mqtt/lamp1/set")
 }
 
-func TestWriteState_RejectedEcho(t *testing.T) {
+func TestWriteState_NoMatchingEchoTimesOut(t *testing.T) {
+	origTimeout := writeTimeout
+	writeTimeout = 20 * time.Millisecond
+	defer func() { writeTimeout = origTimeout }()
+
 	mc, fc := newTestMQTTConn(t)
 
-	// The device reports a state that doesn't reflect what was asked for - e.g. it rejected the
-	// command, or reported something unrelated first.
+	// The only message the device ever reports doesn't reflect what was asked for - whether
+	// because it rejected the command, or because this is just an unrelated report and the real
+	// echo never comes. WriteState can't tell those apart from this topic alone (see its doc
+	// comment), so both surface the same way an unreachable device already does: a timeout, not
+	// an immediate "did not accept" error.
 	fc.respond("zigbee2mqtt/lamp1/set", "zigbee2mqtt/lamp1", []byte(`{"state":"OFF"}`))
 
 	err := mc.WriteState(context.Background(), "lamp1", map[string]any{"state": "ON"})
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, bridge.ErrCommandTimeout)
+}
+
+// TestWriteState_IgnoresStaleReportBeforeRealEcho guards the actual bug found live against a
+// Jasco 43080 in-wall porch dimmer on 2026-10-01: an unrelated state report raced the real /set
+// echo and was mistaken for a rejection, failing the write even though the device would have
+// confirmed the real echo moments later.
+func TestWriteState_IgnoresStaleReportBeforeRealEcho(t *testing.T) {
+	origTimeout := writeTimeout
+	writeTimeout = time.Second
+	defer func() { writeTimeout = origTimeout }()
+
+	mc, fc := newTestMQTTConn(t)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mc.WriteState(context.Background(), "lamp1", map[string]any{"state": "OFF"})
+	}()
+
+	// Give WriteState time to register its waiter before either message is delivered.
+	time.Sleep(20 * time.Millisecond)
+
+	// An unrelated report - e.g. a periodic attribute report from the device - races the real
+	// echo and must not be mistaken for a rejection.
+	fc.deliver("zigbee2mqtt/lamp1", []byte(`{"state":"ON","linkquality":80}`))
+
+	time.Sleep(20 * time.Millisecond)
+
+	// The real echo, confirming the write.
+	fc.deliver("zigbee2mqtt/lamp1", []byte(`{"state":"OFF"}`))
+
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("WriteState did not return")
+	}
 }
 
 func TestWriteState_Timeout(t *testing.T) {

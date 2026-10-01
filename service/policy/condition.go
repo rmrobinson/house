@@ -598,7 +598,7 @@ func (s *ScheduleCondition) Start(ctx context.Context, onChange func(bool)) {
 // isn't available yet - a fixed backoff rather than the "hold the last
 // value" convention numeric readers use, since there's no prior sun
 // computation to fall back on the first time this happens.
-const sunLocationRetryInterval = time.Hour
+var sunLocationRetryInterval = time.Hour
 
 // SunEventCondition fires once each day at the computed sunrise or sunset
 // for a location supplied by locate (degrees; ok=false defers to
@@ -629,15 +629,19 @@ func (s *SunEventCondition) Evaluate() bool {
 	return s.value.Load()
 }
 
-// next returns the next instant strictly after from at which this condition
-// should fire: the next day (starting with from's own calendar day) whose
-// computed sunrise/sunset+offset falls after from, or a retry instant if
-// the location isn't available or no solution turns up within a year (deep
-// polar latitudes).
-func (s *SunEventCondition) next(from time.Time) time.Time {
+// next returns the next instant strictly after from at which Start's timer
+// should wake up, and whether that instant is a genuine sunrise/sunset
+// event Start should pulse onChange for (fire=true): the next day (starting
+// with from's own calendar day) whose computed sunrise/sunset+offset falls
+// after from. fire is false when from's wake-up is only a
+// sunLocationRetryInterval check-back - the location isn't available, or no
+// solution turned up within a year (deep polar latitudes) - so Start knows
+// to silently reschedule rather than treat the retry tick itself as a sun
+// event.
+func (s *SunEventCondition) next(from time.Time) (next time.Time, fire bool) {
 	lat, lon, ok := s.locate()
 	if !ok {
-		return from.Add(sunLocationRetryInterval)
+		return from.Add(sunLocationRetryInterval), false
 	}
 
 	local := from.In(s.loc)
@@ -652,25 +656,36 @@ func (s *SunEventCondition) next(from time.Time) time.Time {
 			}
 			target = target.Add(s.offset)
 			if target.After(from) {
-				return target
+				return target, true
 			}
 		}
 		day = day.AddDate(0, 0, 1)
 	}
-	return from.Add(sunLocationRetryInterval)
+	return from.Add(sunLocationRetryInterval), false
 }
 
 func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
 	go func() {
 		for {
 			now := s.now()
-			timer := time.NewTimer(s.next(now).Sub(now))
+			target, fire := s.next(now)
+			timer := time.NewTimer(target.Sub(now))
 
 			select {
 			case <-ctx.Done():
 				timer.Stop()
 				return
 			case <-timer.C:
+				// A retry tick (fire=false, from an unavailable location or an
+				// unsolvable polar day) is not itself a sunrise/sunset event - only
+				// loop back to reschedule, without pulsing onChange. Previously this
+				// pulsed unconditionally on every timer wake-up, so a location that
+				// never resolved (e.g. policyd started with no --house-addr/
+				// --building-id) made the condition fire for real, every
+				// sunLocationRetryInterval, around the clock.
+				if !fire {
+					continue
+				}
 				s.value.Store(true)
 				onChange(true)
 

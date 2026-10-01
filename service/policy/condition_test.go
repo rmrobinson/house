@@ -348,14 +348,41 @@ func TestSunEventConditionNextAppliesOffset(t *testing.T) {
 	require.True(t, solved)
 
 	cond := NewSunEventCondition(time.UTC, true, -30*time.Minute, func() (float64, float64, bool) { return lat, lon, true })
-	next := cond.next(day)
+	next, fire := cond.next(day)
 	assert.WithinDuration(t, sunset.Add(-30*time.Minute), next, time.Second)
+	assert.True(t, fire)
 }
 
 func TestSunEventConditionRetriesWhenLocationUnavailable(t *testing.T) {
 	cond := NewSunEventCondition(time.UTC, false, 0, func() (float64, float64, bool) { return 0, 0, false })
 	from := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
-	assert.Equal(t, from.Add(sunLocationRetryInterval), cond.next(from))
+	next, fire := cond.next(from)
+	assert.Equal(t, from.Add(sunLocationRetryInterval), next)
+	assert.False(t, fire)
+}
+
+// TestSunEventConditionDoesNotPulseOnLocationRetryTick guards the actual bug found live on
+// 2026-10-01: a policyd deployed with no --house-addr/--building-id (so locate always returns
+// ok=false) made SunEventCondition fire for real once an hour, every hour, instead of staying
+// silent until a location became available - because Start used to pulse onChange on every timer
+// wake-up unconditionally, including sunLocationRetryInterval retry ticks. sunLocationRetryInterval
+// is shrunk here so the test can observe several retry ticks elapse without waiting a real hour.
+func TestSunEventConditionDoesNotPulseOnLocationRetryTick(t *testing.T) {
+	origInterval := sunLocationRetryInterval
+	sunLocationRetryInterval = 10 * time.Millisecond
+	defer func() { sunLocationRetryInterval = origInterval }()
+
+	cond := NewSunEventCondition(time.UTC, false, 0, func() (float64, float64, bool) { return 0, 0, false })
+
+	changes := make(chan bool, 8)
+	cond.Start(t.Context(), func(v bool) { changes <- v })
+
+	select {
+	case v := <-changes:
+		t.Fatalf("must not pulse on a location-unavailable retry tick, got %v", v)
+	case <-time.After(100 * time.Millisecond): // several retry ticks at 10ms each
+	}
+	assert.False(t, cond.Evaluate())
 }
 
 func TestSunWindowConditionStateReflectsSunriseSunset(t *testing.T) {

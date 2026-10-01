@@ -171,23 +171,26 @@ func (m *mqttConn) handleMessage(_ mqtt.Client, msg mqtt.Message) {
 	m.dispatch(msg.Topic(), msg.Payload())
 }
 
-// dispatch notifies any one-shot waiters registered on topic (see subscribeOnce), then - only if
-// nothing was already waiting on this exact topic - hands off to onMessage for ordinary
-// discovery/state routing.
+// dispatch notifies any waiters registered on topic (see subscribeWaiter) with every message that
+// arrives on it while they're registered, then - only if nothing is currently waiting on this
+// exact topic - hands off to onMessage for ordinary discovery/state routing.
 //
 // A topic with an active waiter is, today, always a WriteState echo (the only caller of
-// subscribeOnce): forwarding it to onMessage too would re-enter the per-device lock
+// subscribeWaiter): forwarding it to onMessage too would re-enter the per-device lock
 // networkConn.applyCommand holds across its own blocking WriteState call - see
 // bridges/zwave/mqtt.go's dispatch doc comment for the full reentrancy rationale, which applies
 // here unchanged even though zigbee2mqtt's per-device topic carries the device's *entire* state
-// rather than a single value. The accepted cost is the same one zwave takes: if the device's
-// state topic reports something other than what was asked for, that rejected/differing echo isn't
-// applied to the cached device here - the cache stays at its last-known value until the device's
-// next independent report.
+// rather than a single value. A waiter now keeps receiving messages (instead of being torn down
+// after the first one) specifically so WriteState can look past an intermediate/unrelated report
+// that races the real "set accepted" echo - see WriteState's doc comment. As before, a
+// rejected/differing echo isn't applied to the cached device here - the cache stays at its
+// last-known value until the device's next independent report.
 func (m *mqttConn) dispatch(topic string, payload []byte) {
 	m.mu.Lock()
-	waiters := m.waiters[topic]
-	delete(m.waiters, topic)
+	// Copied rather than read directly: cancel (which can run concurrently, once a waiter's
+	// caller is done) mutates m.waiters[topic] under the same lock, and ranging over the live
+	// slice after releasing the lock would race with that.
+	waiters := append([]chan []byte(nil), m.waiters[topic]...)
 	m.mu.Unlock()
 
 	if len(waiters) > 0 {
@@ -205,13 +208,17 @@ func (m *mqttConn) dispatch(topic string, payload []byte) {
 	}
 }
 
-// subscribeOnce registers interest in the next message published to topic. It deliberately
-// doesn't issue a fresh MQTT SUBSCRIBE - it piggybacks on the standing <base_topic>/#
-// subscription handleConnect already installs, via dispatch. The returned cancel func must be
-// called (typically via defer) once the caller is done waiting, whether or not a message arrived,
-// to avoid leaking the waiter entry.
-func (m *mqttConn) subscribeOnce(topic string) (<-chan []byte, func()) {
-	ch := make(chan []byte, 1)
+// subscribeWaiter registers interest in every message published to topic until cancel is called.
+// It deliberately doesn't issue a fresh MQTT SUBSCRIBE - it piggybacks on the standing
+// <base_topic>/# subscription handleConnect already installs, via dispatch. The returned cancel
+// func must be called (typically via defer) once the caller is done waiting, to avoid leaking the
+// waiter entry.
+func (m *mqttConn) subscribeWaiter(topic string) (<-chan []byte, func()) {
+	// Buffered past 1 so a short burst of unrelated reports arriving faster than WriteState's
+	// loop drains them doesn't drop the real echo if it lands in the same burst; dispatch's send
+	// is still non-blocking (select/default) past this, so a sufficiently pathological burst can
+	// still drop a message exactly as it always could.
+	ch := make(chan []byte, 8)
 
 	m.mu.Lock()
 	m.waiters[topic] = append(m.waiters[topic], ch)
@@ -260,34 +267,44 @@ func (m *mqttConn) stateTopic(friendlyName string) string {
 // friendlyName's /set topic and blocks until the device's next full-state report reflects every
 // key in set, per zigbee2mqtt's convention of accepting a partial JSON object on <friendly_name>
 // /set and echoing back the applied change - alongside every other currently-known property - on
-// the plain <friendly_name> topic. There's no per-write correlation id, so (mirroring
-// bridges/zwave's WriteValue) only the first message to arrive after the publish is checked; a
-// device that reports an intermediate/unrelated update before its real echo would cause a false
-// "did not accept" error rather than a retry - accepted as the same trade-off zwave's WriteValue
-// makes for the same reason (avoiding a second, less-precise correlation mechanism), and, per
-// zigbee2mqtt's own documented behaviour, not expected in practice for a single in-flight write.
+// the plain <friendly_name> topic. There's no per-write correlation id, so (unlike
+// bridges/zwave's WriteValue, which still only checks the first message to arrive) every message
+// received after the publish is checked against set, and only the first one that actually
+// matches ends the wait - confirmed live against a Jasco 43080 in-wall dimmer that regularly
+// reports its own state independently of a write in flight, racing the real "set accepted" echo
+// and - before this loop existed - causing a false "did not accept" error on that race alone.
+// Because a stray report can't be told apart from the device's own rejection of the write (there's
+// still no correlation id to tell the two apart), a genuine rejection no longer surfaces as a
+// distinct error: it looks the same as any other non-matching message and the wait keeps going
+// until writeTimeout, same as an unreachable/offline device already did below.
 //
 // A write to an unreachable/offline device publishes successfully but never receives a matching
 // echo, so this naturally surfaces as bridge.ErrCommandTimeout rather than a false success.
 func (m *mqttConn) WriteState(ctx context.Context, friendlyName string, set map[string]any) error {
 	topic := m.stateTopic(friendlyName)
-	ch, cancel := m.subscribeOnce(topic)
+	ch, cancel := m.subscribeWaiter(topic)
 	defer cancel()
 
 	if err := m.publish(topic+"/set", set); err != nil {
 		return err
 	}
 
-	select {
-	case raw := <-ch:
-		if !stateMatches(raw, set) {
-			return fmt.Errorf("zigbee: device %s did not accept state: got %s, want %v", friendlyName, raw, set)
+	deadline := time.NewTimer(writeTimeout)
+	defer deadline.Stop()
+
+	for {
+		select {
+		case raw := <-ch:
+			if stateMatches(raw, set) {
+				return nil
+			}
+			// Not our echo - keep waiting for it, rather than failing on what may just be an
+			// unrelated report racing the real one (see doc comment above).
+		case <-deadline.C:
+			return bridge.ErrCommandTimeout
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		return nil
-	case <-time.After(writeTimeout):
-		return bridge.ErrCommandTimeout
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 
