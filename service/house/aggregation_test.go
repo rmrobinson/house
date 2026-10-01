@@ -161,6 +161,33 @@ func TestComputeProperties_NilSubState(t *testing.T) {
 	assert.Nil(t, props)
 }
 
+// TestComputeProperties_NilSubState_AirPropertiesLightLevelPower is the
+// same nil-sub-state guard as TestComputeProperties_NilSubState, for the
+// three traits that didn't get one originally (AirProperties/LightLevel/
+// Power) - exercised via Thermostat/Generic specifically, since those
+// kinds only started routing through extractDeviceTraits's generic scan in
+// this change, widening how often an unpopulated State is actually
+// reachable.
+func TestComputeProperties_NilSubState_AirPropertiesLightLevelPower(t *testing.T) {
+	devices := []*apiDevice.Device{
+		{Details: &apiDevice.Device_Thermostat{Thermostat: &apiDevice.Thermostat{
+			AirProperties: &apiTrait.AirProperties{},
+			Power:         &apiTrait.Power{},
+		}}},
+		{Details: &apiDevice.Device_Generic{Generic: &apiDevice.Generic{
+			LightLevel: &apiTrait.LightLevel{},
+		}}},
+	}
+
+	var props *api2.Room_Properties
+	require.NotPanics(t, func() {
+		props = computeProperties(nil, devices)
+	})
+	// No trait's State was populated anywhere - must not be read as a
+	// genuine 0°C/0 lux/0W reading.
+	assert.Nil(t, props)
+}
+
 // TestComputeProperties_AirQualitySubmetrics covers CO2/VOC/radon, which
 // (unlike aqi) a device may report without ever reporting aqi itself - e.g.
 // an Airthings sensor. All three share air_quality_strategy with aqi (see

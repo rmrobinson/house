@@ -491,17 +491,26 @@ func extractDeviceTraits(d *apiDevice.Device) (t deviceTraits, ok bool) {
 			t.presence = v
 			ok = true
 		case *apiTrait.AirProperties:
-			t.airProperties = v
-			ok = true
+			// Attributes/State can arrive in separate updates - don't treat
+			// an unpopulated State as a genuine 0.0°C reading (same
+			// nil-State guard as Presence/AirQuality/Temperature below).
+			if v.GetState() != nil {
+				t.airProperties = v
+				ok = true
+			}
 		case *apiTrait.AirQuality:
 			t.airQuality = v
 			ok = true
 		case *apiTrait.LightLevel:
-			t.lightLevel = v
-			ok = true
+			if v.GetState() != nil {
+				t.lightLevel = v
+				ok = true
+			}
 		case *apiTrait.Power:
-			t.powerW = append(t.powerW, v.GetState().GetPowerW())
-			ok = true
+			if st := v.GetState(); st != nil {
+				t.powerW = append(t.powerW, st.GetPowerW())
+				ok = true
+			}
 		case *apiTrait.Temperature:
 			// Carries its own unit, unlike AirProperties.State.TemperatureC -
 			// only trust it as a room-temperature sample when State is
