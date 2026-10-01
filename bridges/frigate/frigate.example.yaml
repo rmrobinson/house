@@ -14,6 +14,9 @@ frigate:
   ip: "192.168.1.100"
   port: 5000
   proto: "http"
+  # go2rtc's HTTP API port, used to build each camera's WHEP (WebRTC) restream
+  # endpoint. go2rtc's default is 1984; omit to use that default.
+  restream_http_port: 1984
   cameras:
     - name: "camera-one"
       manufacturer: "Manufacturer 1"
