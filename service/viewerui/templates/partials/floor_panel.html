@@ -9,7 +9,7 @@
 <div class="box" id="room-list">
   <div class="box-title">ROOMS</div>
   <ul class="list">
-  {{range .Rooms}}<li class="{{if .Active}}active{{end}}"><button class="row" hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML"><span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}"></span>{{.Name}}</button></li>
+  {{range .Rooms}}<li class="{{if .Active}}active{{end}}"><button class="row" hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML" hx-push-url="/buildings/{{$b}}?room={{.ID}}"><span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}"></span>{{.Name}}</button></li>
   {{else}}<li class="pad dim">No rooms.</li>
   {{end}}</ul>
 </div>{{end}}

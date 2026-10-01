@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 
 	"go.uber.org/zap"
@@ -90,7 +92,7 @@ func (s *Server) roomHub(buildingID string) *hub.Hub[*api2.RoomUpdate] {
 	return h
 }
 
-func (s *Server) routes() *http.ServeMux {
+func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	webassets.Register(mux)
 
@@ -101,23 +103,59 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /rooms/{id}", s.handleRoom)
 	mux.HandleFunc("GET /rooms/{id}/camera/{device_id}", s.handleCamera)
 	mux.HandleFunc("POST /devices/{id}/commands", s.handleDeviceCommand)
-	return mux
+	return protect(mux)
+}
+
+// protect adds the headers and request checks every route shares:
+//   - clickjacking/sniffing headers, so the toggles can't be framed;
+//   - no-store on everything but the vendored static assets, so the back
+//     button never shows a stale dashboard;
+//   - state-changing requests must carry htmx's HX-Request header. A
+//     cross-site <form> can't set a custom header without a CORS preflight,
+//     which this server never grants, so this blocks CSRF against the device
+//     commands.
+func protect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			h.Set("Cache-Control", "no-store")
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("HX-Request") == "" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // renderPage renders a full document (layout + content).
 func (s *Server) renderPage(w http.ResponseWriter, page string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := pages[page].ExecuteTemplate(w, "layout", data); err != nil {
+	// Render to a buffer first so a template error is a clean 500 rather
+	// than a truncated page behind a 200.
+	var buf bytes.Buffer
+	if err := pages[page].ExecuteTemplate(&buf, "layout", data); err != nil {
 		s.logger.Error("template render failed", zap.String("page", page), zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
 }
 
 // renderFragment renders one named partial, for an htmx swap.
 func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := fragments.ExecuteTemplate(w, name, data); err != nil {
+	var buf bytes.Buffer
+	if err := fragments.ExecuteTemplate(&buf, name, data); err != nil {
 		s.logger.Error("template render failed", zap.String("fragment", name), zap.Error(err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes())
 }
 
 func (s *Server) httpError(w http.ResponseWriter, r *http.Request, err error) {

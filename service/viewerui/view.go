@@ -34,8 +34,12 @@ type deviceView struct {
 	// is its current state.
 	CanToggle bool
 	On        bool
-	IsCamera  bool
-	Error     string
+	// CanDim is true when the device has a controllable Brightness trait;
+	// Level is its current 0-100 level.
+	CanDim   bool
+	Level    int
+	IsCamera bool
+	Error    string
 }
 
 type roomDetailView struct {
@@ -95,6 +99,10 @@ func deviceToView(d *apiDevice.Device) deviceView {
 	if onOff := houseview.OnOff(d); onOff != nil && onOff.GetAttributes().GetCanControl() {
 		dv.CanToggle = true
 		dv.On = onOff.GetState().GetIsOn()
+	}
+	if b := houseview.Brightness(d); b != nil && b.GetAttributes().GetCanControl() {
+		dv.CanDim = true
+		dv.Level = int(max(0, min(100, b.GetState().GetLevel())))
 	}
 	return dv
 }

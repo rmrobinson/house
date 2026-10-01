@@ -34,8 +34,6 @@ go_library(
         "//service/lib/webassets",
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -59,6 +57,8 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//zaptest",
     ],
 )

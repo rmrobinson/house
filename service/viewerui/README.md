@@ -27,10 +27,16 @@ as `adminui.tls.*`.
 | `GET /buildings/{id}/floors/{floor_id}` | htmx swap of the floor/room panel |
 | `GET /rooms/{id}` | htmx detail pane: Properties grid, devices, VIEW CAMERA if a Camera is linked (a direct browser hit redirects to the full page) |
 | `GET /rooms/{id}/camera/{device_id}` | `<video>` + inline WHEP negotiation against `Camera.media_stream.state.url` |
-| `POST /devices/{id}/commands` | `on=true\|false` → `ExecuteCommand` (OnOff) → swaps the device row |
+| `POST /devices/{id}/commands` | `on=true\|false` (OnOff) or `brightness=0-100` (BrightnessAbsolute, the dimmer slider) → `ExecuteCommand` → swaps the device row. Requires the `HX-Request` header (CSRF guard); other values are a 400 |
 | `GET /buildings/{id}/events` | SSE: `HouseService.StreamHouseUpdates` (occupancy dots, open room's grid, event log) + `BridgeService.StreamUpdates` (device rows) |
 
 ## Notes
+
+- **Hardening.** Every response carries `X-Frame-Options: DENY`/CSP
+  `frame-ancestors 'none'`/`nosniff`, and non-static responses are
+  `no-store`. SSE sends a `: ping` every 20s; the page shows a live/disconnected
+  badge and reloads on reconnect (SSE only carries deltas). Request errors show
+  in a banner. The event log is capped at 100 lines.
 
 - **Room order is by name.** `Room` has no stored position field, so the
   plan's "ordered by stored position" isn't possible yet.

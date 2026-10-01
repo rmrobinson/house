@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -63,15 +65,23 @@ func (f *fakeHouse) StreamHouseUpdates(_ *api2.StreamHouseUpdatesRequest, s api2
 	}
 }
 
-func lamp(on bool) *apiDevice.Device {
+func lamp(on bool) *apiDevice.Device { return dimLamp(on, 40) }
+
+func dimLamp(on bool, level int32) *apiDevice.Device {
 	return &apiDevice.Device{
 		Id:      "lamp",
 		Config:  &apiDevice.Device_Config{Name: "Lamp"},
 		Address: &apiDevice.Device_Address{IsReachable: true},
-		Details: &apiDevice.Device_Light{Light: &apiDevice.Light{OnOff: &apiTrait.OnOff{
-			Attributes: &apiTrait.OnOff_Attributes{CanControl: true},
-			State:      &apiTrait.OnOff_State{IsOn: on},
-		}}},
+		Details: &apiDevice.Device_Light{Light: &apiDevice.Light{
+			OnOff: &apiTrait.OnOff{
+				Attributes: &apiTrait.OnOff_Attributes{CanControl: true},
+				State:      &apiTrait.OnOff_State{IsOn: on},
+			},
+			Brightness: &apiTrait.Brightness{
+				Attributes: &apiTrait.Brightness_Attributes{CanControl: true},
+				State:      &apiTrait.Brightness_State{Level: level},
+			},
+		}},
 	}
 }
 
@@ -88,6 +98,8 @@ type fakeBridge struct {
 	gotCmd *command.Command
 	// camURL overrides cam1's stream url when set; "none" means empty.
 	camURL string
+	// cmdErr, when set, is returned from ExecuteCommand.
+	cmdErr error
 }
 
 func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*apiDevice.Device, error) {
@@ -106,6 +118,12 @@ func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*ap
 }
 func (f *fakeBridge) ExecuteCommand(_ context.Context, c *command.Command) (*apiDevice.Device, error) {
 	f.gotCmd = c
+	if f.cmdErr != nil {
+		return nil, f.cmdErr
+	}
+	if b := c.GetBrightnessAbsolute(); b != nil {
+		return dimLamp(true, b.GetBrightnessPercent()), nil
+	}
 	return lamp(c.GetOnOff().GetOn()), nil
 }
 func (f *fakeBridge) StreamUpdates(_ *api2.StreamUpdatesRequest, s api2.BridgeService_StreamUpdatesServer) error {
@@ -133,6 +151,17 @@ func startTestServer(t *testing.T) (*Server, *fakeHouse, *fakeBridge) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	return newServer(ctx, zaptest.NewLogger(t), api2.NewHouseServiceClient(conn), api2.NewBridgeServiceClient(conn)), house, bridge
+}
+
+func post(s *Server, path, body string, htmx bool) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if htmx {
+		r.Header.Set("HX-Request", "true")
+	}
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, r)
+	return rec
 }
 
 func get(s *Server, path string, headers ...string) *httptest.ResponseRecorder {
@@ -229,10 +258,7 @@ func TestCameraFragmentRejectsNonHTTPURL(t *testing.T) {
 
 func TestDeviceCommandSendsOnOffAndReturnsUpdatedRow(t *testing.T) {
 	s, _, bridge := startTestServer(t)
-	r := httptest.NewRequest("POST", "/devices/lamp/commands", strings.NewReader("on=true"))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	s.routes().ServeHTTP(rec, r)
+	rec := post(s, "/devices/lamp/commands", "on=true", true)
 
 	require.NotNil(t, bridge.gotCmd)
 	assert.Equal(t, "lamp", bridge.gotCmd.GetDeviceId())
@@ -279,4 +305,85 @@ func TestEventsStreamsRoomUpdateAsOOB(t *testing.T) {
 			t.Fatal("no SSE message")
 		}
 	}
+}
+
+func TestDeviceCommandRejectsRequestsWithoutHXRequest(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	rec := post(s, "/devices/lamp/commands", "on=true", false)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Nil(t, bridge.gotCmd, "a cross-site form post must not reach the device")
+}
+
+func TestDeviceCommandRejectsBadValues(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	for _, body := range []string{"", "on=garbage", "on=", "brightness=101", "brightness=-1", "brightness=abc", "brightness="} {
+		rec := post(s, "/devices/lamp/commands", body, true)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, body)
+	}
+	assert.Nil(t, bridge.gotCmd)
+}
+
+func TestDeviceCommandBrightness(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	rec := post(s, "/devices/lamp/commands", "brightness=75", true)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotNil(t, bridge.gotCmd.GetBrightnessAbsolute())
+	assert.EqualValues(t, 75, bridge.gotCmd.GetBrightnessAbsolute().GetBrightnessPercent())
+	assert.Contains(t, rec.Body.String(), `value="75"`)
+
+	post(s, "/devices/lamp/commands", "brightness=0", true)
+	assert.EqualValues(t, 0, bridge.gotCmd.GetBrightnessAbsolute().GetBrightnessPercent(), "0 is a valid level")
+}
+
+func TestRoomDetailShowsDimmerBesideToggle(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, `type="range"`)
+	assert.Contains(t, body, `value="40"`)
+	assert.Contains(t, body, "[ OFF ]")
+}
+
+func TestDeviceCommandFailureKeepsRowWithError(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	bridge.cmdErr = status.Error(codes.Unavailable, "bridge offline")
+	rec := post(s, "/devices/lamp/commands", "on=true", true)
+	assert.Contains(t, rec.Body.String(), "bridge offline")
+	assert.Contains(t, rec.Body.String(), `id="device-lamp"`)
+}
+
+func TestCameraMessageDoesNotLeakCredentials(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	bridge.camURL = "rtsp://admin:hunter2@cam.local/stream"
+	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
+	assert.NotContains(t, body, "hunter2")
+	assert.NotContains(t, body, "cam.local")
+}
+
+func TestCameraMustBeLinkedToRoomAndBeACamera(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	// "lamp" is in the room but isn't a camera; "cam2" is a camera not in it.
+	assert.Equal(t, http.StatusNotFound, get(s, "/rooms/r1/camera/lamp", "HX-Request", "true").Code)
+	assert.Equal(t, http.StatusNotFound, get(s, "/rooms/r1/camera/cam2", "HX-Request", "true").Code)
+}
+
+func TestRoomFromAnotherBuildingIs404(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	assert.Equal(t, http.StatusNotFound, get(s, "/buildings/b2?room=r1").Code)
+}
+
+func TestResponsesCarrySecurityHeaders(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	rec := get(s, "/buildings/b1")
+	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+	assert.Empty(t, get(s, "/static/htmx.min.js").Header().Get("Cache-Control"))
+}
+
+func TestDeviceRowOOBCarriesDimmerLevel(t *testing.T) {
+	u := &api2.Update{Action: api2.Update_CHANGED, Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{Device: dimLamp(true, 90)}}}
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(u.GetDeviceUpdate().GetDevice())))
+	assert.Contains(t, sb.String(), `hx-swap-oob="true"`)
+	assert.Contains(t, sb.String(), `value="90"`)
 }

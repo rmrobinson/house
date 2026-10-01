@@ -3,9 +3,7 @@ package main
 import (
 	"net/http"
 	"net/url"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+	"strconv"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -91,6 +89,10 @@ func (s *Server) handleBuilding(w http.ResponseWriter, r *http.Request) {
 			s.httpError(w, r, err)
 			return
 		}
+		if room.GetBuildingId() != id {
+			http.NotFound(w, r)
+			return
+		}
 		floorID = room.GetFloorId()
 		rv := roomToDetail(room)
 		data.Room = &rv
@@ -167,12 +169,28 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 // handleCamera swaps the detail pane for a <video> that negotiates WHEP
 // against the camera's media_stream url (see templates/partials/camera.html).
 func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
-	roomID := r.PathValue("id")
-	d, err := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: r.PathValue("device_id")})
+	roomID, deviceID := r.PathValue("id"), r.PathValue("device_id")
+
+	// Only serve a stream for a camera actually linked to this room.
+	room, err := s.house.GetRoom(r.Context(), &api2.GetRoomRequest{Id: roomID})
 	if err != nil {
 		s.httpError(w, r, err)
 		return
 	}
+	linked := false
+	for _, rd := range room.GetDevices() {
+		linked = linked || rd.GetId() == deviceID
+	}
+	d, err := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	if !linked || d.GetCamera() == nil {
+		http.NotFound(w, r)
+		return
+	}
+
 	cv := cameraView{RoomID: roomID, Name: houseview.DisplayName(d)}
 	streamURL := d.GetCamera().GetMediaStream().GetState().GetUrl()
 	if u, err := url.Parse(streamURL); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
@@ -180,35 +198,56 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 	} else if streamURL == "" {
 		cv.Message = "This camera isn't reporting a stream URL."
 	} else {
-		cv.Message = "This camera's stream isn't WHEP-compatible (" + streamURL + ")."
+		// Deliberately don't echo the URL: RTSP urls commonly embed
+		// credentials.
+		scheme := "unparseable"
+		if err == nil {
+			scheme = u.Scheme
+		}
+		cv.Message = "This camera's stream isn't WHEP-compatible (" + scheme + " stream)."
 	}
 	s.renderFragment(w, "camera", cv)
 }
 
-// handleDeviceCommand turns a device on/off and swaps in its updated row.
-// Only the OnOff command is wired for this first slice.
+// handleDeviceCommand applies one control to a device and swaps in its
+// updated row: form field "on" (true|false) sends OnOff, "brightness"
+// (0-100) sends BrightnessAbsolute.
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
-		s.httpError(w, r, err)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 
-	d, err := s.bridge.ExecuteCommand(r.Context(), &command.Command{
-		DeviceId: id,
-		Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: r.FormValue("on") == "true"}},
-	})
-	if err != nil {
-		// Re-render the row from current state with the error inline, so
-		// the toggle reflects reality rather than the click.
-		dv := deviceView{ID: id, Error: houseview.Message(err)}
-		if cur, getErr := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: id}); getErr == nil {
-			dv = deviceToView(cur)
-			dv.Error = houseview.Message(err)
-		} else if status.Code(getErr) == codes.NotFound {
-			s.httpError(w, r, getErr)
+	cmd := &command.Command{DeviceId: id}
+	switch {
+	case r.PostForm.Has("brightness"):
+		level, err := strconv.Atoi(r.PostForm.Get("brightness"))
+		if err != nil || level < 0 || level > 100 {
+			http.Error(w, "brightness must be an integer from 0 to 100", http.StatusBadRequest)
 			return
 		}
+		cmd.Details = &command.Command_BrightnessAbsolute{BrightnessAbsolute: &command.BrightnessAbsolute{BrightnessPercent: int32(level)}}
+	case r.PostForm.Get("on") == "true", r.PostForm.Get("on") == "false":
+		cmd.Details = &command.Command_OnOff{OnOff: &command.OnOff{On: r.PostForm.Get("on") == "true"}}
+	default:
+		http.Error(w, `expected on=true|false or brightness=0-100`, http.StatusBadRequest)
+		return
+	}
+
+	d, err := s.bridge.ExecuteCommand(r.Context(), cmd)
+	if err != nil {
+		// Re-render the row from current state with the error inline, so
+		// the controls reflect reality rather than the click. If even the
+		// current state can't be read there's no row to show: surface the
+		// command's own error instead.
+		cur, getErr := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: id})
+		if getErr != nil {
+			s.httpError(w, r, err)
+			return
+		}
+		dv := deviceToView(cur)
+		dv.Error = houseview.Message(err)
 		s.renderFragment(w, "device_row", dv)
 		return
 	}

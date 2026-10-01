@@ -8,8 +8,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -59,14 +65,34 @@ func main() {
 		}
 	}
 
-	s, err := dialServer(context.Background(), logger, houseAddr, bridgeAddr, tlsCfg)
+	// ctx ends on SIGINT/SIGTERM; it also parents every request context, so
+	// open SSE streams end and let Shutdown finish.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	s, err := dialServer(ctx, logger, houseAddr, bridgeAddr, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to start viewer ui", zap.Error(err))
 	}
 
 	port := viper.GetInt("viewerui.listen_port")
 	logger.Info("serving viewer ui", zap.Int("port", port))
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), s.routes()); err != nil {
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: s.routes(),
+		// No WriteTimeout: the SSE stream is a long-lived response.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		srv.Shutdown(shutdownCtx)
+	}()
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("http server stopped", zap.Error(err))
 	}
+	logger.Info("viewer ui stopped")
 }

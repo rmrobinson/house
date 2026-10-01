@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -41,10 +42,21 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// A comment line keeps idle proxies and load balancers from closing a
+	// quiet stream; the browser ignores it.
+	heartbeat := time.NewTicker(20 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 
 		case ru := <-roomUpdates:
 			if !s.writeFragments(w, "room_update_oob", roomUpdateView(ru, names.get(ru.GetRoomId()))) {

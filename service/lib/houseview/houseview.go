@@ -223,6 +223,20 @@ func OnOff(d *apiDevice.Device) *apiTrait.OnOff {
 	}
 }
 
+// Brightness returns d's Brightness trait, or nil if its device type has none.
+func Brightness(d *apiDevice.Device) *apiTrait.Brightness {
+	switch {
+	case d.GetLight() != nil:
+		return d.GetLight().GetBrightness()
+	case d.GetClock() != nil:
+		return d.GetClock().GetBrightness()
+	case d.GetGeneric() != nil:
+		return d.GetGeneric().GetBrightness()
+	default:
+		return nil
+	}
+}
+
 // ListBuildings/ListFloors/ListRoomsByFloor wrap HouseService's streaming
 // List* RPCs into a plain slice - every caller wants the whole list at once
 // (home-scale result sets, not worth consuming the stream incrementally).

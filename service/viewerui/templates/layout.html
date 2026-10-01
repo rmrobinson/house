@@ -43,10 +43,16 @@
   button.toggle:hover, button.action:hover { border-color: var(--fg); }
   .err { color: var(--err); font-size: 0.8rem; }
   video { width: 100%; background: #000; display: block; }
+  input.dimmer { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
+  #status { position: fixed; top: 0.5rem; right: 0.75rem; font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); }
+  #status.down { color: var(--err); }
+  #flash { position: fixed; bottom: 0; left: 0; right: 0; padding: 0.5rem 1rem; background: #1a1010; border-top: 1px solid var(--err); color: var(--err); }
   .pad { padding: 0.5rem 0.75rem; }
 </style>
 </head>
 <body>
+<div id="status" role="status">connecting</div>
+<div id="flash" role="alert" hidden></div>
 <main>
 {{template "content" .}}
 </main>
@@ -58,6 +64,43 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   document.querySelectorAll('#room-list li.active').forEach(function (l) { l.classList.remove('active'); });
   b.parentElement.classList.add('active');
+});
+
+// Live-update status. SSE pushes only deltas, so after a drop the page is
+// stale; reload on reconnect (the room selection survives via push-url).
+var sawError = false;
+document.addEventListener('htmx:sseOpen', function () {
+  if (sawError) { location.reload(); return; }
+  setStatus('live', false);
+});
+document.addEventListener('htmx:sseError', function () {
+  sawError = true;
+  setStatus('disconnected', true);
+});
+function setStatus(text, down) {
+  var s = document.getElementById('status');
+  s.textContent = text;
+  s.className = down ? 'down' : '';
+}
+
+// htmx doesn't swap 4xx/5xx responses, so surface them in a banner.
+var flashTimer;
+function flash(msg) {
+  var f = document.getElementById('flash');
+  f.textContent = msg;
+  f.hidden = false;
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(function () { f.hidden = true; }, 6000);
+}
+document.addEventListener('htmx:responseError', function (e) {
+  flash((e.detail.xhr.responseText || '').trim() || 'Request failed (' + e.detail.xhr.status + ')');
+});
+document.addEventListener('htmx:sendError', function () { flash('Unable to reach the server'); });
+
+// Cap the event log so a wall-mounted tab doesn't grow forever.
+document.addEventListener('htmx:oobAfterSwap', function () {
+  var log = document.getElementById('event-log');
+  while (log && log.children.length > 100) log.lastElementChild.remove();
 });
 </script>
 </body>
