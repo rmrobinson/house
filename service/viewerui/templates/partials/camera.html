@@ -7,11 +7,9 @@
   (async () => {
     const v = document.getElementById('cam'), st = document.getElementById('cam-status');
     const pc = new RTCPeerConnection({iceServers: JSON.parse(v.dataset.ice).map(u => ({urls: u}))});
-    let session = null; // the WHEP resource (Location header), DELETEd on teardown
-    const close = () => {
-      pc.close();
-      if (session) fetch(session, {method: 'DELETE', keepalive: true}).catch(() => {});
-    };
+    // go2rtc's WHEP endpoint returns no Location header, so there is no session
+    // to DELETE; it frees the stream when the peer connection closes.
+    const close = () => pc.close();
     pc.ontrack = e => { v.srcObject = e.streams[0]; };
     pc.onconnectionstatechange = () => { st.textContent = pc.connectionState; };
     pc.addTransceiver('video', {direction: 'recvonly'});
@@ -31,8 +29,6 @@
       });
       const r = await fetch(v.dataset.whep, {method: 'POST', headers: {'Content-Type': 'application/sdp'}, body: pc.localDescription.sdp});
       if (!r.ok) throw new Error('WHEP ' + r.status);
-      const loc = r.headers.get('Location');
-      if (loc) session = new URL(loc, v.dataset.whep).href;
       await pc.setRemoteDescription({type: 'answer', sdp: await r.text()});
     } catch (err) {
       close();
