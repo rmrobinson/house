@@ -45,10 +45,11 @@ func (f *fakeHouse) ListRooms(_ *api2.ListRoomsRequest, s api2.HouseService_List
 }
 func (f *fakeHouse) GetRoom(context.Context, *api2.GetRoomRequest) (*api2.Room, error) {
 	temp := 21.4
+	co2 := int32(640)
 	return &api2.Room{
 		Id: "r1", FloorId: "f1", BuildingId: "b1",
 		Config:     &api2.Room_Config{Name: "Bath"},
-		Properties: &api2.Room_Properties{TemperatureC: &temp},
+		Properties: &api2.Room_Properties{TemperatureC: &temp, Co2Ppm: &co2},
 		Devices:    []*apiDevice.Device{lamp(false), cam()},
 	}, nil
 }
@@ -443,4 +444,12 @@ func TestA11yAttributes(t *testing.T) {
 	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
 	assert.Contains(t, body, `aria-pressed="false"`)
 	assert.Contains(t, body, `<output class="dim level">40%</output>`)
+}
+
+func TestRoomDetailShowsAirQualityTilesOnlyWhenReported(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, "640 ppm")
+	assert.NotContains(t, body, ">VOC<", "unreported metrics get no tile")
+	assert.NotContains(t, body, ">Radon<")
 }

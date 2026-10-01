@@ -18,4 +18,7 @@
   <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureC}}{{.Properties.TemperatureC}}{{else}}—{{end}}</div></div>
   <div class="stat"><div class="label">Light</div><div class="val">{{if .Properties.LightLevelLux}}{{.Properties.LightLevelLux}}{{else}}—{{end}}</div></div>
   <div class="stat"><div class="label">Air quality</div><div class="val">{{if .Properties.AirQualityIndex}}{{.Properties.AirQualityIndex}}{{else}}—{{end}}</div></div>
+  {{if .Properties.Co2Ppm}}<div class="stat"><div class="label">CO2</div><div class="val">{{.Properties.Co2Ppm}}</div></div>{{end}}
+  {{if .Properties.VocPpb}}<div class="stat"><div class="label">VOC</div><div class="val">{{.Properties.VocPpb}}</div></div>{{end}}
+  {{if .Properties.RadonBqM3}}<div class="stat"><div class="label">Radon</div><div class="val">{{.Properties.RadonBqM3}}</div></div>{{end}}
   <div class="stat"><div class="label">Power</div><div class="val">{{if .Properties.PowerDrawW}}{{.Properties.PowerDrawW}}{{else}}—{{end}}</div></div>{{end}}
