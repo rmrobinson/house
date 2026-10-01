@@ -68,13 +68,16 @@ type aggregationView struct {
 }
 
 // propertiesView mirrors Room.Properties, pre-formatted for display -
-// each field is "" when that metric is unset (no linked Sensor has
+// each field is "" when that metric is unset (no linked device has
 // reported it yet), which room.html treats as "Unknown".
 type propertiesView struct {
 	Occupied        string
-	TemperatureF    string
+	TemperatureC    string
 	LightLevelLux   string
 	AirQualityIndex string
+	Co2Ppm          string
+	VocPpb          string
+	RadonBqM3       string
 	PowerDrawW      string
 }
 
@@ -137,7 +140,7 @@ func aggregationToView(a *api2.AggregationConfig) aggregationView {
 }
 
 // propertiesToView formats p's set fields for display, leaving an unset
-// metric (including every field, if p itself is nil - no linked Sensor has
+// metric (including every field, if p itself is nil - no linked device has
 // reported anything for this room yet) as "".
 func propertiesToView(p *api2.Room_Properties) propertiesView {
 	var pv propertiesView
@@ -151,14 +154,23 @@ func propertiesToView(p *api2.Room_Properties) propertiesView {
 			pv.Occupied = "No"
 		}
 	}
-	if p.TemperatureF != nil {
-		pv.TemperatureF = fmt.Sprintf("%.1f°F", p.GetTemperatureF())
+	if p.TemperatureC != nil {
+		pv.TemperatureC = fmt.Sprintf("%.1f°C", p.GetTemperatureC())
 	}
 	if p.LightLevelLux != nil {
 		pv.LightLevelLux = fmt.Sprintf("%d lux", p.GetLightLevelLux())
 	}
 	if p.AirQualityIndex != nil {
 		pv.AirQualityIndex = fmt.Sprintf("%d", p.GetAirQualityIndex())
+	}
+	if p.Co2Ppm != nil {
+		pv.Co2Ppm = fmt.Sprintf("%d ppm", p.GetCo2Ppm())
+	}
+	if p.VocPpb != nil {
+		pv.VocPpb = fmt.Sprintf("%d ppb", p.GetVocPpb())
+	}
+	if p.RadonBqM3 != nil {
+		pv.RadonBqM3 = fmt.Sprintf("%d Bq/m³", p.GetRadonBqM3())
 	}
 	if p.PowerDrawW != nil {
 		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())

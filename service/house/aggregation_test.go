@@ -2,6 +2,7 @@ package house
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,14 @@ import (
 )
 
 func floatPtr(f float64) *float64 { return &f }
+func int32Ptr(i int32) *int32     { return &i }
+
+// sensorDevice wraps s as the Sensor-kind Device computeProperties/
+// handleUpdate expect - most tests below only care about the Sensor
+// payload, not the rest of Device's fields.
+func sensorDevice(s *apiDevice.Sensor) *apiDevice.Device {
+	return &apiDevice.Device{Details: &apiDevice.Device_Sensor{Sensor: s}}
+}
 
 func TestAggregateNumeric(t *testing.T) {
 	samples := []numericSample{{value: 10}, {value: 20}, {value: 30}}
@@ -44,31 +53,31 @@ func TestAggregateBool(t *testing.T) {
 }
 
 func TestComputeProperties_DefaultsPerMetric(t *testing.T) {
-	sensors := []*apiDevice.Sensor{
-		{
+	devices := []*apiDevice.Device{
+		sensorDevice(&apiDevice.Sensor{
 			Presence:      &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: true}},
-			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 20}}, // 68F
+			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 20}},
 			LightLevel:    &apiTrait.LightLevel{State: &apiTrait.LightLevel_State{Lux: 100}},
 			Power:         &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 40}},
-		},
-		{
+		}),
+		sensorDevice(&apiDevice.Sensor{
 			Presence:      &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: false}},
-			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 24}}, // 75.2F
+			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 24}},
 			LightLevel:    &apiTrait.LightLevel{State: &apiTrait.LightLevel_State{Lux: 200}},
 			Power:         &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 10}},
-		},
+		}),
 	}
 
-	props := computeProperties(nil, sensors)
+	props := computeProperties(nil, devices)
 	require.NotNil(t, props)
 
 	// occupancy defaults to ANY: one of the two sensors saw motion.
 	require.NotNil(t, props.Occupied)
 	assert.True(t, *props.Occupied)
 
-	// temperature defaults to AVERAGE: (68 + 75.2) / 2.
-	require.NotNil(t, props.TemperatureF)
-	assert.InDelta(t, 71.6, *props.TemperatureF, 0.01)
+	// temperature defaults to AVERAGE, in Celsius: (20 + 24) / 2.
+	require.NotNil(t, props.TemperatureC)
+	assert.InDelta(t, 22.0, *props.TemperatureC, 0.01)
 
 	// light defaults to AVERAGE.
 	require.NotNil(t, props.LightLevelLux)
@@ -83,13 +92,13 @@ func TestComputeProperties_DefaultsPerMetric(t *testing.T) {
 }
 
 func TestComputeProperties_OverrideStrategy(t *testing.T) {
-	sensors := []*apiDevice.Sensor{
-		{Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 40}}},
-		{Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 10}}},
+	devices := []*apiDevice.Device{
+		sensorDevice(&apiDevice.Sensor{Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 40}}}),
+		sensorDevice(&apiDevice.Sensor{Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 10}}}),
 	}
 
 	cfg := &api2.AggregationConfig{PowerStrategy: api2.AggregationConfig_MAX}
-	props := computeProperties(cfg, sensors)
+	props := computeProperties(cfg, devices)
 	require.NotNil(t, props.PowerDrawW)
 	assert.Equal(t, 40.0, *props.PowerDrawW)
 }
@@ -98,27 +107,225 @@ func TestComputeProperties_NoSensors(t *testing.T) {
 	assert.Nil(t, computeProperties(nil, nil))
 }
 
+// TestDeviceLastReported_FallsBackToLastSeen covers the precedence bug fix:
+// no bridge in this repo actually sets Sensor.Metadata.LastReported today,
+// so a Sensor must still fall back to Device.LastSeen rather than silently
+// returning 0 just because it's the Sensor kind.
+func TestDeviceLastReported_FallsBackToLastSeen(t *testing.T) {
+	seen := timestamppb.Now()
+
+	sensorNoMetadata := &apiDevice.Device{
+		LastSeen: seen,
+		Details:  &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{}},
+	}
+	assert.Equal(t, seen.AsTime().UnixNano(), deviceLastReported(sensorNoMetadata))
+
+	reported := timestamppb.New(seen.AsTime().Add(-time.Hour))
+	sensorWithMetadata := &apiDevice.Device{
+		LastSeen: seen,
+		Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+			Metadata: &apiDevice.Sensor_Metadata{LastReported: reported},
+		}},
+	}
+	assert.Equal(t, reported.AsTime().UnixNano(), deviceLastReported(sensorWithMetadata))
+
+	nonSensor := &apiDevice.Device{
+		LastSeen: seen,
+		Details:  &apiDevice.Device_Ups{Ups: &apiDevice.UPS{}},
+	}
+	assert.Equal(t, seen.AsTime().UnixNano(), deviceLastReported(nonSensor))
+
+	assert.Equal(t, int64(0), deviceLastReported(&apiDevice.Device{}))
+}
+
 // TestComputeProperties_NilSubState guards against a panic when a Sensor
 // advertises a Presence/AirQuality trait whose State submessage hasn't been
 // populated yet (e.g. a device that reports its traits before its first
 // reading) - State is a proto3 message field, so it can be non-nil-trait,
 // nil-state.
 func TestComputeProperties_NilSubState(t *testing.T) {
-	sensors := []*apiDevice.Sensor{
-		{
+	devices := []*apiDevice.Device{
+		sensorDevice(&apiDevice.Sensor{
 			Presence:   &apiTrait.Presence{},
 			AirQuality: &apiTrait.AirQuality{},
-		},
+		}),
 	}
 
 	var props *api2.Room_Properties
 	require.NotPanics(t, func() {
-		props = computeProperties(nil, sensors)
+		props = computeProperties(nil, devices)
 	})
 	// Neither trait's State was populated, so neither contributed a sample -
 	// the room has no computed Properties at all, not a misleading
 	// all-unset one (same contract as TestComputeProperties_NoSensors).
 	assert.Nil(t, props)
+}
+
+// TestComputeProperties_NilSubState_AirPropertiesLightLevelPower is the
+// same nil-sub-state guard as TestComputeProperties_NilSubState, for the
+// three traits that didn't get one originally (AirProperties/LightLevel/
+// Power) - exercised via Thermostat/Generic specifically, since those
+// kinds only started routing through extractDeviceTraits's generic scan in
+// this change, widening how often an unpopulated State is actually
+// reachable.
+func TestComputeProperties_NilSubState_AirPropertiesLightLevelPower(t *testing.T) {
+	devices := []*apiDevice.Device{
+		{Details: &apiDevice.Device_Thermostat{Thermostat: &apiDevice.Thermostat{
+			AirProperties: &apiTrait.AirProperties{},
+			Power:         &apiTrait.Power{},
+		}}},
+		{Details: &apiDevice.Device_Generic{Generic: &apiDevice.Generic{
+			LightLevel: &apiTrait.LightLevel{},
+		}}},
+	}
+
+	var props *api2.Room_Properties
+	require.NotPanics(t, func() {
+		props = computeProperties(nil, devices)
+	})
+	// No trait's State was populated anywhere - must not be read as a
+	// genuine 0°C/0 lux/0W reading.
+	assert.Nil(t, props)
+}
+
+// TestComputeProperties_AirQualitySubmetrics covers CO2/VOC/radon, which
+// (unlike aqi) a device may report without ever reporting aqi itself - e.g.
+// an Airthings sensor. All three share air_quality_strategy with aqi (see
+// AggregationConfig.air_quality_strategy's doc comment), rather than each
+// getting its own strategy field.
+func TestComputeProperties_AirQualitySubmetrics(t *testing.T) {
+	devices := []*apiDevice.Device{
+		sensorDevice(&apiDevice.Sensor{AirQuality: &apiTrait.AirQuality{State: &apiTrait.AirQuality_State{
+			Co2Ppm:                      int32Ptr(600),
+			VolatileOrganicCompoundsPpb: int32Ptr(120),
+			RadonBqM3:                   int32Ptr(40),
+		}}}),
+		sensorDevice(&apiDevice.Sensor{AirQuality: &apiTrait.AirQuality{State: &apiTrait.AirQuality_State{
+			Co2Ppm: int32Ptr(800),
+			// No VOC/radon from this one - shouldn't drag the average down.
+		}}}),
+	}
+
+	props := computeProperties(nil, devices)
+	require.NotNil(t, props)
+
+	require.NotNil(t, props.Co2Ppm)
+	assert.Equal(t, int32(700), *props.Co2Ppm) // AVERAGE of 600, 800
+
+	require.NotNil(t, props.VocPpb)
+	assert.Equal(t, int32(120), *props.VocPpb) // only one sample
+
+	require.NotNil(t, props.RadonBqM3)
+	assert.Equal(t, int32(40), *props.RadonBqM3)
+
+	// No device reported aqi itself - left unset, not zeroed.
+	assert.Nil(t, props.AirQualityIndex)
+}
+
+// TestComputeProperties_NonSensorKinds covers the device kinds other than
+// Sensor that also carry Power/AirProperties/Presence - Thermostat, UPS,
+// EVCharger, Generic (see api/device/*.proto) - all previously ignored
+// entirely by computeProperties.
+func TestComputeProperties_NonSensorKinds(t *testing.T) {
+	devices := []*apiDevice.Device{
+		{Details: &apiDevice.Device_Thermostat{Thermostat: &apiDevice.Thermostat{
+			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 21}},
+			Power:         &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 5}},
+			Presence:      &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: true}},
+		}}},
+		{Details: &apiDevice.Device_Ups{Ups: &apiDevice.UPS{
+			Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 15}},
+		}}},
+		{Details: &apiDevice.Device_EvCharger{EvCharger: &apiDevice.EVCharger{
+			WallPower:    &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 1000}},
+			VehiclePower: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 900}},
+			// exterior_conditions deliberately has no bearing on room
+			// temperature - verified below by it NOT pulling TemperatureC
+			// away from the thermostat's 21.
+			ExteriorConditions: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: -10}},
+		}}},
+		{Details: &apiDevice.Device_Generic{Generic: &apiDevice.Generic{
+			LightLevel: &apiTrait.LightLevel{State: &apiTrait.LightLevel_State{Lux: 50}},
+			AirQuality: &apiTrait.AirQuality{State: &apiTrait.AirQuality_State{Aqi: int32Ptr(42)}},
+		}}},
+	}
+
+	props := computeProperties(nil, devices)
+	require.NotNil(t, props)
+
+	// Only the thermostat's indoor reading counts - the EV charger's
+	// exterior_conditions (-10) must not be averaged in.
+	require.NotNil(t, props.TemperatureC)
+	assert.Equal(t, 21.0, *props.TemperatureC)
+
+	// SUM across thermostat (5) + UPS (15) + EV charger wall+vehicle (1000+900).
+	require.NotNil(t, props.PowerDrawW)
+	assert.Equal(t, 1920.0, *props.PowerDrawW)
+
+	require.NotNil(t, props.Occupied)
+	assert.True(t, *props.Occupied)
+
+	require.NotNil(t, props.LightLevelLux)
+	assert.Equal(t, int32(50), *props.LightLevelLux)
+
+	require.NotNil(t, props.AirQualityIndex)
+	assert.Equal(t, int32(42), *props.AirQualityIndex)
+}
+
+// TestComputeProperties_FanTemperature covers Fan's Temperature trait
+// (api/trait/temperature.proto, distinct from AirProperties) - included in
+// room temperature only when its own unit is actually Celsius, since unlike
+// AirProperties.State.TemperatureC it carries no fixed unit of its own.
+func TestComputeProperties_FanTemperature(t *testing.T) {
+	celsius := &apiDevice.Device{Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
+		Temperature: &apiTrait.Temperature{
+			Attributes: &apiTrait.Temperature_Attributes{Unit: "celsius"},
+			State:      &apiTrait.Temperature_State{Value: 19},
+		},
+	}}}
+	props := computeProperties(nil, []*apiDevice.Device{celsius})
+	require.NotNil(t, props)
+	require.NotNil(t, props.TemperatureC)
+	assert.Equal(t, 19.0, *props.TemperatureC)
+
+	fahrenheit := &apiDevice.Device{Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
+		Temperature: &apiTrait.Temperature{
+			Attributes: &apiTrait.Temperature_Attributes{Unit: "fahrenheit"},
+			State:      &apiTrait.Temperature_State{Value: 66},
+		},
+	}}}
+	// A non-Celsius reading must not be silently treated as Celsius - with
+	// nothing else reporting, the room has no computed Properties at all.
+	assert.Nil(t, computeProperties(nil, []*apiDevice.Device{fahrenheit}))
+}
+
+// TestComputeProperties_CameraPresence demonstrates extractDeviceTraits's
+// generic trait scan: Camera (api/device/camera.proto) was never on any
+// hardcoded device-kind list this file used to keep, but it does declare a
+// trait.Presence field, so a camera with motion detection genuinely
+// contributes to room occupancy - correct generalized behavior, not a bug.
+func TestComputeProperties_CameraPresence(t *testing.T) {
+	camera := &apiDevice.Device{Details: &apiDevice.Device_Camera{Camera: &apiDevice.Camera{
+		Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: true}},
+	}}}
+	props := computeProperties(nil, []*apiDevice.Device{camera})
+	require.NotNil(t, props)
+	require.NotNil(t, props.Occupied)
+	assert.True(t, *props.Occupied)
+}
+
+// TestComputeProperties_FanTemperatureNilState guards against the same
+// class of nil-sub-state bug TestComputeProperties_NilSubState covers for
+// Presence/AirQuality - a Fan whose Temperature trait has Attributes set
+// (so the unit check passes) but no State yet must not be read as a
+// genuine 0.0 reading.
+func TestComputeProperties_FanTemperatureNilState(t *testing.T) {
+	fan := &apiDevice.Device{Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
+		Temperature: &apiTrait.Temperature{
+			Attributes: &apiTrait.Temperature_Attributes{Unit: "celsius"},
+		},
+	}}}
+	assert.Nil(t, computeProperties(nil, []*apiDevice.Device{fan}))
 }
 
 func TestAggregationConfig_DBAPIRoundTrip(t *testing.T) {

@@ -7,9 +7,9 @@ option go_package = "github.com/rmrobinson/house/api";
 import "api/device/device.proto";
 import "google/protobuf/empty.proto";
 
-// AggregationConfig selects, per metric, how a room's linked Sensor devices
-// are combined into that room's Properties. See Room.Config.aggregation for
-// the documented default per metric.
+// AggregationConfig selects, per metric, how a room's linked devices are
+// combined into that room's Properties. See Room.Config.aggregation for the
+// documented default per metric.
 message AggregationConfig {
   enum Strategy {
     STRATEGY_UNSPECIFIED = 0;
@@ -23,6 +23,9 @@ message AggregationConfig {
   Strategy occupancy_strategy = 1;   // default ANY
   Strategy temperature_strategy = 2; // default AVERAGE
   Strategy light_strategy = 3;       // default AVERAGE
+  // Also governs Properties.co2_ppm/voc_ppb/radon_bq_m3 below - one strategy
+  // for every air-quality submetric a room's sensors happen to report,
+  // rather than one enum field per submetric.
   Strategy air_quality_strategy = 4; // default AVERAGE
   Strategy power_strategy = 5;       // default SUM
 }
@@ -37,14 +40,29 @@ message Room {
     optional AggregationConfig aggregation = 3;
   }
   // Properties holds values computed server-side from the room's linked
-  // Sensor-kind devices, per AggregationConfig - not independently settable
-  // by clients. Unset means no linked device currently reports that metric.
+  // devices, per AggregationConfig - not independently settable by clients.
+  // Unset means no linked device currently reports that metric. Sourced
+  // from any linked device, regardless of kind, that carries one of the
+  // relevant api/trait/*.proto measurement traits directly on its
+  // Device.details message (see service/house/aggregation.go's
+  // extractDeviceTraits) - not Sensor-kind devices only.
   message Properties {
+    // Field 2 was briefly shipped (and deployed) as temperature_f
+    // (Fahrenheit) before being retired same-day in favour of
+    // temperature_c below - reserved rather than reused, so a client built
+    // against that short-lived field 2 gets a clear "field removed" signal
+    // instead of silently misreading a Celsius value as Fahrenheit.
+    reserved 2;
+    reserved "temperature_f";
+
     optional bool occupied = 1;
-    optional double temperature_f = 2;
     optional int32 light_level_lux = 3;
     optional int32 air_quality_index = 4;
     optional double power_draw_w = 5;
+    optional int32 co2_ppm = 6;
+    optional int32 voc_ppb = 7;
+    optional int32 radon_bq_m3 = 8;
+    optional double temperature_c = 9;
   }
 
   string id = 1;

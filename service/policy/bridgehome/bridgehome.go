@@ -25,6 +25,7 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
+	"github.com/rmrobinson/house/service/lib/protoreflectutil"
 	"github.com/rmrobinson/house/service/policy"
 )
 
@@ -351,25 +352,6 @@ func (a *Adapter) GetState(id, key string) (any, error) {
 	return resolveState(d, key)
 }
 
-// detailsMessage returns d's populated device.Device.details oneof branch
-// (Light, Sensor, Camera, ...) as a protoreflect.Message, and that branch
-// field's name ("light", "sensor", "camera", ...), or ok=false if d has no
-// details set. Shared by resolveState (which descends into the message)
-// and deviceKind (which only wants the branch name).
-func detailsMessage(d *device.Device) (msg protoreflect.Message, name protoreflect.Name, ok bool) {
-	m := d.ProtoReflect()
-
-	oneof := m.Descriptor().Oneofs().ByName("details")
-	if oneof == nil {
-		return nil, "", false
-	}
-	fd := m.WhichOneof(oneof)
-	if fd == nil {
-		return nil, "", false
-	}
-	return m.Get(fd).Message(), fd.Name(), true
-}
-
 // deviceKind returns the name of d's populated details oneof branch
 // ("light", "sensor", "ups", "camera", ...), or "" if none is set. Passed to
 // policy.Engine.UpdateDeviceState as the opaque "kind" tag policy scripts
@@ -377,7 +359,7 @@ func detailsMessage(d *device.Device) (msg protoreflect.Message, name protorefle
 // itself has no notion of device.Device's schema, this is just the most
 // natural string bridgehome has on hand to tag devices with.
 func deviceKind(d *device.Device) string {
-	_, name, ok := detailsMessage(d)
+	_, name, ok := protoreflectutil.OneofMessage(d, "details")
 	if !ok {
 		return ""
 	}
@@ -389,7 +371,7 @@ func deviceKind(d *device.Device) string {
 // descending through singular message-typed fields until a scalar value is
 // reached.
 func resolveState(d *device.Device, key string) (any, error) {
-	cur, _, ok := detailsMessage(d)
+	cur, _, ok := protoreflectutil.OneofMessage(d, "details")
 	if !ok {
 		return nil, fmt.Errorf("bridgehome: device has no details set")
 	}

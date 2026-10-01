@@ -19,7 +19,7 @@
 
       <fieldset>
         <legend>Property aggregation</legend>
-        <p class="hint">How this room's Properties (below) are computed from its linked sensors. "Default" uses the strategy named in parentheses.</p>
+        <p class="hint">How this room's Properties (below) are computed from its linked devices. "Default" uses the strategy named in parentheses.</p>
 
         <label>Occupancy
           <select name="occupancy_strategy">
@@ -88,12 +88,15 @@
   </dialog>
 
   <table class="properties">
-    <caption>Properties <span class="hint">(computed from linked sensors, as of the last page load)</span></caption>
+    <caption>Properties <span class="hint">(computed from linked devices, as of the last page load)</span></caption>
     <tbody>
       <tr><th>Occupied</th><td>{{if .Room.Properties.Occupied}}{{.Room.Properties.Occupied}}{{else}}Unknown{{end}}</td></tr>
-      <tr><th>Temperature</th><td>{{if .Room.Properties.TemperatureF}}{{.Room.Properties.TemperatureF}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Temperature</th><td>{{if .Room.Properties.TemperatureC}}{{.Room.Properties.TemperatureC}}{{else}}Unknown{{end}}</td></tr>
       <tr><th>Light level</th><td>{{if .Room.Properties.LightLevelLux}}{{.Room.Properties.LightLevelLux}}{{else}}Unknown{{end}}</td></tr>
       <tr><th>Air quality index</th><td>{{if .Room.Properties.AirQualityIndex}}{{.Room.Properties.AirQualityIndex}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>CO2</th><td>{{if .Room.Properties.Co2Ppm}}{{.Room.Properties.Co2Ppm}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>VOC</th><td>{{if .Room.Properties.VocPpb}}{{.Room.Properties.VocPpb}}{{else}}Unknown{{end}}</td></tr>
+      <tr><th>Radon</th><td>{{if .Room.Properties.RadonBqM3}}{{.Room.Properties.RadonBqM3}}{{else}}Unknown{{end}}</td></tr>
       <tr><th>Power draw</th><td>{{if .Room.Properties.PowerDrawW}}{{.Room.Properties.PowerDrawW}}{{else}}Unknown{{end}}</td></tr>
     </tbody>
   </table>
