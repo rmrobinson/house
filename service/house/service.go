@@ -59,6 +59,12 @@ func NewService(ctx context.Context, logger *zap.Logger, db *db.Database, bridge
 	}, nil
 }
 
+// defaultAvailableModes seeds Building.Config.available_modes for a
+// CreateBuilding call that doesn't specify any - a sensible, overridable
+// starting point rather than leaving a fresh building with no mode settable
+// at all until explicitly reconfigured.
+var defaultAvailableModes = []string{"home", "away", "vacation"}
+
 // mapDBErr translates a db package sentinel error into the matching gRPC
 // status, or codes.Internal for anything else. what names the resource for
 // the message (e.g. "building", "floor").
@@ -85,7 +91,7 @@ func (s *Service) ListBuildings(req *api2.ListBuildingsRequest, stream api2.Hous
 	}
 
 	for _, b := range buildings {
-		if err := stream.Send(buildingDBToAPI(b)); err != nil {
+		if err := stream.Send(s.buildingToAPI(b)); err != nil {
 			return err
 		}
 	}
@@ -101,10 +107,15 @@ func (s *Service) GetBuilding(ctx context.Context, req *api2.GetBuildingRequest)
 		return nil, status.Error(codes.NotFound, "building doesn't exist")
 	}
 
-	return buildingDBToAPI(*building), nil
+	return s.buildingToAPI(*building), nil
 }
 
 func (s *Service) CreateBuilding(ctx context.Context, req *api2.CreateBuildingRequest) (*api2.Building, error) {
+	availableModes := req.GetConfig().GetAvailableModes()
+	if len(availableModes) == 0 {
+		availableModes = defaultAvailableModes
+	}
+
 	b := &db.Building{
 		Name: req.GetConfig().GetName(),
 		TZ:   req.GetConfig().GetTz(),
@@ -112,6 +123,7 @@ func (s *Service) CreateBuilding(ctx context.Context, req *api2.CreateBuildingRe
 			Latitude:  req.GetConfig().GetLat(),
 			Longitude: req.GetConfig().GetLon(),
 		},
+		AvailableModes: availableModes,
 	}
 
 	res, err := s.db.CreateBuilding(ctx, b)
@@ -120,7 +132,7 @@ func (s *Service) CreateBuilding(ctx context.Context, req *api2.CreateBuildingRe
 		return nil, status.Error(codes.Internal, "unable to create building")
 	}
 
-	return buildingDBToAPI(*res), nil
+	return s.buildingToAPI(*res), nil
 }
 
 func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRequest) (*api2.Building, error) {
@@ -133,6 +145,7 @@ func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRe
 			Latitude:  req.GetConfig().GetLat(),
 			Longitude: req.GetConfig().GetLon(),
 		},
+		AvailableModes: req.GetConfig().GetAvailableModes(),
 	}
 
 	res, err := s.db.UpdateBuilding(ctx, b)
@@ -141,7 +154,7 @@ func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRe
 		return nil, mapDBErr(err, "building")
 	}
 
-	return buildingDBToAPI(*res), nil
+	return s.buildingToAPI(*res), nil
 }
 
 func (s *Service) DeleteBuilding(ctx context.Context, req *api2.DeleteBuildingRequest) (*emptypb.Empty, error) {
@@ -150,6 +163,41 @@ func (s *Service) DeleteBuilding(ctx context.Context, req *api2.DeleteBuildingRe
 		return nil, mapDBErr(err, "building")
 	}
 	return &emptypb.Empty{}, nil
+}
+
+// SetHouseMode sets a building's current mode, validating it against that
+// building's Config.available_modes (an empty mode always clears it,
+// regardless of available_modes - see SetHouseModeRequest's doc comment).
+func (s *Service) SetHouseMode(ctx context.Context, req *api2.SetHouseModeRequest) (*api2.Building, error) {
+	building, err := s.db.GetBuilding(ctx, req.GetBuildingId())
+	if err != nil {
+		s.logger.Error("unable to get building", zap.String("building_id", req.GetBuildingId()), zap.Error(err))
+		return nil, status.Error(codes.Internal, "unable to get building")
+	} else if building == nil {
+		return nil, status.Error(codes.NotFound, "building doesn't exist")
+	}
+
+	mode := req.GetMode()
+	if mode != "" {
+		valid := false
+		for _, m := range building.AvailableModes {
+			if m == mode {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, status.Errorf(codes.InvalidArgument, "mode %q is not one of this building's available modes", mode)
+		}
+	}
+
+	res, err := s.db.SetBuildingMode(ctx, req.GetBuildingId(), mode)
+	if err != nil {
+		s.logger.Error("unable to set building mode", zap.String("building_id", req.GetBuildingId()), zap.Error(err))
+		return nil, mapDBErr(err, "building")
+	}
+
+	return s.buildingToAPI(*res), nil
 }
 
 /* ----- Floor ----- */
@@ -431,15 +479,33 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 
 /* ----- db <-> API conversions ----- */
 
-func buildingDBToAPI(b db.Building) *api2.Building {
+// buildingToAPI converts b to its API representation, including its
+// server-computed State.occupied (see aggregator.buildingOccupied) -
+// callers that already have the db.Building in hand (ListBuildings,
+// GetBuilding, CreateBuilding, UpdateBuilding, SetHouseMode) all go through
+// this rather than buildingDBToAPI directly, so none of them forget to
+// populate State.
+func (s *Service) buildingToAPI(b db.Building) *api2.Building {
+	return buildingDBToAPI(b, s.agg.buildingOccupied(b.ID))
+}
+
+// buildingDBToAPI converts b to its API representation. occupied is the
+// caller's aggregator.buildingOccupied(b.ID) result - nil if no room in the
+// building has ever reported any occupancy signal.
+func buildingDBToAPI(b db.Building, occupied *bool) *api2.Building {
 	return &api2.Building{
 		Id:      b.ID,
 		Version: b.Version,
 		Config: &api2.Building_Config{
-			Name: b.Name,
-			Tz:   b.TZ,
-			Lat:  b.Location.Latitude,
-			Lon:  b.Location.Longitude,
+			Name:           b.Name,
+			Tz:             b.TZ,
+			Lat:            b.Location.Latitude,
+			Lon:            b.Location.Longitude,
+			AvailableModes: b.AvailableModes,
+		},
+		State: &api2.Building_State{
+			Occupied: occupied,
+			Mode:     b.Mode,
 		},
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -136,26 +137,89 @@ func (db *Database) deleteWithChildCheck(ctx context.Context, table, childTable,
 
 /* ----- Building ----- */
 
-// CreateBuilding inserts a new building into the database.
+// buildingColumns is the column list scanBuilding expects, shared by every
+// SELECT against building so adding a column only means editing scanBuilding
+// and this constant together - see roomColumns for the same convention.
+const buildingColumns = "id,name,tz,lat,lon,mode,available_modes,version"
+
+// scanBuilding scans one building row, tolerating NULL mode/available_modes
+// - any building created before migration 000006 added those columns has
+// both NULL, which means "no mode ever set" / "no mode currently settable"
+// rather than data corruption, the same stance scanRoom takes for a
+// pre-000005 room's NULL agg_* columns.
+func scanBuilding(row interface{ Scan(...any) error }, b *Building) error {
+	var mode sql.NullString
+	var availableModes sql.NullString
+	if err := row.Scan(&b.ID, &b.Name, &b.TZ, &b.Location.Latitude, &b.Location.Longitude, &mode, &availableModes, &b.Version); err != nil {
+		return err
+	}
+	b.Mode = mode.String
+	modes, err := columnToModes(availableModes)
+	if err != nil {
+		return err
+	}
+	b.AvailableModes = modes
+	return nil
+}
+
+// modesToColumn JSON-encodes modes for the available_modes column - nil/empty
+// becomes a literal "[]" rather than NULL, so a building that's had its
+// modes explicitly cleared (UpdateBuilding with an empty Config.
+// AvailableModes) is indistinguishable in the database from one that's
+// always had none, which is the correct "no mode currently settable" state
+// either way.
+func modesToColumn(modes []string) (string, error) {
+	if modes == nil {
+		modes = []string{}
+	}
+	b, err := json.Marshal(modes)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// columnToModes is the inverse of modesToColumn: nil for a NULL column (see
+// scanBuilding), otherwise the decoded []string.
+func columnToModes(column sql.NullString) ([]string, error) {
+	if !column.Valid {
+		return nil, nil
+	}
+	var modes []string
+	if err := json.Unmarshal([]byte(column.String), &modes); err != nil {
+		return nil, err
+	}
+	return modes, nil
+}
+
+// CreateBuilding inserts a new building into the database. Mode always
+// starts unset ("") regardless of b.Mode - a building's mode is only ever
+// set afterwards, via SetBuildingMode.
 func (db *Database) CreateBuilding(ctx context.Context, b *Building) (*Building, error) {
 	newID := uuid.NewString()
 	newVersion := uuid.NewString()
 
-	_, err := db.db.ExecContext(ctx, "INSERT INTO building (id, name, tz, lat, lon, version) VALUES (?, ?, ?, ?, ?, ?)",
-		newID, b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, newVersion)
+	availableModes, err := modesToColumn(b.AvailableModes)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.db.ExecContext(ctx, "INSERT INTO building (id, name, tz, lat, lon, mode, available_modes, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		newID, b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, "", availableModes, newVersion)
 	if err != nil {
 		db.logger.Error("unable to create building", zap.Error(err))
 		return nil, err
 	}
 
 	b.ID = newID
+	b.Mode = ""
 	b.Version = newVersion
 	return b, nil
 }
 
 // GetBuildings retrieves all stored buildings
 func (db *Database) GetBuildings(ctx context.Context) ([]Building, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT id,name,tz,lat,lon,version FROM building")
+	rows, err := db.db.QueryContext(ctx, "SELECT "+buildingColumns+" FROM building")
 	if err != nil {
 		db.logger.Error("unable to get buildings", zap.Error(err))
 		return nil, err
@@ -165,8 +229,7 @@ func (db *Database) GetBuildings(ctx context.Context) ([]Building, error) {
 	var buildings []Building
 	for rows.Next() {
 		building := Building{}
-		err = rows.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude, &building.Version)
-		if err != nil && err != sql.ErrNoRows {
+		if err := scanBuilding(rows, &building); err != nil {
 			db.logger.Error("unable to scan building row", zap.Error(err))
 			return nil, err
 		}
@@ -182,27 +245,37 @@ func (db *Database) GetBuildings(ctx context.Context) ([]Building, error) {
 // GetBuilding retrieves the building with the specified ID, or nil if it doesn't exist.
 func (db *Database) GetBuilding(ctx context.Context, buildingID string) (*Building, error) {
 	building := &Building{}
-	row := db.db.QueryRowContext(ctx, "SELECT id,name,tz,lat,lon,version FROM building WHERE id=?", buildingID)
+	row := db.db.QueryRowContext(ctx, "SELECT "+buildingColumns+" FROM building WHERE id=?", buildingID)
 
-	var err error
-	if err = row.Scan(&building.ID, &building.Name, &building.TZ, &building.Location.Latitude, &building.Location.Longitude, &building.Version); err == sql.ErrNoRows {
+	if err := scanBuilding(row, building); err == sql.ErrNoRows {
 		return nil, nil
-	}
-	if err != nil {
+	} else if err != nil {
 		db.logger.Error("unable to retrieve building", zap.Error(err))
 		return nil, err
 	}
 	return building, nil
 }
 
-// UpdateBuilding updates the specified building, enforcing that b.Version
-// matches the row's current version. Returns ErrNotFound or
-// ErrVersionMismatch as appropriate when it doesn't.
+// UpdateBuilding updates the specified building's Config fields (name, tz,
+// location, available_modes), enforcing that b.Version matches the row's
+// current version. Returns ErrNotFound or ErrVersionMismatch as appropriate
+// when it doesn't. Mode is left untouched in the database - it's State, set
+// only via SetBuildingMode, the same split UpdateRoom draws against room
+// aggregation's own setRoomAggregation path - but b.Mode is still
+// overwritten with the row's actual current value before returning, since a
+// caller (e.g. house.Service.UpdateBuilding, which never populates b.Mode at
+// all) would otherwise see whatever b.Mode happened to already be rather
+// than reality.
 func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building, error) {
 	newVersion := uuid.NewString()
 
-	res, err := db.db.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,version=? WHERE id=? AND version=?",
-		b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, newVersion, b.ID, b.Version)
+	availableModes, err := modesToColumn(b.AvailableModes)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := db.db.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,available_modes=?,version=? WHERE id=? AND version=?",
+		b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, availableModes, newVersion, b.ID, b.Version)
 	if err != nil {
 		db.logger.Error("unable to update building", zap.String("building_id", b.ID), zap.Error(err))
 		return nil, err
@@ -211,8 +284,37 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 		return nil, err
 	}
 
+	var mode sql.NullString
+	row := db.db.QueryRowContext(ctx, "SELECT mode FROM building WHERE id=?", b.ID)
+	if err := row.Scan(&mode); err != nil {
+		db.logger.Error("unable to read back building mode", zap.String("building_id", b.ID), zap.Error(err))
+		return nil, err
+	}
+
+	b.Mode = mode.String
 	b.Version = newVersion
 	return b, nil
+}
+
+// SetBuildingMode sets buildingID's current mode, returning the updated
+// Building, or ErrNotFound if it doesn't exist. Unlike UpdateBuilding, this
+// isn't guarded by a version check - see SetHouseModeRequest's doc comment
+// in api/house.proto for why.
+func (db *Database) SetBuildingMode(ctx context.Context, buildingID, mode string) (*Building, error) {
+	res, err := db.db.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", mode, buildingID)
+	if err != nil {
+		db.logger.Error("unable to set building mode", zap.String("building_id", buildingID), zap.Error(err))
+		return nil, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+
+	return db.GetBuilding(ctx, buildingID)
 }
 
 // DeleteBuilding deletes the specified building. Returns ErrHasChildren if
