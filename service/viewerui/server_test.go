@@ -98,6 +98,8 @@ type fakeBridge struct {
 	gotCmd *command.Command
 	// camURL overrides cam1's stream url when set; "none" means empty.
 	camURL string
+	// camEndpoints, when set, are cam1's MediaStream endpoints.
+	camEndpoints []*apiTrait.MediaStream_Endpoint
 	// cmdErr, when set, is returned from ExecuteCommand.
 	cmdErr error
 }
@@ -112,6 +114,7 @@ func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*ap
 		default:
 			c.GetCamera().GetMediaStream().GetState().Url = f.camURL
 		}
+		c.GetCamera().GetMediaStream().GetState().Endpoints = f.camEndpoints
 		return c, nil
 	}
 	return lamp(false), nil
@@ -196,7 +199,7 @@ func TestBuildingPageListsFloorsInOrderAndFirstFloorRooms(t *testing.T) {
 func TestBuildingPageSelectsFirstRoomByDefault(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/buildings/b1").Body.String()
-	assert.Contains(t, body, `<li class="active"><button class="row" hx-get="/rooms/r1"`, "Bath (first by name) is active")
+	assert.Contains(t, body, `<li class="active"><button class="row" aria-current="true" hx-get="/rooms/r1"`, "Bath (first by name) is active")
 	assert.Contains(t, body, "21.4°C", "its detail is rendered, not a placeholder")
 	assert.NotContains(t, body, "Select a room")
 }
@@ -211,7 +214,7 @@ func TestFloorFragmentAlsoSwapsDetailToFirstRoom(t *testing.T) {
 func TestFloorFragmentMarksActiveFloor(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/buildings/b1/floors/f2").Body.String()
-	assert.Contains(t, body, `<li class="active"><button class="row" hx-get="/buildings/b1/floors/f2"`)
+	assert.Contains(t, body, `<li class="active"><button class="row" aria-current="true" hx-get="/buildings/b1/floors/f2"`)
 	assert.NotContains(t, body, "<html")
 }
 
@@ -235,7 +238,7 @@ func TestRoomDirectNavigationRedirectsToFullPage(t *testing.T) {
 
 	page := get(s, "/buildings/b1?room=r1").Body.String()
 	assert.Contains(t, page, "21.4°C", "room pre-rendered in the detail pane")
-	assert.Contains(t, page, `class="active"><button class="row" hx-get="/rooms/r1"`)
+	assert.Contains(t, page, `class="active"><button class="row" aria-current="true" hx-get="/rooms/r1"`)
 }
 
 func TestCameraFragmentCarriesWHEPURL(t *testing.T) {
@@ -249,7 +252,7 @@ func TestCameraFragmentRejectsNonHTTPURL(t *testing.T) {
 	bridge.camURL = "rtsp://cam.local/stream"
 	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
 	assert.NotContains(t, body, "data-whep")
-	assert.Contains(t, body, "isn&#39;t WHEP-compatible")
+	assert.Contains(t, body, "WebRTC (WHEP)")
 
 	bridge.camURL = "none"
 	body = get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
@@ -386,4 +389,58 @@ func TestDeviceRowOOBCarriesDimmerLevel(t *testing.T) {
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(u.GetDeviceUpdate().GetDevice())))
 	assert.Contains(t, sb.String(), `hx-swap-oob="true"`)
 	assert.Contains(t, sb.String(), `value="90"`)
+}
+
+func TestCameraPrefersWHEPEndpointOverLegacyURL(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	bridge.camURL = "rtsp://admin:hunter2@cam.local/door"
+	bridge.camEndpoints = []*apiTrait.MediaStream_Endpoint{
+		{Protocol: apiTrait.MediaStream_RTSP, Url: "rtsp://admin:hunter2@cam.local/door"},
+		{Protocol: apiTrait.MediaStream_WEBRTC_WHEP, Url: "http://go2rtc:1984/api/webrtc?src=door"},
+	}
+	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, `data-whep="http://go2rtc:1984/api/webrtc?src=door"`)
+	assert.NotContains(t, body, "hunter2")
+}
+
+func TestCameraWithOnlyNonWHEPEndpointsExplainsWithoutLeaking(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+	bridge.camURL = "http://legacy.local/stream" // ignored: endpoints are authoritative
+	bridge.camEndpoints = []*apiTrait.MediaStream_Endpoint{
+		{Protocol: apiTrait.MediaStream_RTSP, Url: "rtsp://admin:hunter2@cam.local/door"},
+		{Protocol: apiTrait.MediaStream_HLS, Url: "http://cam.local/door.m3u8"},
+	}
+	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
+	assert.NotContains(t, body, "data-whep")
+	assert.NotContains(t, body, "hunter2")
+	assert.Contains(t, body, "WebRTC (WHEP)")
+}
+
+func TestCameraPlayerCarriesICEServers(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	s.iceServersJSON = `["stun:stun.example:3478"]`
+	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, "stun:stun.example:3478")
+}
+
+func TestRoomDetailOffersEveryCamera(t *testing.T) {
+	cam2 := cam()
+	cam2.Id, cam2.Config.Name = "cam2", "Garage cam"
+	rv := roomToDetail(&api2.Room{Id: "r1", Devices: []*apiDevice.Device{cam(), cam2}})
+	require.Len(t, rv.Cameras, 2)
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "room_detail", rv))
+	assert.Contains(t, sb.String(), "/rooms/r1/camera/cam1")
+	assert.Contains(t, sb.String(), "/rooms/r1/camera/cam2")
+	assert.Contains(t, sb.String(), "VIEW Garage cam")
+}
+
+func TestA11yAttributes(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	page := get(s, "/buildings/b1").Body.String()
+	assert.Contains(t, page, `aria-current="true"`)
+	assert.Contains(t, page, `aria-label="occupancy unknown"`)
+	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, `aria-pressed="false"`)
+	assert.Contains(t, body, `<output class="dim level">40%</output>`)
 }

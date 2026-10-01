@@ -2,11 +2,13 @@ package main
 
 import (
 	"cmp"
+	"net/url"
 	"slices"
 	"strings"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
@@ -24,6 +26,9 @@ type roomRowView struct {
 	// used as a CSS class suffix for the occupancy dot.
 	Occ string
 }
+
+// OccLabel is the dot's text alternative.
+func (r roomRowView) OccLabel() string { return occupancyLabel(r.Occ) }
 
 type deviceView struct {
 	ID     string
@@ -47,9 +52,8 @@ type roomDetailView struct {
 	Name       string
 	Properties houseview.Properties
 	Devices    []deviceView
-	// Camera is the first linked Camera device, if any - drives the VIEW
-	// CAMERA button.
-	Camera *deviceView
+	// Cameras are the linked Camera devices - one VIEW CAMERA button each.
+	Cameras []deviceView
 }
 
 type floorPanelView struct {
@@ -75,6 +79,34 @@ type cameraView struct {
 	// http(s) stream URL, in which case Message says why.
 	URL     string
 	Message string
+	// ICEServers is a JSON array of STUN/TURN urls for the peer connection
+	// ("[]" on a LAN).
+	ICEServers string
+}
+
+// whepURL picks the stream URL a browser can play: the first WEBRTC_WHEP
+// endpoint (endpoints are in preference order), else - for a bridge that
+// only fills the deprecated State.url - that url if it is http(s). The URL is empty when nothing is playable, in which case reason says why, without echoing any url
+// (RTSP urls commonly embed credentials).
+func whepURL(ms *apiTrait.MediaStream) (streamURL, reason string) {
+	state := ms.GetState()
+	for _, ep := range state.GetEndpoints() {
+		if ep.GetProtocol() == apiTrait.MediaStream_WEBRTC_WHEP && isHTTP(ep.GetUrl()) {
+			return ep.GetUrl(), ""
+		}
+	}
+	if len(state.GetEndpoints()) == 0 && isHTTP(state.GetUrl()) {
+		return state.GetUrl(), ""
+	}
+	if len(state.GetEndpoints()) == 0 && state.GetUrl() == "" {
+		return "", "This camera isn't reporting a stream URL."
+	}
+	return "", "This camera doesn't offer a WebRTC (WHEP) stream a browser can play."
+}
+
+func isHTTP(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 func occupancy(p *api2.Room_Properties) string {
@@ -85,6 +117,18 @@ func occupancy(p *api2.Room_Properties) string {
 		return "yes"
 	default:
 		return "no"
+	}
+}
+
+// occupancyLabel is the text alternative for the occupancy dot's colour.
+func occupancyLabel(occ string) string {
+	switch occ {
+	case "yes":
+		return "occupied"
+	case "no":
+		return "vacant"
+	default:
+		return "occupancy unknown"
 	}
 }
 
@@ -116,9 +160,8 @@ func roomToDetail(r *api2.Room) roomDetailView {
 	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		dv := deviceToView(d)
 		rv.Devices = append(rv.Devices, dv)
-		if dv.IsCamera && rv.Camera == nil {
-			c := dv
-			rv.Camera = &c
+		if dv.IsCamera {
+			rv.Cameras = append(rv.Cameras, dv)
 		}
 	}
 	return rv

@@ -8,6 +8,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -73,6 +74,14 @@ func main() {
 	s, err := dialServer(ctx, logger, houseAddr, bridgeAddr, tlsCfg)
 	if err != nil {
 		logger.Fatal("unable to start viewer ui", zap.Error(err))
+	}
+
+	if ice := viper.GetStringSlice("viewerui.ice_servers"); len(ice) > 0 {
+		j, err := json.Marshal(ice)
+		if err != nil {
+			logger.Fatal("invalid viewerui.ice_servers", zap.Error(err))
+		}
+		s.iceServersJSON = string(j)
 	}
 
 	port := viper.GetInt("viewerui.listen_port")

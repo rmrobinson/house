@@ -44,6 +44,7 @@
   .err { color: var(--err); font-size: 0.8rem; }
   video { width: 100%; background: #000; display: block; }
   input.dimmer { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
+  output.level { display: inline-block; min-width: 3rem; margin-right: 0.6rem; text-align: right; }
   #status { position: fixed; top: 0.5rem; right: 0.75rem; font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); }
   #status.down { color: var(--err); }
   #flash { position: fixed; bottom: 0; left: 0; right: 0; padding: 0.5rem 1rem; background: #1a1010; border-top: 1px solid var(--err); color: var(--err); }
@@ -96,6 +97,22 @@ document.addEventListener('htmx:responseError', function (e) {
   flash((e.detail.xhr.responseText || '').trim() || 'Request failed (' + e.detail.xhr.status + ')');
 });
 document.addEventListener('htmx:sendError', function () { flash('Unable to reach the server'); });
+
+// Live level readout while dragging a dimmer (the command goes out on release).
+document.addEventListener('input', function (e) {
+  if (!e.target.matches('input.dimmer')) return;
+  var o = e.target.nextElementSibling;
+  if (o) o.textContent = e.target.value + '%';
+});
+
+// Don't let a live push redraw a row while the user is interacting with it
+// (it would snap the slider back mid-drag).
+document.addEventListener('htmx:oobBeforeSwap', function (e) {
+  var t = e.detail.target;
+  if (t && t.tagName === 'TR' && t.contains(document.activeElement) && document.activeElement.matches('input.dimmer')) {
+    e.detail.shouldSwap = false;
+  }
+});
 
 // Cap the event log so a wall-mounted tab doesn't grow forever.
 document.addEventListener('htmx:oobAfterSwap', function () {

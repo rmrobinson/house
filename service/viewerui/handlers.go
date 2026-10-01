@@ -191,21 +191,8 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cv := cameraView{RoomID: roomID, Name: houseview.DisplayName(d)}
-	streamURL := d.GetCamera().GetMediaStream().GetState().GetUrl()
-	if u, err := url.Parse(streamURL); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		cv.URL = streamURL
-	} else if streamURL == "" {
-		cv.Message = "This camera isn't reporting a stream URL."
-	} else {
-		// Deliberately don't echo the URL: RTSP urls commonly embed
-		// credentials.
-		scheme := "unparseable"
-		if err == nil {
-			scheme = u.Scheme
-		}
-		cv.Message = "This camera's stream isn't WHEP-compatible (" + scheme + " stream)."
-	}
+	cv := cameraView{RoomID: roomID, Name: houseview.DisplayName(d), ICEServers: s.iceServersJSON}
+	cv.URL, cv.Message = whepURL(d.GetCamera().GetMediaStream())
 	s.renderFragment(w, "camera", cv)
 }
 

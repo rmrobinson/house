@@ -4,6 +4,9 @@ viewerui:
   house_addr: "192.168.1.5:1337"
   # Address of the BridgeService facade. Defaults to house_addr if unset.
   bridge_facade_addr: ""
+  # Optional: STUN/TURN urls for the camera player, only needed to view
+  # cameras from outside the LAN. e.g. ["stun:stun.l.google.com:19302"]
+  ice_servers: []
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
     cert_file: ""

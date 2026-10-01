@@ -120,6 +120,9 @@ type roomUpdateData struct {
 	Properties houseview.Properties
 }
 
+// OccLabel is the dot's text alternative.
+func (r roomUpdateData) OccLabel() string { return occupancyLabel(r.Occ) }
+
 func roomUpdateView(ru *api2.RoomUpdate, name string) roomUpdateData {
 	return roomUpdateData{
 		ID:         ru.GetRoomId(),

@@ -8,7 +8,7 @@
   {{range .Devices}}{{template "device_row" .}}
   {{else}}<tr><td class="dim">No devices linked.</td></tr>
   {{end}}</tbody></table>
-  {{if .Camera}}<div class="pad"><button class="action" hx-get="/rooms/{{.ID}}/camera/{{.Camera.ID}}" hx-target="#detail" hx-swap="innerHTML">[ VIEW CAMERA ]</button></div>{{end}}
+  {{if .Cameras}}<div class="pad">{{$room := .ID}}{{range .Cameras}}<button class="action" hx-get="/rooms/{{$room}}/camera/{{.ID}}" hx-target="#detail" hx-swap="innerHTML">[ VIEW {{if gt (len $.Cameras) 1}}{{.Name}}{{else}}CAMERA{{end}} ]</button> {{end}}</div>{{end}}
 </div>{{end}}
 
 {{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}

@@ -26,6 +26,10 @@ type Server struct {
 	house  api2.HouseServiceClient
 	bridge api2.BridgeServiceClient
 
+	// iceServersJSON is a JSON array of STUN/TURN urls handed to the camera
+	// player's RTCPeerConnection; "[]" (host candidates only) suits a LAN.
+	iceServersJSON string
+
 	// ctx is what the hubs run under.
 	ctx context.Context
 
@@ -55,11 +59,12 @@ func dialServer(ctx context.Context, logger *zap.Logger, houseAddr, bridgeAddr s
 
 func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient) *Server {
 	s := &Server{
-		logger:   logger,
-		house:    house,
-		bridge:   bridge,
-		ctx:      ctx,
-		roomHubs: map[string]*hub.Hub[*api2.RoomUpdate]{},
+		logger:         logger,
+		house:          house,
+		bridge:         bridge,
+		ctx:            ctx,
+		iceServersJSON: "[]",
+		roomHubs:       map[string]*hub.Hub[*api2.RoomUpdate]{},
 		devHub: hub.New(logger, func(ctx context.Context) (func() (*api2.Update, error), error) {
 			stream, err := bridge.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
 			if err != nil {

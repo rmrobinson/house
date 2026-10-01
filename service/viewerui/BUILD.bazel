@@ -26,6 +26,7 @@ go_library(
         "//api",
         "//api/command",
         "//api/device",
+        "//api/trait",
         "//service/lib/configutil",
         "//service/lib/grpcutil",
         "//service/lib/houseview",

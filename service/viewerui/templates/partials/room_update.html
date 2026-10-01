@@ -1,7 +1,7 @@
 {{/* room_update_oob is one RoomUpdate's live push: the room list's occupancy
 dot, the properties grid if that room's detail pane is open, and an event-log
 line. Targets that aren't on the page are ignored by htmx. */}}
-{{define "room_update_oob"}}<span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}" hx-swap-oob="true"></span>
+{{define "room_update_oob"}}<span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}" role="img" aria-label="{{.OccLabel}}" title="{{.OccLabel}}" hx-swap-oob="true"></span>
 {{template "room_props_oob" .}}
 <div hx-swap-oob="afterbegin:#event-log"><div>{{.Name}}: occ {{if .Properties.Occupied}}{{.Properties.Occupied}}{{else}}—{{end}} · {{if .Properties.TemperatureC}}{{.Properties.TemperatureC}}{{else}}—{{end}}</div></div>{{end}}
 
