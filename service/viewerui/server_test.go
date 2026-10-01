@@ -228,7 +228,9 @@ func TestRoomDetailShowsPropertiesTogglesAndCameraButton(t *testing.T) {
 	assert.Contains(t, body, `hx-post="/devices/lamp/commands"`)
 	assert.Contains(t, body, `hx-vals='{"on": "true"}'`)
 	assert.Contains(t, body, `hx-get="/rooms/r1/camera/cam1"`)
-	assert.Contains(t, body, "[ VIEW CAMERA ]")
+	assert.Contains(t, body, `<button class="action" hx-get="/rooms/r1/camera/cam1"`, "a lone camera gets its own row button")
+	assert.Contains(t, body, "[ VIEW ]")
+	assert.NotContains(t, body, "<dialog")
 }
 
 func TestRoomDirectNavigationRedirectsToFullPage(t *testing.T) {
@@ -433,7 +435,9 @@ func TestRoomDetailOffersEveryCamera(t *testing.T) {
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "room_detail", rv))
 	assert.Contains(t, sb.String(), "/rooms/r1/camera/cam1")
 	assert.Contains(t, sb.String(), "/rooms/r1/camera/cam2")
-	assert.Contains(t, sb.String(), "VIEW Garage cam")
+	assert.Contains(t, sb.String(), "<dialog", "several cameras: one VIEW opens a picker")
+	assert.Contains(t, sb.String(), ">Garage cam</button>")
+	assert.Equal(t, 1, strings.Count(sb.String(), "[ VIEW ]"), "a single VIEW, not one per camera")
 }
 
 func TestA11yAttributes(t *testing.T) {
@@ -452,4 +456,11 @@ func TestRoomDetailShowsAirQualityTilesOnlyWhenReported(t *testing.T) {
 	assert.Contains(t, body, "640 ppm")
 	assert.NotContains(t, body, ">VOC<", "unreported metrics get no tile")
 	assert.NotContains(t, body, ">Radon<")
+}
+
+func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(cam())))
+	assert.Contains(t, sb.String(), `id="device-info-cam1"`)
+	assert.NotContains(t, sb.String(), "<tr", "replacing the row would drop its VIEW button")
 }

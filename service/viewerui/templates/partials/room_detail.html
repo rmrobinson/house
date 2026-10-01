@@ -3,12 +3,18 @@
   {{template "room_props" .}}
 </div>
 <div class="box">
-  <div class="box-title">DEVICES</div>
+  <div class="box-title title-bar">DEVICES{{if gt (len .Cameras) 1}}
+    <button class="action" onclick="this.parentElement.nextElementSibling.showModal()">[ VIEW ]</button>{{end}}</div>
+  {{if gt (len .Cameras) 1}}<dialog onclick="if (event.target === this) this.close()">
+    <div class="box-title title-bar">CAMERAS <button class="action" onclick="this.closest('dialog').close()" aria-label="Close">[ X ]</button></div>
+    <ul class="list">
+    {{range .Cameras}}<li><button class="row" hx-get="{{.ViewHref}}" hx-target="#detail" hx-swap="innerHTML">{{.Name}}</button></li>
+    {{end}}</ul>
+  </dialog>{{end}}
   <table class="devices"><tbody>
   {{range .Devices}}{{template "device_row" .}}
   {{else}}<tr><td class="dim">No devices linked.</td></tr>
   {{end}}</tbody></table>
-  {{if .Cameras}}<div class="pad">{{$room := .ID}}{{range .Cameras}}<button class="action" hx-get="/rooms/{{$room}}/camera/{{.ID}}" hx-target="#detail" hx-swap="innerHTML">[ VIEW {{if gt (len $.Cameras) 1}}{{.Name}}{{else}}CAMERA{{end}} ]</button> {{end}}</div>{{end}}
 </div>{{end}}
 
 {{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}

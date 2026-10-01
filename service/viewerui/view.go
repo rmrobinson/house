@@ -44,6 +44,11 @@ type deviceView struct {
 	CanDim   bool
 	Level    int
 	IsCamera bool
+	// ViewHref opens this camera's player. RowView is true when it's the
+	// room's only camera, so its own row carries the [ VIEW ] button; with
+	// several, the DEVICES header offers one [ VIEW ] that opens a picker.
+	ViewHref string
+	RowView  bool
 	Error    string
 }
 
@@ -159,9 +164,15 @@ func roomToDetail(r *api2.Room) roomDetailView {
 	}
 	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		dv := deviceToView(d)
-		rv.Devices = append(rv.Devices, dv)
 		if dv.IsCamera {
+			dv.ViewHref = "/rooms/" + rv.ID + "/camera/" + dv.ID
 			rv.Cameras = append(rv.Cameras, dv)
+		}
+		rv.Devices = append(rv.Devices, dv)
+	}
+	if len(rv.Cameras) == 1 {
+		for i := range rv.Devices {
+			rv.Devices[i].RowView = rv.Devices[i].IsCamera
 		}
 	}
 	return rv
