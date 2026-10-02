@@ -178,6 +178,42 @@ func TestDeviceConfigOverlay_UpdateDeviceConfig_VersionMismatch(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+func TestDeviceConfigOverlay_UpdateDeviceConfig_RejectsBlankName(t *testing.T) {
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+
+	for _, name := range []string{"", "   "} {
+		_, err := overlay.UpdateDeviceConfig(context.Background(), &api2.UpdateDeviceConfigRequest{
+			Id:     "d1",
+			Config: &apiDevice.Device_Config{Name: name},
+		})
+		require.Error(t, err)
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	}
+
+	// Rejected before any write - GetDevice still reports the original
+	// bridge-reported name, not a blank override.
+	d, err := overlay.GetDevice(context.Background(), &api2.GetDeviceRequest{Id: "d1"})
+	require.NoError(t, err)
+	assert.Equal(t, "Bridge-Reported Name", d.GetConfig().GetName())
+}
+
+func TestDeviceConfigOverlay_UpdateDeviceConfig_TrimsName(t *testing.T) {
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+
+	updated, err := overlay.UpdateDeviceConfig(context.Background(), &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "  Kitchen Lamp  "},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Kitchen Lamp", updated.GetConfig().GetName())
+}
+
 func TestDeviceConfigOverlay_ListDevices_AppliesBulkOverride(t *testing.T) {
 	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
 		"d1": deviceWithName("d1", "Bridge Name 1", "v1"),

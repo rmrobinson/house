@@ -2,6 +2,7 @@ package house
 
 import (
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -30,6 +31,18 @@ import (
 // be registered on housed's grpc.Server in place of the raw facade - every
 // caller (adminui's direct BridgeService dial, and house.Service's own
 // loopback bridgeClient) then sees the override transparently.
+//
+// This only covers the case where housed embeds the BridgeService facade
+// itself (cmd/housed/main.go's facadeCfg != nil branch - see README.md's
+// "notes housed embeds the facade" convention). When adminui is instead
+// pointed directly at a standalone bridgefacaded via its own
+// bridge_facade_addr (adminui/README.md documents this as a supported
+// topology), renames bypass housed - and this overlay - entirely, and
+// UpdateDeviceConfig fails with Unimplemented against the raw facade, same
+// as before this type existed. There's no housedb for a standalone
+// bridgefacaded to persist an override into, so this is a real gap in that
+// topology, not just an oversight here - renaming a device currently
+// requires going through housed.
 type DeviceConfigOverlay struct {
 	logger *zap.Logger
 	inner  api2.BridgeServiceServer
@@ -116,8 +129,18 @@ func (o *DeviceConfigOverlay) GetDevice(ctx context.Context, req *api2.GetDevice
 // device's current Device.version - the same optimistic-concurrency
 // contract documented on UpdateDeviceConfigRequest/Device.version in api/
 // device/device.proto - not against anything in housedb, since the
-// override itself carries no version of its own (see db.DeviceConfig).
+// override itself carries no version of its own (see db.DeviceConfig). This
+// check and the write below aren't atomic with each other - two concurrent
+// renames of the same device, both reading the same still-current version,
+// can both pass the check and then both write, with the later write simply
+// winning - the same single-editor, no-conflict-UI tradeoff adminui already
+// makes elsewhere (see server.go's teardown doc comment).
 func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.UpdateDeviceConfigRequest) (*device.Device, error) {
+	name := strings.TrimSpace(req.GetConfig().GetName())
+	if name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name must not be empty")
+	}
+
 	d, err := o.inner.GetDevice(ctx, &api2.GetDeviceRequest{Id: req.GetId()})
 	if err != nil {
 		return nil, err
@@ -127,7 +150,7 @@ func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.
 		return nil, bridge.ErrVersionMismatch
 	}
 
-	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), req.GetConfig().GetName())
+	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name)
 	if err != nil {
 		return nil, status.Error(codes.Internal, "unable to save device config")
 	}
