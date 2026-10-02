@@ -120,14 +120,26 @@ func (s *Server) handleBuildingUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// available_modes has no field in this form; carry over the building's
+	// current value so this update doesn't clobber it - UpdateBuilding
+	// replaces Config wholesale (see Building.Config.available_modes's doc
+	// comment), and an empty list here would leave no mode settable until
+	// someone reconfigures it via housecli.
+	current, err := s.house.GetBuilding(r.Context(), &api2.GetBuildingRequest{Id: id})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
 	_, err = s.house.UpdateBuilding(r.Context(), &api2.UpdateBuildingRequest{
 		Id:      id,
 		Version: r.FormValue("version"),
 		Config: &api2.Building_Config{
-			Name: r.FormValue("name"),
-			Tz:   r.FormValue("tz"),
-			Lat:  lat,
-			Lon:  lon,
+			Name:           r.FormValue("name"),
+			Tz:             r.FormValue("tz"),
+			Lat:            lat,
+			Lon:            lon,
+			AvailableModes: current.GetConfig().GetAvailableModes(),
 		},
 	})
 	flash, isError := successOrError(err, "Building updated")
