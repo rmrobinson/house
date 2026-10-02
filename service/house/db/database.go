@@ -32,6 +32,10 @@ var ErrVersionMismatch = errors.New("version mismatch")
 // devices). Callers must delete children first - no cascade.
 var ErrHasChildren = errors.New("has child records")
 
+// ErrInvalidMode is returned by SetBuildingMode when mode isn't "" and isn't
+// one of the building's current Config.available_modes.
+var ErrInvalidMode = errors.New("mode is not one of this building's available modes")
+
 // Database contains a handle to interface with the building DB
 type Database struct {
 	logger *zap.Logger
@@ -70,11 +74,22 @@ func NewDatabase(logger *zap.Logger, db *sql.DB) (*Database, error) {
 	}, nil
 }
 
+// querier is satisfied by both *sql.DB and *sql.Tx. checkVersionedUpdate
+// takes one explicitly so a caller running inside a transaction can pass its
+// *sql.Tx rather than the top-level *sql.DB - querying through db.db while a
+// transaction on the same *Database is still open would otherwise block
+// forever waiting for a connection the open transaction is holding (sqlite
+// only hands out one at a time).
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // checkVersionedUpdate turns the RowsAffected of an `UPDATE/DELETE ... WHERE
 // id=? AND version=?` into ErrNotFound or ErrVersionMismatch when it
 // affected no rows - table is always a fixed internal constant, never
-// caller-supplied, so building the query with it is safe.
-func (db *Database) checkVersionedUpdate(ctx context.Context, res sql.Result, table, id string) error {
+// caller-supplied, so building the query with it is safe. q is the
+// connection/transaction res's statement ran against.
+func (db *Database) checkVersionedUpdate(ctx context.Context, q querier, res sql.Result, table, id string) error {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return err
@@ -84,7 +99,7 @@ func (db *Database) checkVersionedUpdate(ctx context.Context, res sql.Result, ta
 	}
 
 	var exists int
-	row := db.db.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id=?", table), id)
+	row := q.QueryRowContext(ctx, fmt.Sprintf("SELECT 1 FROM %s WHERE id=?", table), id)
 	if err := row.Scan(&exists); err == sql.ErrNoRows {
 		return ErrNotFound
 	} else if err != nil {
@@ -117,7 +132,7 @@ func (db *Database) deleteVersionedRow(ctx context.Context, table, id, version s
 		db.logger.Error("unable to delete row", zap.String("table", table), zap.String("id", id), zap.Error(err))
 		return err
 	}
-	return db.checkVersionedUpdate(ctx, res, table, id)
+	return db.checkVersionedUpdate(ctx, db.db, res, table, id)
 }
 
 // deleteWithChildCheck deletes the row identified by id from table, first
@@ -265,7 +280,9 @@ func (db *Database) GetBuilding(ctx context.Context, buildingID string) (*Buildi
 // overwritten with the row's actual current value before returning, since a
 // caller (e.g. house.Service.UpdateBuilding, which never populates b.Mode at
 // all) would otherwise see whatever b.Mode happened to already be rather
-// than reality.
+// than reality. The update and the mode read-back run in one transaction so
+// a concurrent SetBuildingMode can't be read mid-flight and attributed to
+// this call's result.
 func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building, error) {
 	newVersion := uuid.NewString()
 
@@ -274,20 +291,31 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 		return nil, err
 	}
 
-	res, err := db.db.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,available_modes=?,version=? WHERE id=? AND version=?",
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,available_modes=?,version=? WHERE id=? AND version=?",
 		b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, availableModes, newVersion, b.ID, b.Version)
 	if err != nil {
 		db.logger.Error("unable to update building", zap.String("building_id", b.ID), zap.Error(err))
 		return nil, err
 	}
-	if err := db.checkVersionedUpdate(ctx, res, "building", b.ID); err != nil {
+	if err := db.checkVersionedUpdate(ctx, tx, res, "building", b.ID); err != nil {
 		return nil, err
 	}
 
 	var mode sql.NullString
-	row := db.db.QueryRowContext(ctx, "SELECT mode FROM building WHERE id=?", b.ID)
+	row := tx.QueryRowContext(ctx, "SELECT mode FROM building WHERE id=?", b.ID)
 	if err := row.Scan(&mode); err != nil {
 		db.logger.Error("unable to read back building mode", zap.String("building_id", b.ID), zap.Error(err))
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		db.logger.Error("unable to commit building update", zap.String("building_id", b.ID), zap.Error(err))
 		return nil, err
 	}
 
@@ -297,11 +325,47 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 }
 
 // SetBuildingMode sets buildingID's current mode, returning the updated
-// Building, or ErrNotFound if it doesn't exist. Unlike UpdateBuilding, this
-// isn't guarded by a version check - see SetHouseModeRequest's doc comment
-// in api/house.proto for why.
+// Building, or ErrNotFound if it doesn't exist, or ErrInvalidMode if mode
+// isn't "" and isn't one of the building's current Config.available_modes.
+// Unlike UpdateBuilding, this isn't guarded by a version check - see
+// SetHouseModeRequest's doc comment in api/house.proto for why. The
+// available_modes validity check and the write happen in one transaction so
+// a concurrent UpdateBuilding changing available_modes can't race it into
+// writing a mode that's no longer valid by the time it lands.
 func (db *Database) SetBuildingMode(ctx context.Context, buildingID, mode string) (*Building, error) {
-	res, err := db.db.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", mode, buildingID)
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var availableModesCol sql.NullString
+	row := tx.QueryRowContext(ctx, "SELECT available_modes FROM building WHERE id=?", buildingID)
+	if err := row.Scan(&availableModesCol); err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	} else if err != nil {
+		db.logger.Error("unable to read building available_modes", zap.String("building_id", buildingID), zap.Error(err))
+		return nil, err
+	}
+
+	if mode != "" {
+		availableModes, err := columnToModes(availableModesCol)
+		if err != nil {
+			return nil, err
+		}
+		valid := false
+		for _, m := range availableModes {
+			if m == mode {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, ErrInvalidMode
+		}
+	}
+
+	res, err := tx.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", mode, buildingID)
 	if err != nil {
 		db.logger.Error("unable to set building mode", zap.String("building_id", buildingID), zap.Error(err))
 		return nil, err
@@ -314,7 +378,18 @@ func (db *Database) SetBuildingMode(ctx context.Context, buildingID, mode string
 		return nil, ErrNotFound
 	}
 
-	return db.GetBuilding(ctx, buildingID)
+	building := &Building{}
+	row = tx.QueryRowContext(ctx, "SELECT "+buildingColumns+" FROM building WHERE id=?", buildingID)
+	if err := scanBuilding(row, building); err != nil {
+		db.logger.Error("unable to read back building after setting mode", zap.String("building_id", buildingID), zap.Error(err))
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		db.logger.Error("unable to commit building mode change", zap.String("building_id", buildingID), zap.Error(err))
+		return nil, err
+	}
+	return building, nil
 }
 
 // DeleteBuilding deletes the specified building. Returns ErrHasChildren if
@@ -420,7 +495,7 @@ func (db *Database) UpdateFloor(ctx context.Context, f *Floor) (*Floor, error) {
 		db.logger.Error("unable to update floor", zap.String("floor_id", f.ID), zap.Error(err))
 		return nil, err
 	}
-	if err := db.checkVersionedUpdate(ctx, res, "floor", f.ID); err != nil {
+	if err := db.checkVersionedUpdate(ctx, db.db, res, "floor", f.ID); err != nil {
 		return nil, err
 	}
 
@@ -477,7 +552,7 @@ func (db *Database) UpdateRoom(ctx context.Context, r *Room) (*Room, error) {
 		db.logger.Error("unable to update room", zap.String("room_id", r.ID), zap.Error(err))
 		return nil, err
 	}
-	if err := db.checkVersionedUpdate(ctx, res, "room", r.ID); err != nil {
+	if err := db.checkVersionedUpdate(ctx, db.db, res, "room", r.ID); err != nil {
 		return nil, err
 	}
 

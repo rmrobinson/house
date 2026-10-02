@@ -76,6 +76,8 @@ func mapDBErr(err error, what string) error {
 		return status.Errorf(codes.FailedPrecondition, "%s has changed since the supplied version was read", what)
 	case errors.Is(err, db.ErrHasChildren):
 		return status.Errorf(codes.FailedPrecondition, "%s has child records; delete them first", what)
+	case errors.Is(err, db.ErrInvalidMode):
+		return status.Error(codes.InvalidArgument, err.Error())
 	default:
 		return status.Errorf(codes.Internal, "unable to process %s", what)
 	}
@@ -168,30 +170,11 @@ func (s *Service) DeleteBuilding(ctx context.Context, req *api2.DeleteBuildingRe
 // SetHouseMode sets a building's current mode, validating it against that
 // building's Config.available_modes (an empty mode always clears it,
 // regardless of available_modes - see SetHouseModeRequest's doc comment).
+// The validity check and the write happen together inside
+// db.SetBuildingMode's transaction, so a concurrent UpdateBuilding changing
+// available_modes can't race this into writing a since-invalidated mode.
 func (s *Service) SetHouseMode(ctx context.Context, req *api2.SetHouseModeRequest) (*api2.Building, error) {
-	building, err := s.db.GetBuilding(ctx, req.GetBuildingId())
-	if err != nil {
-		s.logger.Error("unable to get building", zap.String("building_id", req.GetBuildingId()), zap.Error(err))
-		return nil, status.Error(codes.Internal, "unable to get building")
-	} else if building == nil {
-		return nil, status.Error(codes.NotFound, "building doesn't exist")
-	}
-
-	mode := req.GetMode()
-	if mode != "" {
-		valid := false
-		for _, m := range building.AvailableModes {
-			if m == mode {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, status.Errorf(codes.InvalidArgument, "mode %q is not one of this building's available modes", mode)
-		}
-	}
-
-	res, err := s.db.SetBuildingMode(ctx, req.GetBuildingId(), mode)
+	res, err := s.db.SetBuildingMode(ctx, req.GetBuildingId(), req.GetMode())
 	if err != nil {
 		s.logger.Error("unable to set building mode", zap.String("building_id", req.GetBuildingId()), zap.Error(err))
 		return nil, mapDBErr(err, "building")
