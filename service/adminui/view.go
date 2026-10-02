@@ -1,19 +1,17 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"slices"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 // buildingView/floorView/roomView/deviceView mirror the proto messages,
@@ -51,7 +49,7 @@ type roomView struct {
 	Type        int32
 	Devices     []deviceView
 	Aggregation aggregationView
-	Properties  propertiesView
+	Properties  houseview.Properties
 }
 
 // aggregationView mirrors Room.Config.aggregation, reshaped for the edit
@@ -65,20 +63,6 @@ type aggregationView struct {
 	LightStrategy       string
 	AirQualityStrategy  string
 	PowerStrategy       string
-}
-
-// propertiesView mirrors Room.Properties, pre-formatted for display -
-// each field is "" when that metric is unset (no linked device has
-// reported it yet), which room.html treats as "Unknown".
-type propertiesView struct {
-	Occupied        string
-	TemperatureC    string
-	LightLevelLux   string
-	AirQualityIndex string
-	Co2Ppm          string
-	VocPpb          string
-	RadonBqM3       string
-	PowerDrawW      string
 }
 
 // strategyToStr/strategyFromStr convert api2.AggregationConfig_Strategy to
@@ -139,45 +123,6 @@ func aggregationToView(a *api2.AggregationConfig) aggregationView {
 	}
 }
 
-// propertiesToView formats p's set fields for display, leaving an unset
-// metric (including every field, if p itself is nil - no linked device has
-// reported anything for this room yet) as "".
-func propertiesToView(p *api2.Room_Properties) propertiesView {
-	var pv propertiesView
-	if p == nil {
-		return pv
-	}
-	if p.Occupied != nil {
-		if p.GetOccupied() {
-			pv.Occupied = "Yes"
-		} else {
-			pv.Occupied = "No"
-		}
-	}
-	if p.TemperatureC != nil {
-		pv.TemperatureC = fmt.Sprintf("%.1f°C", p.GetTemperatureC())
-	}
-	if p.LightLevelLux != nil {
-		pv.LightLevelLux = fmt.Sprintf("%d lux", p.GetLightLevelLux())
-	}
-	if p.AirQualityIndex != nil {
-		pv.AirQualityIndex = fmt.Sprintf("%d", p.GetAirQualityIndex())
-	}
-	if p.Co2Ppm != nil {
-		pv.Co2Ppm = fmt.Sprintf("%d ppm", p.GetCo2Ppm())
-	}
-	if p.VocPpb != nil {
-		pv.VocPpb = fmt.Sprintf("%d ppb", p.GetVocPpb())
-	}
-	if p.RadonBqM3 != nil {
-		pv.RadonBqM3 = fmt.Sprintf("%d Bq/m³", p.GetRadonBqM3())
-	}
-	if p.PowerDrawW != nil {
-		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
-	}
-	return pv
-}
-
 // deviceView is shown both embedded in a room and on the flat /devices list.
 // RoomID/RoomLabel are populated by the caller when known (empty for a
 // device with no room link).
@@ -227,9 +172,9 @@ func roomToView(r *api2.Room) roomView {
 		Version:     r.GetVersion(),
 		Type:        r.GetConfig().GetType(),
 		Aggregation: aggregationToView(r.GetConfig().GetAggregation()),
-		Properties:  propertiesToView(r.GetProperties()),
+		Properties:  houseview.PropertiesToView(r.GetProperties()),
 	}
-	for _, d := range sortDevices(r.GetDevices()) {
+	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		rv.Devices = append(rv.Devices, deviceToView(d))
 	}
 	return rv
@@ -242,73 +187,11 @@ func deviceToView(d *apiDevice.Device) deviceView {
 	}
 	return deviceView{
 		ID:           d.GetId(),
-		Name:         deviceDisplayName(d),
-		Kind:         deviceKind(d),
+		Name:         houseview.DisplayName(d),
+		Kind:         houseview.Kind(d),
 		Manufacturer: d.GetManufacturer(),
 		Model:        model,
 		Online:       d.GetAddress().GetIsReachable(),
-	}
-}
-
-// sortDevices sorts devices in place by display name (case-insensitively),
-// then manufacturer, then ID, and returns it - every device table and picker
-// in this app lists devices in this one order, rather than whatever order
-// the BridgeService facade happened to iterate its cache in (a Go map, so
-// different on every request).
-func sortDevices(devices []*apiDevice.Device) []*apiDevice.Device {
-	slices.SortFunc(devices, func(a, b *apiDevice.Device) int {
-		return cmp.Or(
-			cmp.Compare(strings.ToLower(deviceDisplayName(a)), strings.ToLower(deviceDisplayName(b))),
-			cmp.Compare(a.GetManufacturer(), b.GetManufacturer()),
-			cmp.Compare(a.GetId(), b.GetId()),
-		)
-	})
-	return devices
-}
-
-// deviceDisplayName falls back to d's ID when Config.Name is unset - a
-// device with no configured name would otherwise render as a blank label
-// throughout this app (device tables, link/move confirmations).
-func deviceDisplayName(d *apiDevice.Device) string {
-	if name := d.GetConfig().GetName(); name != "" {
-		return name
-	}
-	return d.GetId()
-}
-
-// deviceKind returns a short label for whichever "details" oneof case is
-// set, for display only - mirrors the type switch shape used for dispatch in
-// service/bridge/api.go's deviceSupportsCommand.
-func deviceKind(d *apiDevice.Device) string {
-	switch {
-	case d.GetAvReceiver() != nil:
-		return "AV Receiver"
-	case d.GetClock() != nil:
-		return "Clock"
-	case d.GetLight() != nil:
-		return "Light"
-	case d.GetSensor() != nil:
-		return "Sensor"
-	case d.GetThermostat() != nil:
-		return "Thermostat"
-	case d.GetUps() != nil:
-		return "UPS"
-	case d.GetEvCharger() != nil:
-		return "EV Charger"
-	case d.GetMediaPlayer() != nil:
-		return "Media Player"
-	case d.GetTelevision() != nil:
-		return "Television"
-	case d.GetConnectedDevice() != nil:
-		return "Connected Device"
-	case d.GetCamera() != nil:
-		return "Camera"
-	case d.GetFan() != nil:
-		return "Fan"
-	case d.GetStandingDesk() != nil:
-		return "Standing Desk"
-	default:
-		return "Generic"
 	}
 }
 
@@ -348,38 +231,18 @@ func (s *Server) roomLabel(ctx context.Context, roomID string) (string, error) {
 	return fmt.Sprintf("%s · %s · %s", building.GetConfig().GetName(), floor.GetName(), room.GetConfig().GetName()), nil
 }
 
-// listBuildings/listFloors/listRoomsByFloor wrap HouseService's streaming
-// List* RPCs into a plain slice - every caller in this app wants the whole
-// list at once (admin-tool traffic, not a large enough result set to
-// justify consuming the stream incrementally).
+// listBuildings/listFloors/listRoomsByFloor are houseview's List* helpers
+// bound to this Server's HouseService client.
 func (s *Server) listBuildings(ctx context.Context) ([]*api2.Building, error) {
-	return streamAll(func(cb func(*api2.Building) error) error {
-		stream, err := s.house.ListBuildings(ctx, &api2.ListBuildingsRequest{})
-		if err != nil {
-			return err
-		}
-		return recvAll(stream, cb)
-	})
+	return houseview.ListBuildings(ctx, s.house)
 }
 
 func (s *Server) listFloors(ctx context.Context, buildingID string) ([]*api2.Floor, error) {
-	return streamAll(func(cb func(*api2.Floor) error) error {
-		stream, err := s.house.ListFloors(ctx, &api2.ListFloorsRequest{BuildingId: buildingID})
-		if err != nil {
-			return err
-		}
-		return recvAll(stream, cb)
-	})
+	return houseview.ListFloors(ctx, s.house, buildingID)
 }
 
 func (s *Server) listRoomsByFloor(ctx context.Context, floorID string) ([]*api2.Room, error) {
-	return streamAll(func(cb func(*api2.Room) error) error {
-		stream, err := s.house.ListRooms(ctx, &api2.ListRoomsRequest{FloorId: &floorID})
-		if err != nil {
-			return err
-		}
-		return recvAll(stream, cb)
-	})
+	return houseview.ListRoomsByFloor(ctx, s.house, floorID)
 }
 
 // listDevices wraps the BridgeService facade's ListDevices - unlike
@@ -390,7 +253,7 @@ func (s *Server) listDevices(ctx context.Context) ([]*apiDevice.Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sortDevices(resp.GetDevices()), nil
+	return houseview.SortDevices(resp.GetDevices()), nil
 }
 
 // roomOption is one entry in the flat building/floor/room picker used by the
@@ -460,38 +323,4 @@ func (s *Server) deviceRoomMap(ctx context.Context) (map[string]deviceLink, erro
 		}
 		out[link.GetDeviceId()] = deviceLink{RoomID: link.GetRoomId(), Version: link.GetVersion()}
 	}
-}
-
-// grpcRecvStream is the shape every HouseService List* streaming client
-// shares - satisfied by api2.HouseService_ListBuildingsClient,
-// _ListFloorsClient and _ListRoomsClient without needing generics over the
-// generated types themselves.
-type grpcRecvStream[T any] interface {
-	Recv() (T, error)
-}
-
-func recvAll[T any](stream grpcRecvStream[T], cb func(T) error) error {
-	for {
-		item, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := cb(item); err != nil {
-			return err
-		}
-	}
-}
-
-// streamAll collects every item a List* RPC streams back, via open (which
-// starts the stream and forwards each item to cb).
-func streamAll[T any](open func(cb func(T) error) error) ([]T, error) {
-	var items []T
-	err := open(func(item T) error {
-		items = append(items, item)
-		return nil
-	})
-	return items, err
 }

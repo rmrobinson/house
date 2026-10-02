@@ -6,6 +6,7 @@ import (
 	"net/url"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 type devicesPageData struct {
@@ -148,7 +149,7 @@ func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) 
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	current := links[deviceID]
@@ -190,7 +191,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID, Version: r.FormValue("version")})
@@ -200,7 +201,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 			s.httpError(w, r, loadErr)
 			return
 		}
-		s.respond(w, "devices", data, grpcMessage(err), true)
+		s.respond(w, "devices", data, houseview.Message(err), true)
 		return
 	}
 

@@ -8,10 +8,9 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
 
@@ -70,12 +69,12 @@ type Server struct {
 // calling into a nil client for every one of them.
 func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceClient, bridge api2.BridgeServiceClient, policySvc api2.PolicyServiceClient) *Server {
 	hub := newDeviceHub(logger, bridge)
-	go hub.run(ctx, "bridge update stream ended, reconnecting")
+	go hub.Run(ctx, "bridge update stream ended, reconnecting")
 
 	var pHub *policyHub
 	if policySvc != nil {
 		pHub = newPolicyHub(logger, policySvc)
-		go pHub.run(ctx, "policy event stream ended, reconnecting")
+		go pHub.Run(ctx, "policy event stream ended, reconnecting")
 	}
 
 	return &Server{logger: logger, house: house, bridge: bridge, policy: policySvc, hub: hub, policyHub: pHub}
@@ -141,29 +140,5 @@ func redirectAfterDelete(w http.ResponseWriter, target string) {
 // handler failing), where there's nothing sensible to re-render.
 func (s *Server) httpError(w http.ResponseWriter, r *http.Request, err error) {
 	s.logger.Error("request failed", zap.String("path", r.URL.Path), zap.Error(err))
-	http.Error(w, grpcMessage(err), grpcHTTPStatus(err))
-}
-
-// grpcHTTPStatus maps a gRPC status code (as returned by HouseService/
-// BridgeService) to the closest HTTP status for display.
-func grpcHTTPStatus(err error) int {
-	switch status.Code(err) {
-	case codes.NotFound:
-		return http.StatusNotFound
-	case codes.InvalidArgument:
-		return http.StatusBadRequest
-	case codes.FailedPrecondition:
-		return http.StatusConflict
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
-// grpcMessage extracts the human-readable message from a gRPC status error,
-// falling back to err.Error() for anything else.
-func grpcMessage(err error) string {
-	if st, ok := status.FromError(err); ok {
-		return st.Message()
-	}
-	return err.Error()
+	http.Error(w, houseview.Message(err), houseview.HTTPStatus(err))
 }

@@ -1,0 +1,30 @@
+{{define "room_detail"}}<div class="box">
+  <div class="box-title">{{.Name}}</div>
+  {{template "room_props" .}}
+</div>
+<div class="box">
+  <div class="box-title title-bar">DEVICES{{if gt (len .Cameras) 1}}
+    <button class="action" onclick="this.parentElement.nextElementSibling.showModal()">[ VIEW ]</button>{{end}}</div>
+  {{if gt (len .Cameras) 1}}<dialog onclick="if (event.target === this) this.close()">
+    <div class="box-title title-bar">CAMERAS <button class="action" onclick="this.closest('dialog').close()" aria-label="Close">[ X ]</button></div>
+    <ul class="list">
+    {{range .Cameras}}<li><button class="row" hx-get="{{.ViewHref}}" hx-target="#detail" hx-swap="innerHTML">{{.Name}}</button></li>
+    {{end}}</ul>
+  </dialog>{{end}}
+  <table class="devices"><tbody>
+  {{range .Devices}}{{template "device_row" .}}
+  {{else}}<tr><td class="dim">No devices linked.</td></tr>
+  {{end}}</tbody></table>
+</div>{{end}}
+
+{{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}
+{{define "room_props"}}<div id="room-props-{{.ID}}" class="stats">{{template "room_props_cells" .}}</div>{{end}}
+
+{{define "room_props_cells"}}<div class="stat"><div class="label">Occupied</div><div class="val">{{if .Properties.Occupied}}{{.Properties.Occupied}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureC}}{{.Properties.TemperatureC}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Light</div><div class="val">{{if .Properties.LightLevelLux}}{{.Properties.LightLevelLux}}{{else}}—{{end}}</div></div>
+  <div class="stat"><div class="label">Air quality</div><div class="val">{{if .Properties.AirQualityIndex}}{{.Properties.AirQualityIndex}}{{else}}—{{end}}</div></div>
+  {{if .Properties.Co2Ppm}}<div class="stat"><div class="label">CO2</div><div class="val">{{.Properties.Co2Ppm}}</div></div>{{end}}
+  {{if .Properties.VocPpb}}<div class="stat"><div class="label">VOC</div><div class="val">{{.Properties.VocPpb}}</div></div>{{end}}
+  {{if .Properties.RadonBqM3}}<div class="stat"><div class="label">Radon</div><div class="val">{{.Properties.RadonBqM3}}</div></div>{{end}}
+  <div class="stat"><div class="label">Power</div><div class="val">{{if .Properties.PowerDrawW}}{{.Properties.PowerDrawW}}{{else}}—{{end}}</div></div>{{end}}

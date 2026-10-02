@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "webassets",
+    srcs = ["webassets.go"],
+    embedsrcs = [
+        "static/htmx-sse.js",
+        "static/htmx.min.js",
+    ],
+    importpath = "github.com/rmrobinson/house/service/lib/webassets",
+    visibility = ["//visibility:public"],
+)

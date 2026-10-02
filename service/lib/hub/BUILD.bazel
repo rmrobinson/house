@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "hub",
+    srcs = ["hub.go"],
+    importpath = "github.com/rmrobinson/house/service/lib/hub",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//service/lib/backoffutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "houseview",
+    srcs = ["houseview.go"],
+    importpath = "github.com/rmrobinson/house/service/lib/houseview",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//api/device",
+        "//api/trait",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+go_test(
+    name = "houseview_test",
+    srcs = ["houseview_test.go"],
+    embed = [":houseview"],
+    deps = [
+        "//api",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

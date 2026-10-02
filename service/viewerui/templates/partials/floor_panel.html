@@ -1,0 +1,20 @@
+{{define "floor_panel"}}<div class="box">
+  <div class="box-title">FLOORS</div>
+  <ul class="list">
+  {{$b := .BuildingID}}
+  {{range .Floors}}<li class="{{if .Active}}active{{end}}"><button class="row"{{if .Active}} aria-current="true"{{end}} hx-get="/buildings/{{$b}}/floors/{{.ID}}" hx-target="#floor-panel" hx-swap="innerHTML">{{.Name}}</button></li>
+  {{else}}<li class="pad dim">No floors.</li>
+  {{end}}</ul>
+</div>
+<div class="box" id="room-list">
+  <div class="box-title">ROOMS</div>
+  <ul class="list">
+  {{range .Rooms}}<li class="{{if .Active}}active{{end}}"><button class="row"{{if .Active}} aria-current="true"{{end}} hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML" hx-push-url="/buildings/{{$b}}?room={{.ID}}"><span id="room-dot-{{.ID}}" class="dot dot-{{.Occ}}" role="img" aria-label="{{.OccLabel}}" title="{{.OccLabel}}"></span>{{.Name}}</button></li>
+  {{else}}<li class="pad dim">No rooms.</li>
+  {{end}}</ul>
+</div>{{end}}
+
+{{/* floor_panel_select is a floor switch's response: the panel, plus an
+out-of-band swap of the detail pane to the floor's first room. */}}
+{{define "floor_panel_select"}}{{template "floor_panel" .Panel}}
+<div id="detail" class="col-detail" hx-swap-oob="innerHTML">{{if .Room}}{{template "room_detail" .Room}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}</div>{{end}}
