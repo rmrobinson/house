@@ -52,6 +52,7 @@ var pages = map[string]*template.Template{
 var fragments = map[string]*template.Template{
 	"device_picker":   template.Must(template.ParseFS(templatesFS, "templates/partials/device_picker.html")),
 	"room_picker":     template.Must(template.ParseFS(templatesFS, "templates/partials/room_picker.html")),
+	"device_rename":   template.Must(template.ParseFS(templatesFS, "templates/partials/device_rename.html")),
 	"device_info":     template.Must(template.ParseFS(templatesFS, "templates/partials/device_info.html")),
 	"policy_status":   template.Must(template.New("").Funcs(policyTemplateFuncs).ParseFS(templatesFS, "templates/partials/policy_status.html")),
 	"log_row":         template.Must(template.New("").Funcs(policyTemplateFuncs).ParseFS(templatesFS, "templates/partials/log_row.html")),
