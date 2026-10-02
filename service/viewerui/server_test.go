@@ -21,6 +21,7 @@ import (
 	apiDevice "github.com/rmrobinson/house/api/device"
 	apiTrait "github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 type fakeHouse struct {
@@ -41,7 +42,8 @@ func (f *fakeHouse) ListFloors(_ *api2.ListFloorsRequest, s api2.HouseService_Li
 func (f *fakeHouse) ListRooms(_ *api2.ListRoomsRequest, s api2.HouseService_ListRoomsServer) error {
 	occ := true
 	s.Send(&api2.Room{Id: "r2", Config: &api2.Room_Config{Name: "Kitchen"}, Properties: &api2.Room_Properties{Occupied: &occ}})
-	return s.Send(&api2.Room{Id: "r1", Config: &api2.Room_Config{Name: "Bath"}})
+	temp := 19.5
+	return s.Send(&api2.Room{Id: "r1", Config: &api2.Room_Config{Name: "Bath"}, Properties: &api2.Room_Properties{TemperatureC: &temp}})
 }
 func (f *fakeHouse) GetRoom(context.Context, *api2.GetRoomRequest) (*api2.Room, error) {
 	temp := 21.4
@@ -197,19 +199,32 @@ func TestBuildingPageListsFloorsInOrderAndFirstFloorRooms(t *testing.T) {
 	assert.Contains(t, body, `sse-connect="/buildings/b1/events"`)
 }
 
-func TestBuildingPageSelectsFirstRoomByDefault(t *testing.T) {
+func TestBuildingPageShowsFloorSummaryByDefault(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/buildings/b1").Body.String()
-	assert.Contains(t, body, `<li class="active"><button class="row" aria-current="true" hx-get="/rooms/r1"`, "Bath (first by name) is active")
-	assert.Contains(t, body, "21.4°C", "its detail is rendered, not a placeholder")
-	assert.NotContains(t, body, "Select a room")
+	assert.NotContains(t, body, `aria-current="true" hx-get="/rooms/`, "no room is selected")
+	assert.Contains(t, body, `id="room-props-r1"`, "each room gets a summary box")
+	assert.Contains(t, body, `id="room-sum-dot-r2" class="dot dot-yes"`, "summary dot is live-updatable")
+	assert.Contains(t, body, `id="room-props-r2"`)
+	assert.Contains(t, body, "19.5°C", "a room's readings are summarised")
+	assert.NotContains(t, body, "Air quality", "unavailable measures are hidden")
+	assert.NotContains(t, body, "Power", "unavailable measures are hidden")
 }
 
-func TestFloorFragmentAlsoSwapsDetailToFirstRoom(t *testing.T) {
+func TestFloorFragmentSwapsDetailToFloorSummary(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/buildings/b1/floors/f2").Body.String()
 	assert.Contains(t, body, `<div id="detail" class="col-detail" hx-swap-oob="innerHTML">`)
+	assert.Contains(t, body, `id="room-props-r2"`)
+	assert.NotContains(t, body, "21.4°C", "no single room's detail")
+}
+
+func TestBuildingPageWithRoomShowsThatRoom(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/buildings/b1?room=r1").Body.String()
 	assert.Contains(t, body, "21.4°C")
+	assert.Contains(t, body, "640 ppm")
+	assert.NotContains(t, body, "Air quality")
 }
 
 func TestFloorFragmentMarksActiveFloor(t *testing.T) {
@@ -298,6 +313,7 @@ func TestEventsStreamsRoomUpdateAsOOB(t *testing.T) {
 		select {
 		case got := <-done:
 			assert.Contains(t, got, `id="room-dot-r1"`)
+			assert.Contains(t, got, `id="room-sum-dot-r1"`, "floor summary's dot is refreshed too")
 			assert.Contains(t, got, "dot-yes")
 			assert.Contains(t, got, `<div hx-swap-oob="afterbegin:#event-log"><div>Bath:`, "each entry is its own block")
 			assert.Contains(t, got, "Bath:")
@@ -463,4 +479,15 @@ func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(cam())))
 	assert.Contains(t, sb.String(), `id="device-info-cam1"`)
 	assert.NotContains(t, sb.String(), "<tr", "replacing the row would drop its VIEW button")
+}
+
+func TestRoomPropsCellsWater(t *testing.T) {
+	render := func(w string) string {
+		var sb strings.Builder
+		require.NoError(t, fragments.ExecuteTemplate(&sb, "room_props_cells", roomDetailView{Properties: houseview.Properties{WaterDetected: w}}))
+		return sb.String()
+	}
+	assert.Contains(t, render("Detected"), `stat alert"><div class="label">Water</div><div class="val">Detected`)
+	assert.Contains(t, render("Dry"), `<div class="val">Dry`)
+	assert.NotContains(t, render(""), "Water", "no water sensor -> hidden")
 }

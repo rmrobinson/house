@@ -55,6 +55,7 @@ go_test(
         "//api/device",
         "//api/trait",
         "//service/lib/grpcutil",
+        "//service/lib/houseview",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
