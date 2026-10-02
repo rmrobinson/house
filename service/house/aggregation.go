@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -16,6 +17,11 @@ import (
 	"github.com/rmrobinson/house/service/house/db"
 	"github.com/rmrobinson/house/service/lib/protoreflectutil"
 )
+
+// buildingOccupiedWindow is how recently a room must have had motion (per
+// Room.Properties.occupied) for buildingOccupied to report its building as
+// occupied - see Building.State.occupied's doc comment in api/house.proto.
+const buildingOccupiedWindow = 10 * time.Minute
 
 // aggregator maintains, per room, the live Room.Properties computed from
 // that room's linked devices - see api/house.proto's AggregationConfig doc
@@ -43,19 +49,38 @@ type aggregator struct {
 	deviceState  map[string]*apiDevice.Device       // device_id -> latest known Device reading (see handleUpdate for which kinds)
 	roomConfig   map[string]*api2.AggregationConfig // room_id -> override, nil = every metric uses its default
 	roomBuilding map[string]string                  // room_id -> building_id, for StreamHouseUpdates' per-building scoping
-	properties   map[string]*api2.Room_Properties   // room_id -> last computed Properties
+	// buildingRooms is the inverse of roomBuilding (building_id -> set of
+	// room_id), kept in sync alongside it via registerRoomLocked - lets
+	// buildingOccupied/propertiesForBuilding look up a building's rooms
+	// directly instead of scanning every room in the house on every call.
+	buildingRooms map[string]map[string]bool
+	properties    map[string]*api2.Room_Properties // room_id -> last computed Properties
+	// lastMotion records, per room, the last time recomputeRoomLocked
+	// computed that room's Properties.occupied as true - the basis for
+	// buildingOccupied's "has had motion in the last
+	// buildingOccupiedWindow" contract. A room with no entry here has never
+	// had a device report occupied=true since this aggregator started (or
+	// since the room was created) - never written back to false, since the
+	// window-based decay is evaluated lazily in buildingOccupied rather than
+	// on a timer.
+	lastMotion map[string]time.Time
+	// now is overridden in tests; defaults to time.Now.
+	now func() time.Time
 }
 
 func newAggregator(logger *zap.Logger) *aggregator {
 	return &aggregator{
-		logger:       logger,
-		updates:      bridge.NewSource(logger),
-		deviceRoom:   make(map[string]string),
-		roomDevices:  make(map[string]map[string]bool),
-		deviceState:  make(map[string]*apiDevice.Device),
-		roomConfig:   make(map[string]*api2.AggregationConfig),
-		roomBuilding: make(map[string]string),
-		properties:   make(map[string]*api2.Room_Properties),
+		logger:        logger,
+		updates:       bridge.NewSource(logger),
+		deviceRoom:    make(map[string]string),
+		roomDevices:   make(map[string]map[string]bool),
+		deviceState:   make(map[string]*apiDevice.Device),
+		roomConfig:    make(map[string]*api2.AggregationConfig),
+		roomBuilding:  make(map[string]string),
+		buildingRooms: make(map[string]map[string]bool),
+		properties:    make(map[string]*api2.Room_Properties),
+		lastMotion:    make(map[string]time.Time),
+		now:           time.Now,
 	}
 }
 
@@ -78,7 +103,7 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	defer a.mu.Unlock()
 	for _, r := range rooms {
 		a.roomConfig[r.ID] = dbAggregationToAPI(r.Aggregation)
-		a.roomBuilding[r.ID] = r.BuildingID
+		a.registerRoomLocked(r.ID, r.BuildingID)
 	}
 	for _, l := range links {
 		a.linkLocked(l.ID, l.RoomID)
@@ -152,6 +177,16 @@ func (a *aggregator) setRoomAggregation(roomID string, cfg *api2.AggregationConf
 	a.publish(update)
 }
 
+// registerRoomLocked records roomID's building_id in roomBuilding and its
+// reverse index buildingRooms. Callers must hold a.mu.
+func (a *aggregator) registerRoomLocked(roomID, buildingID string) {
+	a.roomBuilding[roomID] = buildingID
+	if a.buildingRooms[buildingID] == nil {
+		a.buildingRooms[buildingID] = make(map[string]bool)
+	}
+	a.buildingRooms[buildingID][roomID] = true
+}
+
 // registerRoom records roomID's building_id. Call from Service.CreateRoom
 // once the room's id/building are known - a room's building never changes
 // after creation (see db.Room's UpdateRoom doc comment: "Room-to-floor
@@ -160,7 +195,7 @@ func (a *aggregator) setRoomAggregation(roomID string, cfg *api2.AggregationConf
 func (a *aggregator) registerRoom(roomID, buildingID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.roomBuilding[roomID] = buildingID
+	a.registerRoomLocked(roomID, buildingID)
 }
 
 // removeRoom drops all cached state for a deleted room. Call from
@@ -170,10 +205,13 @@ func (a *aggregator) registerRoom(roomID, buildingID string) {
 func (a *aggregator) removeRoom(roomID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	buildingID := a.roomBuilding[roomID]
 	delete(a.roomConfig, roomID)
 	delete(a.properties, roomID)
 	delete(a.roomDevices, roomID)
 	delete(a.roomBuilding, roomID)
+	delete(a.lastMotion, roomID)
+	delete(a.buildingRooms[buildingID], roomID)
 }
 
 // getProperties returns the cached Properties for roomID, or nil if the
@@ -202,15 +240,44 @@ func (a *aggregator) propertiesForBuilding(buildingID string) map[string]*api2.R
 	defer a.mu.Unlock()
 
 	out := make(map[string]*api2.Room_Properties)
-	for roomID, bID := range a.roomBuilding {
-		if bID != buildingID {
-			continue
-		}
+	for roomID := range a.buildingRooms[buildingID] {
 		if p := a.properties[roomID]; p != nil {
 			out[roomID] = p
 		}
 	}
 	return out
+}
+
+// buildingOccupied reports whether any room belonging to buildingID has had
+// motion (per lastMotion) within buildingOccupiedWindow of now, as *bool -
+// nil if no room belonging to buildingID has ever recorded any occupancy
+// signal at all, the same "no data yet" contract getProperties/
+// computeProperties use for Room.Properties.occupied. Once at least one room
+// in the building has ever reported occupied=true, the result is always
+// true or false, never reverting to nil - evaluated lazily against the
+// current time rather than on a timer, so a building correctly "goes
+// unoccupied" the next time anything asks, without a background goroutine.
+func (a *aggregator) buildingOccupied(buildingID string) *bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	now := a.now()
+	haveSignal := false
+	occupied := false
+	for roomID := range a.buildingRooms[buildingID] {
+		last, ok := a.lastMotion[roomID]
+		if !ok {
+			continue
+		}
+		haveSignal = true
+		if now.Sub(last) <= buildingOccupiedWindow {
+			occupied = true
+		}
+	}
+	if !haveSignal {
+		return nil
+	}
+	return &occupied
 }
 
 // aggregatingDeviceKind reports whether d has a Device.details kind set at
@@ -278,6 +345,9 @@ func (a *aggregator) recomputeRoomLocked(roomID string) *api2.RoomUpdate {
 	}
 
 	newProps := computeProperties(a.roomConfig[roomID], devices)
+	if newProps.GetOccupied() {
+		a.lastMotion[roomID] = a.now()
+	}
 	oldProps := a.properties[roomID]
 	a.properties[roomID] = newProps
 

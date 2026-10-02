@@ -85,6 +85,44 @@ func TestBuilding_CreateGetUpdateDelete(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestBuilding_AvailableModesAndSetMode(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	b, err := d.CreateBuilding(ctx, &Building{Name: "Home", AvailableModes: []string{"home", "away", "vacation"}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"home", "away", "vacation"}, b.AvailableModes)
+	assert.Empty(t, b.Mode, "mode always starts unset, regardless of what CreateBuilding was given")
+
+	updated, err := d.SetBuildingMode(ctx, b.ID, "away")
+	require.NoError(t, err)
+	assert.Equal(t, "away", updated.Mode)
+	// Config (including available_modes) and version are untouched by a mode
+	// change - it isn't guarded by Building.version.
+	assert.Equal(t, []string{"home", "away", "vacation"}, updated.AvailableModes)
+	assert.Equal(t, b.Version, updated.Version)
+
+	got, err := d.GetBuilding(ctx, b.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "away", got.Mode)
+
+	// Clearing the mode and an unknown building id both work as documented.
+	cleared, err := d.SetBuildingMode(ctx, b.ID, "")
+	require.NoError(t, err)
+	assert.Empty(t, cleared.Mode)
+
+	_, err = d.SetBuildingMode(ctx, "nope", "home")
+	assert.ErrorIs(t, err, ErrNotFound)
+
+	// UpdateBuilding replaces available_modes wholesale, like every other
+	// Config field, and never touches Mode.
+	got.AvailableModes = nil
+	replaced, err := d.UpdateBuilding(ctx, got)
+	require.NoError(t, err)
+	assert.Empty(t, replaced.AvailableModes)
+	assert.Empty(t, replaced.Mode)
+}
+
 func TestBuilding_DeleteBlockedByFloor(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()

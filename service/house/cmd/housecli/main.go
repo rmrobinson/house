@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rmrobinson/house/service/house/db"
 	"go.uber.org/zap"
@@ -22,13 +23,25 @@ var (
 	deviceID   = flag.String("device_id", "", "Device ID")
 	version    = flag.String("version", "", "Current version, required for Update* actions")
 
-	name      = flag.String("name", "", "The name to give")
-	lat       = flag.Float64("lat", 0, "The latitude")
-	lon       = flag.Float64("lon", 0, "The longitude")
-	tz        = flag.String("tz", "UTC", "The timezone")
-	roomType  = flag.Int("room_type", 0, "Which room type this is")
-	sortOrder = flag.Int("sort_order", 0, "Floor sort order")
+	name           = flag.String("name", "", "The name to give")
+	lat            = flag.Float64("lat", 0, "The latitude")
+	lon            = flag.Float64("lon", 0, "The longitude")
+	tz             = flag.String("tz", "UTC", "The timezone")
+	roomType       = flag.Int("room_type", 0, "Which room type this is")
+	sortOrder      = flag.Int("sort_order", 0, "Floor sort order")
+	availableModes = flag.String("available_modes", "", "Comma-separated modes the building accepts, e.g. home,away,vacation")
+	mode           = flag.String("mode", "", "Mode to set via SetHouseMode")
 )
+
+// splitModes parses a comma-separated --available_modes flag into a []string,
+// nil if empty - db.Building.AvailableModes' "nil/empty means no mode is
+// currently settable" contract.
+func splitModes(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
+}
 
 // optionalFlag returns nil for an unset (empty) string flag, or its value
 // otherwise - db methods that accept optional filters take *string.
@@ -82,7 +95,9 @@ func main() {
 			logger.Info("building not found")
 			return
 		}
-		logger.Info("building found", zap.String("id", building.ID), zap.String("name", building.Name), zap.String("version", building.Version))
+		logger.Info("building found",
+			zap.String("id", building.ID), zap.String("name", building.Name), zap.String("version", building.Version),
+			zap.String("mode", building.Mode), zap.Strings("available_modes", building.AvailableModes))
 
 		floors, err := buildingDB.ListFloors(ctx, *id)
 		if err != nil {
@@ -101,6 +116,7 @@ func main() {
 				Latitude:  *lat,
 				Longitude: *lon,
 			},
+			AvailableModes: splitModes(*availableModes),
 		}
 		res, err := buildingDB.CreateBuilding(ctx, building)
 		if err != nil {
@@ -118,6 +134,7 @@ func main() {
 				Latitude:  *lat,
 				Longitude: *lon,
 			},
+			AvailableModes: splitModes(*availableModes),
 		}
 		res, err := buildingDB.UpdateBuilding(ctx, building)
 		if err != nil {
@@ -130,6 +147,13 @@ func main() {
 			logger.Fatal("error deleting building", zap.Error(err))
 		}
 		logger.Info("building deleted", zap.String("id", *id))
+
+	case "SetHouseMode":
+		res, err := buildingDB.SetBuildingMode(ctx, *buildingID, *mode)
+		if err != nil {
+			logger.Fatal("error setting building mode", zap.Error(err))
+		}
+		logger.Info("building mode set", zap.String("id", res.ID), zap.String("mode", res.Mode))
 
 	case "ListFloors":
 		floors, err := buildingDB.ListFloors(ctx, *buildingID)

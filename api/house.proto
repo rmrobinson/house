@@ -91,9 +91,29 @@ message Building {
     string tz = 2;
     double lat = 3;
     double lon = 4;
+    // The values mode/SetHouseModeRequest.mode may be set to, e.g. ["home",
+    // "away", "vacation"]. CreateBuilding defaults this to that same list
+    // when left empty; UpdateBuilding replaces it wholesale like every other
+    // Config field - an empty list there means no mode is settable until
+    // reconfigured.
+    repeated string available_modes = 5;
   }
+  // State holds values not independently settable via UpdateBuilding -
+  // either computed server-side (occupied) or settable only through their
+  // own dedicated RPC (mode, via SetHouseMode), the same "Config vs.
+  // server/command-owned" split Room.Properties draws against Room.Config.
   message State {
-    // Who is present?
+    // True if any room belonging to this building has had motion (per that
+    // room's Properties.occupied - see AggregationConfig.occupancy_strategy)
+    // within the last occupied window (10 minutes, not yet configurable) -
+    // computed server-side from room aggregation, not independently
+    // settable. Unset if no room in the building has ever reported any
+    // occupancy signal at all, the same "no data yet" contract
+    // Room.Properties.occupied uses.
+    optional bool occupied = 1;
+    // The currently active mode, one of Config.available_modes, or "" if
+    // never set. Set via SetHouseMode, not UpdateBuilding.
+    string mode = 2;
     // Weather station info?
   }
 
@@ -120,6 +140,16 @@ message UpdateBuildingRequest {
 message DeleteBuildingRequest {
   string id = 1;
   string version = 2;
+}
+
+// SetHouseMode sets a building's current mode. mode must be one of the
+// building's Config.available_modes, or "" to clear it - any other value is
+// rejected. Not guarded by Building.version: mode is State, not Config, and
+// changing it doesn't race with a concurrent Config edit the way
+// UpdateBuilding's version check protects against.
+message SetHouseModeRequest {
+  string building_id = 1;
+  string mode = 2;
 }
 
 /* ----- Floor ----- */
@@ -231,6 +261,9 @@ service HouseService {
   rpc CreateBuilding(CreateBuildingRequest) returns (Building) {}
   rpc UpdateBuilding(UpdateBuildingRequest) returns (Building) {}
   rpc DeleteBuilding(DeleteBuildingRequest) returns (google.protobuf.Empty) {}
+
+  // Sets a building's current mode - see SetHouseModeRequest.
+  rpc SetHouseMode(SetHouseModeRequest) returns (Building) {}
 
   // Floor
   rpc ListFloors(ListFloorsRequest) returns (stream Floor) {}

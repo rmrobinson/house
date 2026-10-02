@@ -524,3 +524,61 @@ func TestAggregator_PropertiesForBuildingAndBuildingOf(t *testing.T) {
 	assert.Equal(t, "", a.buildingOf("room-1"))
 	assert.Empty(t, a.propertiesForBuilding("building-1"))
 }
+
+// motionUpdate builds a BridgeService Update reporting deviceID as a Sensor
+// with Presence.motion_detected = motion - the same shape
+// TestComputeProperties_DefaultsPerMetric uses to feed room occupancy.
+func motionUpdate(deviceID string, motion bool) *api2.Update {
+	return &api2.Update{
+		Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+			Device: &apiDevice.Device{
+				Id: deviceID,
+				Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+					Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: motion}},
+				}},
+			},
+		}},
+	}
+}
+
+func TestAggregator_BuildingOccupied(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	now := time.Unix(1_700_000_000, 0)
+	a.now = func() time.Time { return now }
+
+	a.registerRoom("room-1", "building-1")
+	a.registerRoom("room-2", "building-1")
+	a.setDeviceRoom("sensor-1", "room-1")
+	a.setDeviceRoom("sensor-2", "room-2")
+
+	// No room has ever reported anything - unknown, not false.
+	assert.Nil(t, a.buildingOccupied("building-1"))
+	assert.Nil(t, a.buildingOccupied("other-building"))
+
+	a.handleUpdate(motionUpdate("sensor-1", true))
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.True(t, *a.buildingOccupied("building-1"))
+
+	// Motion clears on the device, but the building stays occupied until
+	// buildingOccupiedWindow has elapsed since the last true reading.
+	a.handleUpdate(motionUpdate("sensor-1", false))
+	now = now.Add(buildingOccupiedWindow - time.Second)
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.True(t, *a.buildingOccupied("building-1"))
+
+	// Once the window has fully elapsed with no further motion, it's known
+	// false, not nil - a signal has been seen, just not recently.
+	now = now.Add(2 * time.Second)
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.False(t, *a.buildingOccupied("building-1"))
+
+	// A second room reporting motion re-occupies the whole building.
+	a.handleUpdate(motionUpdate("sensor-2", true))
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.True(t, *a.buildingOccupied("building-1"))
+
+	// Removing every room that ever reported motion goes back to unknown.
+	a.removeRoom("room-1")
+	a.removeRoom("room-2")
+	assert.Nil(t, a.buildingOccupied("building-1"))
+}

@@ -450,3 +450,88 @@ func TestLinkDevice_VersionMismatchIsFailedPrecondition(t *testing.T) {
 	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "device-1", RoomId: roomB.Id, Version: resp.Link.Version})
 	require.NoError(t, err)
 }
+
+func TestCreateBuilding_DefaultsAvailableModes(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	b, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Home"}})
+	require.NoError(t, err)
+	assert.Equal(t, defaultAvailableModes, b.Config.AvailableModes)
+	assert.Empty(t, b.State.Mode)
+	assert.Nil(t, b.State.Occupied, "no room has reported any occupancy signal yet")
+
+	// An explicit list overrides the default.
+	custom, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{
+		Config: &api2.Building_Config{Name: "Cabin", AvailableModes: []string{"open", "closed"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"open", "closed"}, custom.Config.AvailableModes)
+}
+
+func TestSetHouseMode(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	b, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Home"}})
+	require.NoError(t, err)
+
+	updated, err := s.SetHouseMode(ctx, &api2.SetHouseModeRequest{BuildingId: b.Id, Mode: "away"})
+	require.NoError(t, err)
+	assert.Equal(t, "away", updated.State.Mode)
+
+	got, err := s.GetBuilding(ctx, &api2.GetBuildingRequest{Id: b.Id})
+	require.NoError(t, err)
+	assert.Equal(t, "away", got.State.Mode)
+
+	// A mode outside available_modes is rejected.
+	_, err = s.SetHouseMode(ctx, &api2.SetHouseModeRequest{BuildingId: b.Id, Mode: "bogus"})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
+
+	// Clearing is always allowed, regardless of available_modes.
+	cleared, err := s.SetHouseMode(ctx, &api2.SetHouseModeRequest{BuildingId: b.Id, Mode: ""})
+	require.NoError(t, err)
+	assert.Empty(t, cleared.State.Mode)
+
+	_, err = s.SetHouseMode(ctx, &api2.SetHouseModeRequest{BuildingId: "does-not-exist", Mode: "home"})
+	require.Error(t, err)
+	st, ok = status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.NotFound, st.Code())
+}
+
+// TestGetBuilding_OccupiedReflectsRoomMotion covers the house.Service wiring
+// from a linked room's Presence motion to Building.State.occupied - the
+// decay/window behaviour itself is covered at the aggregator level by
+// TestAggregator_BuildingOccupied.
+func TestGetBuilding_OccupiedReflectsRoomMotion(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	room := createTestRoom(t, s)
+
+	before, err := s.GetBuilding(ctx, &api2.GetBuildingRequest{Id: room.BuildingId})
+	require.NoError(t, err)
+	assert.Nil(t, before.State.Occupied)
+
+	_, err = s.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: "sensor-1", RoomId: room.Id})
+	require.NoError(t, err)
+	s.agg.handleUpdate(&api2.Update{
+		Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+			Device: &apiDevice.Device{
+				Id: "sensor-1",
+				Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+					Presence: &apiTrait.Presence{State: &apiTrait.Presence_State{MotionDetected: true}},
+				}},
+			},
+		}},
+	})
+
+	after, err := s.GetBuilding(ctx, &api2.GetBuildingRequest{Id: room.BuildingId})
+	require.NoError(t, err)
+	require.NotNil(t, after.State.Occupied)
+	assert.True(t, *after.State.Occupied)
+}
