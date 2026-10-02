@@ -13,19 +13,13 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
-	"github.com/rmrobinson/house/service/lib/backoffutil"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/policy"
-)
-
-const (
-	minBackoff = time.Second
-	maxBackoff = 30 * time.Second
 )
 
 // rpcTimeout bounds the SetHouseMode RPC a policy script's SetHouseState
@@ -51,13 +45,7 @@ type Adapter struct {
 	logger     *zap.Logger
 	client     api2.HouseServiceClient
 	buildingID string
-
-	// backoff is nanoseconds, reset to minBackoff once the stream has
-	// actually delivered a message (see streamOnce) so a brief blip after a
-	// long stable connection doesn't pay for backoff accumulated by earlier,
-	// unrelated failures - the same convention bridgeconn.Conn uses for
-	// BridgeService.StreamUpdates.
-	backoff atomic.Int64
+	backoff    *bridgeconn.Backoff
 
 	mu       sync.Mutex
 	ctx      context.Context
@@ -70,14 +58,13 @@ type Adapter struct {
 // New creates an Adapter answering for buildingID over client, wrapping home
 // for every other HomeAPI call. It does nothing until Start is called.
 func New(logger *zap.Logger, client api2.HouseServiceClient, buildingID string, home policy.HomeAPI) *Adapter {
-	a := &Adapter{
+	return &Adapter{
 		HomeAPI:    home,
 		logger:     logger,
 		client:     client,
 		buildingID: buildingID,
+		backoff:    bridgeconn.NewBackoff(),
 	}
-	a.backoff.Store(int64(minBackoff))
-	return a
 }
 
 // Start records engine (for Bus access) and ctx (bounding every RPC Adapter
@@ -93,32 +80,16 @@ func (a *Adapter) Start(ctx context.Context, engine *policy.Engine) {
 	a.engine = engine
 	a.mu.Unlock()
 
-	go a.run(ctx)
-}
-
-// run subscribes to StreamHouseUpdates until ctx is done, reconnecting with
-// jittered exponential backoff whenever the stream drops.
-func (a *Adapter) run(ctx context.Context) {
-	for ctx.Err() == nil {
-		if err := a.streamOnce(ctx); err != nil && ctx.Err() == nil {
-			a.logger.Warn("housestate: stream ended, will retry",
-				zap.String("building_id", a.buildingID), zap.Error(err))
-		}
-
-		backoff := time.Duration(a.backoff.Load())
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(backoffutil.Jitter(backoff)):
-		}
-		a.backoff.Store(int64(min(backoff*2, maxBackoff)))
-	}
+	go bridgeconn.Retry(ctx, a.backoff, func(err error) {
+		a.logger.Warn("housestate: stream ended, will retry",
+			zap.String("building_id", a.buildingID), zap.Error(err))
+	}, a.streamOnce)
 }
 
 // streamOnce subscribes to StreamHouseUpdates for buildingID and applies
 // every BuildingUpdate it carries (ignoring RoomUpdate ones) until the
 // stream ends or errors.
-func (a *Adapter) streamOnce(ctx context.Context) error {
+func (a *Adapter) streamOnce(ctx context.Context, backoff *bridgeconn.Backoff) error {
 	stream, err := a.client.StreamHouseUpdates(ctx, &api2.StreamHouseUpdatesRequest{BuildingId: a.buildingID})
 	if err != nil {
 		return fmt.Errorf("stream house updates: %w", err)
@@ -136,7 +107,7 @@ func (a *Adapter) streamOnce(ctx context.Context) error {
 			// actually been received from it, the same reasoning
 			// bridgeconn.Conn.connectOnce documents for resetting here
 			// rather than right after the StreamHouseUpdates call.
-			a.backoff.Store(int64(minBackoff))
+			backoff.Reset()
 			first = false
 		}
 

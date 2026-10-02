@@ -734,3 +734,40 @@ func TestAggregator_UnrelatedUpdateDoesNotRearmDecayTimer(t *testing.T) {
 	default:
 	}
 }
+
+// TestAggregator_StaleDecayTimerDoesNotOrphanNewOne guards against a real
+// race caught in review: if a decay timer fires at (almost) the same moment
+// a fresh motion event re-arms it, t.Stop() on the already-fired timer is a
+// no-op, so armDecayTimerLocked's new timer replaces the map entry while the
+// stale one is still about to run its callback. That callback must not then
+// delete the entry unconditionally - doing so orphans the still-pending new
+// timer, leaving it untracked and un-cancelable by any later arm.
+func TestAggregator_StaleDecayTimerDoesNotOrphanNewOne(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+
+	var fired []func()
+	a.afterFunc = func(d time.Duration, f func()) *time.Timer {
+		fired = append(fired, f)
+		// A real (but never-firing-in-this-test) *time.Timer, so
+		// armDecayTimerLocked's t.Stop() on the first one has a non-nil
+		// receiver to call, same as production - the callback it would have
+		// run is instead invoked manually below, standing in for the race
+		// where Stop() fails to prevent it (it already fired).
+		return time.AfterFunc(time.Hour, func() {})
+	}
+
+	a.mu.Lock()
+	a.armDecayTimerLocked("building-1")
+	a.armDecayTimerLocked("building-1")
+	a.mu.Unlock()
+	require.Len(t, fired, 2)
+
+	// Run the stale (first) timer's callback, as a real race would once
+	// Stop() failed to prevent it from firing.
+	fired[0]()
+
+	a.mu.Lock()
+	_, stillTracked := a.decayTimers["building-1"]
+	a.mu.Unlock()
+	assert.True(t, stillTracked, "the second (current) timer's entry must survive the stale first timer firing")
+}

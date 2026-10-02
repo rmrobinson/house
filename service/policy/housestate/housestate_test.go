@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
 )
@@ -300,7 +301,7 @@ func TestAdapterHoldsLastKnownStateWhenReconnectFails(t *testing.T) {
 	srv.drop <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		return time.Duration(a.backoff.Load()) > minBackoff
+		return a.backoff.Current() > bridgeconn.MinBackoff
 	}, 5*time.Second, 20*time.Millisecond, "a failed reconnect should grow the backoff past the minimum")
 
 	occupied, err := a.GetHouseState("occupied")

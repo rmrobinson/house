@@ -88,6 +88,13 @@ type aggregator struct {
 	// timer (see armDecayTimerLocked) - keyed so a fresh motion event can
 	// replace a still-pending one instead of leaving two races in flight.
 	decayTimers map[string]*time.Timer
+	// decayGen counts how many times armDecayTimerLocked has (re)armed each
+	// building's timer. A fired callback only deletes its building's
+	// decayTimers entry if decayGen still matches the value it captured when
+	// armed - otherwise a newer timer has already replaced it (this one lost
+	// the race between firing and being Stop()'d), and deleting unconditionally
+	// would orphan that newer timer, leaving it untracked and un-cancelable.
+	decayGen map[string]uint64
 	// now is overridden in tests; defaults to time.Now.
 	now func() time.Time
 	// afterFunc schedules a decay recheck like time.AfterFunc; overridden in
@@ -110,6 +117,7 @@ func newAggregator(logger *zap.Logger) *aggregator {
 		buildingMode:              make(map[string]string),
 		buildingOccupiedPublished: make(map[string]*bool),
 		decayTimers:               make(map[string]*time.Timer),
+		decayGen:                  make(map[string]uint64),
 		now:                       time.Now,
 		afterFunc:                 time.AfterFunc,
 	}
@@ -367,9 +375,15 @@ func (a *aggregator) armDecayTimerLocked(buildingID string) {
 	if t, ok := a.decayTimers[buildingID]; ok {
 		t.Stop()
 	}
+
+	a.decayGen[buildingID]++
+	gen := a.decayGen[buildingID]
+
 	a.decayTimers[buildingID] = a.afterFunc(buildingOccupiedWindow, func() {
 		a.mu.Lock()
-		delete(a.decayTimers, buildingID)
+		if a.decayGen[buildingID] == gen {
+			delete(a.decayTimers, buildingID)
+		}
 		update := a.refreshBuildingOccupiedLocked(buildingID)
 		a.mu.Unlock()
 		a.publishBuilding(update)
