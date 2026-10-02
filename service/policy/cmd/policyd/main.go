@@ -23,8 +23,8 @@
 //
 // The same --house-addr/--building-id connection also backs GetHouseState's
 // "occupied"/"mode" keys and SetHouseState's "mode" key (see
-// housestate.Adapter): Building.State has no update stream yet, so the
-// adapter polls GetBuilding on an interval instead, which is what drives the
+// housestate.Adapter): the adapter subscribes to HouseService.
+// StreamHouseUpdates for live Building.State, which is what drives the
 // "sys.occupied" condition type and the "sys.occupancy" default policy built
 // on it. Left unconfigured (no --house-addr), both keys stay
 // policy.ErrNotImplemented, same as any other HomeAPI method bridgehome/the
@@ -164,9 +164,10 @@ func main() {
 		}
 
 		// Kept open for the process lifetime (not closed after the location
-		// fetch below): houseStateAdapter polls this same connection for
-		// Building.State ("occupied"/"mode") and calls SetHouseMode on it for
-		// the whole time policyd runs, unlike the one-shot location fetch.
+		// fetch below): houseStateAdapter subscribes on this same connection
+		// for Building.State ("occupied"/"mode") and calls SetHouseMode on it
+		// for the whole time policyd runs, unlike the one-shot location
+		// fetch.
 		houseConn, err := grpcutil.Dial(*houseAddr, tlsCfg)
 		if err != nil {
 			logger.Fatal("unable to dial house service", zap.String("address", *houseAddr), zap.Error(err))

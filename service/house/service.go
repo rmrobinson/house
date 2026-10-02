@@ -179,6 +179,7 @@ func (s *Service) SetHouseMode(ctx context.Context, req *api2.SetHouseModeReques
 		s.logger.Error("unable to set building mode", zap.String("building_id", req.GetBuildingId()), zap.Error(err))
 		return nil, mapDBErr(err, "building")
 	}
+	s.agg.setBuildingMode(req.GetBuildingId(), res.Mode)
 
 	return s.buildingToAPI(*res), nil
 }
@@ -404,15 +405,26 @@ func (s *Service) ListDeviceLinks(req *api2.ListDeviceLinksRequest, stream api2.
 	return nil
 }
 
-/* ----- Room/floor-level update stream ----- */
+/* ----- House-level update stream ----- */
+
+// houseUpdateBuildingID returns the building_id a HouseUpdate is scoped to,
+// whichever branch of its oneof is set: a RoomUpdate via
+// aggregator.buildingOf, a BuildingUpdate directly from its own field.
+func (s *Service) houseUpdateBuildingID(u *api2.HouseUpdate) string {
+	if room := u.GetRoom(); room != nil {
+		return s.agg.buildingOf(room.GetRoomId())
+	}
+	return u.GetBuilding().GetBuildingId()
+}
 
 // StreamHouseUpdates reports every change to a computed Room.Properties for
-// a room in req.BuildingId, starting with one RoomUpdate per such room that
-// already has a known value (see aggregator.propertiesForBuilding), then
-// live updates as they happen - mirroring the INITIAL-snapshot-then-live
-// shape of BridgeService.StreamUpdates (service/bridge/facade.Facade.
-// StreamUpdates), just scoped to one building and to aggregated Properties
-// instead of raw device state.
+// a room in req.BuildingId, and every change to the building's own
+// Building.State, starting with one RoomUpdate per room that already has a
+// known value (see aggregator.propertiesForBuilding) and one BuildingUpdate
+// for the building's current State, then live updates as they happen -
+// mirroring the INITIAL-snapshot-then-live shape of BridgeService.
+// StreamUpdates (service/bridge/facade.Facade.StreamUpdates), just scoped to
+// one building and to server-computed state instead of raw device state.
 func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream api2.HouseService_StreamHouseUpdatesServer) error {
 	buildingID := req.GetBuildingId()
 	if len(buildingID) < 1 {
@@ -431,17 +443,33 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 	// burst of updates for other buildings fill this client's buffer and
 	// crowd out updates for the one building it actually asked for.
 	sink := s.agg.updates.NewFilteredSink(func(msg proto.Message) bool {
-		update, ok := msg.(*api2.RoomUpdate)
+		update, ok := msg.(*api2.HouseUpdate)
 		if !ok {
 			// Let bridge.Pump's own type-assert guard produce the real error.
 			return true
 		}
-		return s.agg.buildingOf(update.GetRoomId()) == buildingID
+		return s.houseUpdateBuildingID(update) == buildingID
 	})
 	defer sink.Close()
 
+	building, err := s.db.GetBuilding(stream.Context(), buildingID)
+	if err != nil {
+		s.logger.Error("unable to get building", zap.String("building_id", buildingID), zap.Error(err))
+		return status.Error(codes.Internal, "unable to get building")
+	} else if building == nil {
+		return status.Error(codes.NotFound, "building doesn't exist")
+	}
+	buildingUpdate := &api2.HouseUpdate{Update: &api2.HouseUpdate_Building{Building: &api2.BuildingUpdate{
+		BuildingId: buildingID,
+		State:      s.buildingToAPI(*building).GetState(),
+	}}}
+	if err := stream.Send(buildingUpdate); err != nil {
+		return err
+	}
+
 	for roomID, props := range s.agg.propertiesForBuilding(buildingID) {
-		if err := stream.Send(&api2.RoomUpdate{RoomId: roomID, Properties: props}); err != nil {
+		roomUpdate := &api2.HouseUpdate{Update: &api2.HouseUpdate_Room{Room: &api2.RoomUpdate{RoomId: roomID, Properties: props}}}
+		if err := stream.Send(roomUpdate); err != nil {
 			return err
 		}
 	}
@@ -451,7 +479,7 @@ func (s *Service) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream
 	// (bridge.ErrStreamFellBehind) - the client should reconnect for a
 	// fresh initial snapshot, same as BridgeService.StreamUpdates
 	// (facade.go, api.go).
-	return bridge.Pump(stream.Context(), sink, func(update *api2.RoomUpdate) error {
+	return bridge.Pump(stream.Context(), sink, func(update *api2.HouseUpdate) error {
 		if err := stream.Send(update); err != nil {
 			s.logger.Error("unable to send house update", zap.Error(err))
 			return err

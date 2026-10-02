@@ -107,19 +107,40 @@ func createTestRoom(t *testing.T, s *Service) *api2.Room {
 type fakeStreamHouseUpdatesServer struct {
 	grpc.ServerStream
 	ctx  context.Context
-	sent chan *api2.RoomUpdate
+	sent chan *api2.HouseUpdate
 }
 
 func (s *fakeStreamHouseUpdatesServer) Context() context.Context { return s.ctx }
 
-func (s *fakeStreamHouseUpdatesServer) Send(u *api2.RoomUpdate) error {
+func (s *fakeStreamHouseUpdatesServer) Send(u *api2.HouseUpdate) error {
 	s.sent <- u
 	return nil
 }
 
+// recvRoomUpdate reads from sent until a RoomUpdate-branch HouseUpdate
+// arrives (discarding any BuildingUpdate-branch ones along the way - every
+// StreamHouseUpdates subscription gets exactly one of those as part of its
+// initial snapshot, and potentially more as occupied changes) or timeout
+// elapses.
+func recvRoomUpdate(t *testing.T, sent chan *api2.HouseUpdate, timeout time.Duration) *api2.RoomUpdate {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case u := <-sent:
+			if room := u.GetRoom(); room != nil {
+				return room
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for a RoomUpdate")
+			return nil
+		}
+	}
+}
+
 func TestStreamHouseUpdates_RequiresBuildingID(t *testing.T) {
 	s := newTestService(t, nil)
-	err := s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{}, &fakeStreamHouseUpdatesServer{ctx: context.Background(), sent: make(chan *api2.RoomUpdate, 1)})
+	err := s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{}, &fakeStreamHouseUpdatesServer{ctx: context.Background(), sent: make(chan *api2.HouseUpdate, 1)})
 	require.Error(t, err)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
@@ -164,7 +185,7 @@ func TestStreamHouseUpdates_SnapshotThenLiveUpdatesFilteredByBuilding(t *testing
 
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.RoomUpdate, 10)}
+	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.HouseUpdate, 10)}
 
 	done := make(chan error, 1)
 	go func() {
@@ -173,20 +194,23 @@ func TestStreamHouseUpdates_SnapshotThenLiveUpdatesFilteredByBuilding(t *testing
 
 	select {
 	case u := <-fake.sent:
-		assert.Equal(t, room.Id, u.RoomId, "initial snapshot must only cover room's own building")
+		building := u.GetBuilding()
+		require.NotNil(t, building, "first message must be the building-state snapshot")
+		assert.Equal(t, room.BuildingId, building.GetBuildingId())
+		require.NotNil(t, building.GetState().Occupied)
+		assert.True(t, building.GetState().GetOccupied(), "sensor-1's motion before the stream started must already be reflected")
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for initial snapshot")
+		t.Fatal("timed out waiting for building-state snapshot")
 	}
 
+	room1Update := recvRoomUpdate(t, fake.sent, 2*time.Second)
+	assert.Equal(t, room.Id, room1Update.RoomId, "room snapshot must only cover room's own building")
+
 	sendMotion("sensor-1", false)
-	select {
-	case u := <-fake.sent:
-		assert.Equal(t, room.Id, u.RoomId)
-		require.NotNil(t, u.Properties.Occupied)
-		assert.False(t, u.Properties.GetOccupied())
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for live update")
-	}
+	liveUpdate := recvRoomUpdate(t, fake.sent, 2*time.Second)
+	assert.Equal(t, room.Id, liveUpdate.RoomId)
+	require.NotNil(t, liveUpdate.Properties.Occupied)
+	assert.False(t, liveUpdate.Properties.GetOccupied())
 
 	// A change in the other building's room never reaches this stream.
 	sendMotion("sensor-2", false)
@@ -248,16 +272,17 @@ func TestStreamHouseUpdates_OtherBuildingBurstDoesNotStarveBuffer(t *testing.T) 
 	defer cancel()
 	// Buffered large enough that the test's own reader never blocks Send -
 	// this test is about the sink's internal 10-slot buffer, not this one.
-	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.RoomUpdate, 100)}
+	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.HouseUpdate, 100)}
 
 	done := make(chan error, 1)
 	go func() {
 		done <- s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{BuildingId: room.BuildingId}, fake)
 	}()
 
-	// Let StreamHouseUpdates subscribe and drain its (empty) initial
-	// snapshot before flooding, so the burst below lands on the live-update
-	// path, not the snapshot.
+	// Let StreamHouseUpdates subscribe and drain its initial snapshot
+	// (a building-state message, plus no room ones - no Properties have been
+	// computed yet) before flooding, so the burst below lands on the
+	// live-update path, not the snapshot.
 	time.Sleep(50 * time.Millisecond)
 
 	// Flood well past the sink's fixed buffer size (10) with updates for
@@ -270,12 +295,8 @@ func TestStreamHouseUpdates_OtherBuildingBurstDoesNotStarveBuffer(t *testing.T) 
 	// room's own update must still arrive, not have been evicted by the
 	// flood above.
 	sendMotion("sensor-1", true)
-	select {
-	case u := <-fake.sent:
-		assert.Equal(t, room.Id, u.RoomId, "room's update must survive a burst of another building's updates")
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for room's update - it was likely starved out of the sink's buffer")
-	}
+	roomUpdate := recvRoomUpdate(t, fake.sent, 2*time.Second)
+	assert.Equal(t, room.Id, roomUpdate.RoomId, "room's update must survive a burst of another building's updates")
 
 	cancel()
 	select {

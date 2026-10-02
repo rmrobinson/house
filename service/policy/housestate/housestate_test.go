@@ -22,23 +22,21 @@ import (
 const testBuildingID = "b1"
 
 // fakeHouseServer is a real (network-served) HouseService standing in for
-// service/house, implementing just the two RPCs Adapter calls.
+// service/house, implementing just the two RPCs Adapter calls:
+// StreamHouseUpdates and SetHouseMode.
 type fakeHouseServer struct {
 	api2.UnimplementedHouseServiceServer
 
-	mu       sync.Mutex
-	building *api2.Building
-	getErr   error
-	setErr   error
+	mu        sync.Mutex
+	building  *api2.Building
+	setErr    error
+	streamErr error // if set, the next StreamHouseUpdates call fails immediately with this, simulating a reconnect that can't re-establish
+
+	drop chan struct{} // sent to by a test to end the current StreamHouseUpdates call, simulating a dropped connection
 }
 
-func (s *fakeHouseServer) GetBuilding(ctx context.Context, req *api2.GetBuildingRequest) (*api2.Building, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.getErr != nil {
-		return nil, s.getErr
-	}
-	return s.building, nil
+func newFakeHouseServer() *fakeHouseServer {
+	return &fakeHouseServer{drop: make(chan struct{}, 1)}
 }
 
 func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseModeRequest) (*api2.Building, error) {
@@ -49,6 +47,34 @@ func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseMo
 	}
 	s.building.State.Mode = req.GetMode()
 	return s.building, nil
+}
+
+// StreamHouseUpdates sends one BuildingUpdate for the current building
+// state, then blocks until the client disconnects or a test forces a drop
+// (see Adapter's reconnect-on-failure tests).
+func (s *fakeHouseServer) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream api2.HouseService_StreamHouseUpdatesServer) error {
+	s.mu.Lock()
+	err := s.streamErr
+	building := s.building
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+
+	update := &api2.HouseUpdate{Update: &api2.HouseUpdate_Building{Building: &api2.BuildingUpdate{
+		BuildingId: req.GetBuildingId(),
+		State:      building.GetState(),
+	}}}
+	if err := stream.Send(update); err != nil {
+		return err
+	}
+
+	select {
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	case <-s.drop:
+		return status.Error(codes.Unavailable, "dropped")
+	}
 }
 
 func (s *fakeHouseServer) setBuilding(b *api2.Building) {
@@ -118,13 +144,13 @@ func occupiedBuilding(occupied bool, mode string) *api2.Building {
 	}
 }
 
-func TestAdapterPollsAndCachesOccupiedAndMode(t *testing.T) {
-	srv := &fakeHouseServer{}
+func TestAdapterSubscribesAndCachesOccupiedAndMode(t *testing.T) {
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(true, "home"))
 	addr := startFakeHouseServer(t, srv)
 
 	home := newFakeHomeAPI()
-	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home, WithPollInterval(10*time.Millisecond))
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home)
 
 	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
@@ -133,9 +159,10 @@ func TestAdapterPollsAndCachesOccupiedAndMode(t *testing.T) {
 	defer cancel()
 	a.Start(ctx, engine)
 
-	occupied, err := a.GetHouseState("occupied")
-	require.NoError(t, err)
-	assert.Equal(t, true, occupied)
+	require.Eventually(t, func() bool {
+		occupied, err := a.GetHouseState("occupied")
+		return err == nil && occupied == true
+	}, 2*time.Second, 10*time.Millisecond, "occupied should be cached from the stream's initial BuildingUpdate")
 
 	mode, err := a.GetHouseState("mode")
 	require.NoError(t, err)
@@ -143,7 +170,7 @@ func TestAdapterPollsAndCachesOccupiedAndMode(t *testing.T) {
 }
 
 func TestAdapterGetHouseStateDelegatesUnknownKeys(t *testing.T) {
-	srv := &fakeHouseServer{}
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, ""))
 	addr := startFakeHouseServer(t, srv)
 
@@ -164,7 +191,7 @@ func TestAdapterGetHouseStateDelegatesUnknownKeys(t *testing.T) {
 }
 
 func TestAdapterSetHouseStateModeCallsSetHouseMode(t *testing.T) {
-	srv := &fakeHouseServer{}
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, "away"))
 	addr := startFakeHouseServer(t, srv)
 
@@ -185,7 +212,7 @@ func TestAdapterSetHouseStateModeCallsSetHouseMode(t *testing.T) {
 }
 
 func TestAdapterSetHouseStateRejectsNonStringMode(t *testing.T) {
-	srv := &fakeHouseServer{}
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, "away"))
 	addr := startFakeHouseServer(t, srv)
 
@@ -218,13 +245,13 @@ func TestAdapterGetHouseStateBeforeStartReturnsErrNotReady(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotReady)
 }
 
-func TestAdapterPublishesHouseStateChangedOnPoll(t *testing.T) {
-	srv := &fakeHouseServer{}
+func TestAdapterPublishesHouseStateChangedOnStreamUpdate(t *testing.T) {
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, ""))
 	addr := startFakeHouseServer(t, srv)
 
 	home := newFakeHomeAPI()
-	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home, WithPollInterval(10*time.Millisecond))
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home)
 	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -241,13 +268,19 @@ func TestAdapterPublishesHouseStateChangedOnPoll(t *testing.T) {
 	}
 }
 
-func TestAdapterPollFailureHoldsLastKnownState(t *testing.T) {
-	srv := &fakeHouseServer{}
+// TestAdapterHoldsLastKnownStateWhenReconnectFails covers the case
+// poll-based housestate used to handle via a failed GetBuilding: the stream
+// itself can drop (network blip, server restart) and the subsequent
+// reconnect attempt can keep failing - Adapter must keep answering
+// GetHouseState with the last state it actually saw instead of ErrNotReady
+// or a zero value while it retries in the background.
+func TestAdapterHoldsLastKnownStateWhenReconnectFails(t *testing.T) {
+	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(true, "home"))
 	addr := startFakeHouseServer(t, srv)
 
 	home := newFakeHomeAPI()
-	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home, WithPollInterval(10*time.Millisecond))
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home)
 	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
 	defer engine.Close()
 
@@ -255,11 +288,20 @@ func TestAdapterPollFailureHoldsLastKnownState(t *testing.T) {
 	defer cancel()
 	a.Start(ctx, engine)
 
-	srv.mu.Lock()
-	srv.getErr = status.Error(codes.Unavailable, "down")
-	srv.mu.Unlock()
+	require.Eventually(t, func() bool {
+		occupied, err := a.GetHouseState("occupied")
+		return err == nil && occupied == true
+	}, 2*time.Second, 10*time.Millisecond)
 
-	time.Sleep(50 * time.Millisecond)
+	// Make the next reconnect attempt fail, then drop the current stream.
+	srv.mu.Lock()
+	srv.streamErr = status.Error(codes.Unavailable, "down")
+	srv.mu.Unlock()
+	srv.drop <- struct{}{}
+
+	require.Eventually(t, func() bool {
+		return time.Duration(a.backoff.Load()) > minBackoff
+	}, 5*time.Second, 20*time.Millisecond, "a failed reconnect should grow the backoff past the minimum")
 
 	occupied, err := a.GetHouseState("occupied")
 	require.NoError(t, err)

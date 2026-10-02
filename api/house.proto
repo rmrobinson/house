@@ -237,11 +237,13 @@ message ListDeviceLinksRequest {
   optional string device_id = 3;
 }
 
-/* ----- Room/floor-level update stream -----
+/* ----- House-level update stream -----
  * Distinct from BridgeService.StreamUpdates (raw, per-device): this reports
- * only the synthetic/aggregated Room.Properties computed server-side (see
- * AggregationConfig) whenever they change for a room in the requested
- * building. A client wanting both subscribes to each separately. */
+ * only server-computed state for the requested building - the synthetic/
+ * aggregated Room.Properties (see AggregationConfig) for each of its rooms,
+ * and the building's own Building.State - whenever either changes. A client
+ * wanting raw per-device state too subscribes to BridgeService.StreamUpdates
+ * separately. */
 message StreamHouseUpdatesRequest {
   string building_id = 1;
 }
@@ -252,6 +254,23 @@ message RoomUpdate {
   // just what changed, so a client can always replace its cached
   // Properties for room_id wholesale rather than merge.
   Room.Properties properties = 2;
+}
+// BuildingUpdate reports building_id's current State whenever it changes -
+// either occupied (see Building.State.occupied's doc comment) or mode (set
+// via SetHouseMode). Always the building's full current State, the same
+// "wholesale, not a partial diff" contract RoomUpdate.properties follows.
+message BuildingUpdate {
+  string building_id = 1;
+  Building.State state = 2;
+}
+// HouseUpdate is StreamHouseUpdates' message type: a change to either one
+// room's Properties or the building's own State, both scoped to the
+// request's building_id.
+message HouseUpdate {
+  oneof update {
+    RoomUpdate room = 1;
+    BuildingUpdate building = 2;
+  }
 }
 
 service HouseService {
@@ -285,6 +304,6 @@ service HouseService {
   rpc UnlinkDevice(UnlinkDeviceRequest) returns (google.protobuf.Empty) {}
   rpc ListDeviceLinks(ListDeviceLinksRequest) returns (stream DeviceRoomLink) {}
 
-  // Room/floor-level update stream - see StreamHouseUpdatesRequest.
-  rpc StreamHouseUpdates(StreamHouseUpdatesRequest) returns (stream RoomUpdate) {}
+  // House-level update stream - see StreamHouseUpdatesRequest.
+  rpc StreamHouseUpdates(StreamHouseUpdatesRequest) returns (stream HouseUpdate) {}
 }

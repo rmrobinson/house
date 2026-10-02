@@ -1,11 +1,10 @@
 // Package housestate implements policy.HomeAPI's "occupied"/"mode"
 // GetHouseState/SetHouseState keys against a live HouseService connection.
-// HouseService has no Building-level update stream yet (StreamHouseUpdates
-// only reports per-room Properties - see api/house.proto), so Adapter polls
-// GetBuilding on an interval instead of subscribing to a stream the way
-// bridgehome does for device state, caching the result and publishing
-// policy.HouseStateChangedTopic on the engine's Bus whenever it polls so the
-// "sys.occupied" condition type (and any other condition built on
+// Adapter subscribes to HouseService.StreamHouseUpdates for buildingID,
+// caching its BuildingUpdate branch's State (ignoring the RoomUpdate branch
+// entirely - that's not this package's concern) and publishing
+// policy.HouseStateChangedTopic on the engine's Bus whenever one arrives, so
+// the "sys.occupied" condition type (and any other condition built on
 // GetHouseState) can react without polling itself.
 package housestate
 
@@ -14,49 +13,51 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/backoffutil"
 	"github.com/rmrobinson/house/service/policy"
 )
 
-// defaultPollInterval is how often Adapter polls GetBuilding, absent
-// WithPollInterval.
-const defaultPollInterval = 10 * time.Second
+const (
+	minBackoff = time.Second
+	maxBackoff = 30 * time.Second
+)
 
-// rpcTimeout bounds each individual GetBuilding/SetHouseMode RPC, the same
-// role bridgehome.commandTimeout plays for ExecuteCommand: without a
-// deadline a wedged house service would hang the poll loop, or a calling
-// policy script's SetHouseState call, forever.
+// rpcTimeout bounds the SetHouseMode RPC a policy script's SetHouseState
+// call issues - without a deadline a wedged house service would hang it
+// forever. The long-lived StreamHouseUpdates call itself is bounded by ctx
+// (Start's, cancelled for the engine's own lifetime), not this.
 const rpcTimeout = 10 * time.Second
 
 // ErrNotReady is returned by GetHouseState for "occupied"/"mode" before the
-// first poll has completed, and by SetHouseState("mode", ...) before Start
-// has been called at all. Every other GetHouseState/SetHouseState key is
-// delegated to the wrapped HomeAPI regardless of readiness.
+// stream's first BuildingUpdate has arrived, and by SetHouseState("mode",
+// ...) before Start has been called at all. Every other
+// GetHouseState/SetHouseState key is delegated to the wrapped HomeAPI
+// regardless of readiness.
 var ErrNotReady = errors.New("housestate: adapter not started")
 
-// Option configures optional Adapter behaviour at construction time.
-type Option func(*Adapter)
-
-// WithPollInterval overrides defaultPollInterval.
-func WithPollInterval(d time.Duration) Option {
-	return func(a *Adapter) { a.pollInterval = d }
-}
-
 // Adapter is a policy.HomeAPI that answers GetHouseState's "occupied" and
-// "mode" keys from a polled HouseService connection, backs SetHouseState's
-// "mode" key with the SetHouseMode RPC, and delegates every other
-// GetHouseState/SetHouseState key - and every other HomeAPI method entirely,
-// via embedding - to the wrapped HomeAPI.
+// "mode" keys from a subscribed HouseService connection, backs
+// SetHouseState's "mode" key with the SetHouseMode RPC, and delegates every
+// other GetHouseState/SetHouseState key - and every other HomeAPI method
+// entirely, via embedding - to the wrapped HomeAPI.
 type Adapter struct {
 	policy.HomeAPI
-	logger       *zap.Logger
-	client       api2.HouseServiceClient
-	buildingID   string
-	pollInterval time.Duration
+	logger     *zap.Logger
+	client     api2.HouseServiceClient
+	buildingID string
+
+	// backoff is nanoseconds, reset to minBackoff once the stream has
+	// actually delivered a message (see streamOnce) so a brief blip after a
+	// long stable connection doesn't pay for backoff accumulated by earlier,
+	// unrelated failures - the same convention bridgeconn.Conn uses for
+	// BridgeService.StreamUpdates.
+	backoff atomic.Int64
 
 	mu       sync.Mutex
 	ctx      context.Context
@@ -68,79 +69,95 @@ type Adapter struct {
 
 // New creates an Adapter answering for buildingID over client, wrapping home
 // for every other HomeAPI call. It does nothing until Start is called.
-func New(logger *zap.Logger, client api2.HouseServiceClient, buildingID string, home policy.HomeAPI, opts ...Option) *Adapter {
+func New(logger *zap.Logger, client api2.HouseServiceClient, buildingID string, home policy.HomeAPI) *Adapter {
 	a := &Adapter{
-		HomeAPI:      home,
-		logger:       logger,
-		client:       client,
-		buildingID:   buildingID,
-		pollInterval: defaultPollInterval,
+		HomeAPI:    home,
+		logger:     logger,
+		client:     client,
+		buildingID: buildingID,
 	}
-	for _, opt := range opts {
-		opt(a)
-	}
+	a.backoff.Store(int64(minBackoff))
 	return a
 }
 
 // Start records engine (for Bus access) and ctx (bounding every RPC Adapter
-// issues afterwards, e.g. SetHouseState), polls GetBuilding once
-// immediately so GetHouseState has a cached answer by the time Start
-// returns, then continues polling every pollInterval until ctx is done.
+// issues afterwards, e.g. SetHouseState), then begins subscribing to
+// StreamHouseUpdates in the background, reconnecting with jittered
+// exponential backoff whenever the stream drops. It returns immediately -
+// GetHouseState returns ErrNotReady until the subscription's first
+// BuildingUpdate arrives, the same "connect in the background, readiness
+// comes later" contract bridgehome.Adapter.Start follows for BridgeService.
 func (a *Adapter) Start(ctx context.Context, engine *policy.Engine) {
 	a.mu.Lock()
 	a.ctx = ctx
 	a.engine = engine
 	a.mu.Unlock()
 
-	a.poll(ctx)
 	go a.run(ctx)
 }
 
-// run drives the periodic poll loop; the first poll happens synchronously in
-// Start, not here.
+// run subscribes to StreamHouseUpdates until ctx is done, reconnecting with
+// jittered exponential backoff whenever the stream drops.
 func (a *Adapter) run(ctx context.Context) {
-	ticker := time.NewTicker(a.pollInterval)
-	defer ticker.Stop()
-	for {
+	for ctx.Err() == nil {
+		if err := a.streamOnce(ctx); err != nil && ctx.Err() == nil {
+			a.logger.Warn("housestate: stream ended, will retry",
+				zap.String("building_id", a.buildingID), zap.Error(err))
+		}
+
+		backoff := time.Duration(a.backoff.Load())
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			a.poll(ctx)
+		case <-time.After(backoffutil.Jitter(backoff)):
+		}
+		a.backoff.Store(int64(min(backoff*2, maxBackoff)))
+	}
+}
+
+// streamOnce subscribes to StreamHouseUpdates for buildingID and applies
+// every BuildingUpdate it carries (ignoring RoomUpdate ones) until the
+// stream ends or errors.
+func (a *Adapter) streamOnce(ctx context.Context) error {
+	stream, err := a.client.StreamHouseUpdates(ctx, &api2.StreamHouseUpdatesRequest{BuildingId: a.buildingID})
+	if err != nil {
+		return fmt.Errorf("stream house updates: %w", err)
+	}
+
+	first := true
+	for {
+		update, err := stream.Recv()
+		if err != nil {
+			return fmt.Errorf("recv: %w", err)
+		}
+
+		if first {
+			// The connection is only confirmed live once a message has
+			// actually been received from it, the same reasoning
+			// bridgeconn.Conn.connectOnce documents for resetting here
+			// rather than right after the StreamHouseUpdates call.
+			a.backoff.Store(int64(minBackoff))
+			first = false
+		}
+
+		if building := update.GetBuilding(); building != nil {
+			a.applyState(building.GetState())
 		}
 	}
 }
 
-// poll fetches buildingID's current Building and caches its State. A failed
-// poll logs and holds the last known state rather than erroring GetHouseState
-// callers, the same convention bridgehome's cached device reads follow
-// across a disconnect.
-func (a *Adapter) poll(ctx context.Context) {
-	pollCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
-	defer cancel()
-
-	b, err := a.client.GetBuilding(pollCtx, &api2.GetBuildingRequest{Id: a.buildingID})
-	if err != nil {
-		a.logger.Warn("housestate: polling building failed, holding last known state",
-			zap.String("building_id", a.buildingID), zap.Error(err))
-		return
-	}
-
-	a.applyBuilding(b)
-}
-
-// applyBuilding caches b's State and publishes policy.HouseStateChangedTopic
-// - unconditionally, even if nothing actually changed since the last call,
+// applyState caches state and publishes policy.HouseStateChangedTopic -
+// unconditionally, even if nothing actually changed since the last call,
 // the same "it's a signal to re-check, not itself a fact" convention
 // policy.Engine.UpdateDeviceState uses for "device.updated.<id>". Shared by
-// poll and SetHouseState, whose own SetHouseMode response is already the
-// building's new State, so there's no need to wait for the next poll to see
-// a mode change take effect.
-func (a *Adapter) applyBuilding(b *api2.Building) {
+// streamOnce and SetHouseState, whose own SetHouseMode response already
+// carries the building's new State, so there's no need to wait for the next
+// stream message to see a mode change take effect.
+func (a *Adapter) applyState(state *api2.Building_State) {
 	a.mu.Lock()
 	a.have = true
-	a.occupied = b.GetState().GetOccupied()
-	a.mode = b.GetState().GetMode()
+	a.occupied = state.GetOccupied()
+	a.mode = state.GetMode()
 	engine := a.engine
 	a.mu.Unlock()
 
@@ -150,8 +167,9 @@ func (a *Adapter) applyBuilding(b *api2.Building) {
 }
 
 // GetHouseState implements policy.HomeAPI, answering "occupied" and "mode"
-// from the most recent poll (or SetHouseState call), and delegating every
-// other key - including "location.*" - to the wrapped HomeAPI.
+// from the most recent BuildingUpdate (or SetHouseState call), and
+// delegating every other key - including "location.*" - to the wrapped
+// HomeAPI.
 func (a *Adapter) GetHouseState(key string) (any, error) {
 	switch key {
 	case "occupied":
@@ -202,7 +220,7 @@ func (a *Adapter) SetHouseState(key string, value any) error {
 		return fmt.Errorf("housestate: setHouseMode(%q): %w", mode, err)
 	}
 
-	a.applyBuilding(b)
+	a.applyState(b.GetState())
 	return nil
 }
 

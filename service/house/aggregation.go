@@ -24,17 +24,21 @@ import (
 const buildingOccupiedWindow = 10 * time.Minute
 
 // aggregator maintains, per room, the live Room.Properties computed from
-// that room's linked devices - see api/house.proto's AggregationConfig doc
-// comment for the metric/strategy contract, and computeProperties for which
+// that room's linked devices, and per building, the live Building.State.
+// occupied derived from them (Building.State.mode is db-owned - see
+// buildingMode) - see api/house.proto's AggregationConfig doc comment for
+// the Properties metric/strategy contract, and computeProperties for which
 // device kinds/traits actually contribute. It is kept current by feeding it
-// every BridgeService Update (see handleUpdate) and every room/link change
-// Service itself makes (setDeviceRoom, removeDeviceRoom, setRoomAggregation,
-// registerRoom, removeRoom) - it never queries the db on its own, so Service
-// is responsible for keeping it in sync. Every room whose computed
-// Properties actually changes (see recomputeRoomLocked) is republished on
-// updates, the fan-out source Service.StreamHouseUpdates subscribes to -
-// the same bridge.Source/Sink pub-sub primitive service/bridge/facade uses
-// for BridgeService.StreamUpdates.
+// every BridgeService Update (see handleUpdate) and every room/link/mode
+// change Service itself makes (setDeviceRoom, removeDeviceRoom,
+// setRoomAggregation, registerRoom, removeRoom, setBuildingMode) - it never
+// queries the db on its own, so Service is responsible for keeping it in
+// sync. Every room whose computed Properties actually changes (see
+// recomputeRoomLocked) and every building whose occupied actually changes
+// (see refreshBuildingOccupiedLocked) is republished on updates, the
+// fan-out source Service.StreamHouseUpdates subscribes to - the same
+// bridge.Source/Sink pub-sub primitive service/bridge/facade uses for
+// BridgeService.StreamUpdates.
 type aggregator struct {
 	logger  *zap.Logger
 	updates *bridge.Source
@@ -60,41 +64,72 @@ type aggregator struct {
 	// buildingOccupied's "has had motion in the last
 	// buildingOccupiedWindow" contract. A room with no entry here has never
 	// had a device report occupied=true since this aggregator started (or
-	// since the room was created) - never written back to false, since the
-	// window-based decay is evaluated lazily in buildingOccupied rather than
-	// on a timer.
+	// since the room was created) - never written back to false; the
+	// window-based decay itself is still evaluated lazily (against the
+	// current time, not a stored "will decay at" deadline) whenever
+	// buildingOccupiedLocked runs, whether that's a direct GetBuilding-driven
+	// call or the decay timer's own recheck (see armDecayTimerLocked).
 	lastMotion map[string]time.Time
+	// buildingMode mirrors each building's db.Building.Mode (set via
+	// Service.SetHouseMode, never by the aggregator itself) - kept here
+	// purely so a BuildingUpdate triggered by an occupied change (see
+	// refreshBuildingOccupiedLocked) can report the building's full current
+	// State without the aggregator reaching into the db it otherwise never
+	// queries on its own. A building with no entry defaults to "", the same
+	// "never set" zero value db.Building.Mode itself uses.
+	buildingMode map[string]string
+	// buildingOccupiedPublished is the occupied value last published in a
+	// BuildingUpdate for each building, so refreshBuildingOccupiedLocked only
+	// publishes when it actually changes - the same proto.Equal-style
+	// dedup recomputeRoomLocked does for Room.Properties, but for a *bool.
+	// No entry means nothing has been published for that building yet.
+	buildingOccupiedPublished map[string]*bool
+	// decayTimers holds each building's pending occupied-decay recheck
+	// timer (see armDecayTimerLocked) - keyed so a fresh motion event can
+	// replace a still-pending one instead of leaving two races in flight.
+	decayTimers map[string]*time.Timer
 	// now is overridden in tests; defaults to time.Now.
 	now func() time.Time
+	// afterFunc schedules a decay recheck like time.AfterFunc; overridden in
+	// tests so they don't have to wait out a real buildingOccupiedWindow.
+	afterFunc func(d time.Duration, f func()) *time.Timer
 }
 
 func newAggregator(logger *zap.Logger) *aggregator {
 	return &aggregator{
-		logger:        logger,
-		updates:       bridge.NewSource(logger),
-		deviceRoom:    make(map[string]string),
-		roomDevices:   make(map[string]map[string]bool),
-		deviceState:   make(map[string]*apiDevice.Device),
-		roomConfig:    make(map[string]*api2.AggregationConfig),
-		roomBuilding:  make(map[string]string),
-		buildingRooms: make(map[string]map[string]bool),
-		properties:    make(map[string]*api2.Room_Properties),
-		lastMotion:    make(map[string]time.Time),
-		now:           time.Now,
+		logger:                    logger,
+		updates:                   bridge.NewSource(logger),
+		deviceRoom:                make(map[string]string),
+		roomDevices:               make(map[string]map[string]bool),
+		deviceState:               make(map[string]*apiDevice.Device),
+		roomConfig:                make(map[string]*api2.AggregationConfig),
+		roomBuilding:              make(map[string]string),
+		buildingRooms:             make(map[string]map[string]bool),
+		properties:                make(map[string]*api2.Room_Properties),
+		lastMotion:                make(map[string]time.Time),
+		buildingMode:              make(map[string]string),
+		buildingOccupiedPublished: make(map[string]*bool),
+		decayTimers:               make(map[string]*time.Timer),
+		now:                       time.Now,
+		afterFunc:                 time.AfterFunc,
 	}
 }
 
-// load seeds the device->room index, every room's building_id, and every
-// room's aggregation override from the database. Call once at startup,
-// before subscribing to bridge updates - a device update for a
-// not-yet-loaded link would otherwise be silently dropped (see
-// handleUpdate).
+// load seeds the device->room index, every room's building_id, every room's
+// aggregation override, and every building's current mode from the
+// database. Call once at startup, before subscribing to bridge updates - a
+// device update for a not-yet-loaded link would otherwise be silently
+// dropped (see handleUpdate).
 func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	rooms, err := database.ListRooms(ctx, nil, nil)
 	if err != nil {
 		return err
 	}
 	links, err := database.ListDeviceLinks(ctx, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+	buildings, err := database.GetBuildings(ctx)
 	if err != nil {
 		return err
 	}
@@ -107,6 +142,9 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	}
 	for _, l := range links {
 		a.linkLocked(l.ID, l.RoomID)
+	}
+	for _, b := range buildings {
+		a.buildingMode[b.ID] = b.Mode
 	}
 	return nil
 }
@@ -260,7 +298,12 @@ func (a *aggregator) propertiesForBuilding(buildingID string) map[string]*api2.R
 func (a *aggregator) buildingOccupied(buildingID string) *bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.buildingOccupiedLocked(buildingID)
+}
 
+// buildingOccupiedLocked is buildingOccupied's implementation. Callers must
+// hold a.mu.
+func (a *aggregator) buildingOccupiedLocked(buildingID string) *bool {
 	now := a.now()
 	haveSignal := false
 	occupied := false
@@ -278,6 +321,79 @@ func (a *aggregator) buildingOccupied(buildingID string) *bool {
 		return nil
 	}
 	return &occupied
+}
+
+// boolPtrEqual reports whether a and b are both nil or both non-nil with the
+// same value.
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// refreshBuildingOccupiedLocked recomputes buildingID's current occupied
+// value and returns a BuildingUpdate to publish if it actually changed from
+// the last one published for this building, or nil otherwise - the same
+// "only fan out on real change" dedup recomputeRoomLocked does for
+// Room.Properties, but for *bool. Does not itself arm the decay timer (see
+// armDecayTimerLocked) - that's anchored to the actual motion event inside
+// recomputeRoomLocked, not to whenever this happens to be called, so an
+// unrelated device update elsewhere in the building can't push the real
+// decay deadline out. Callers must hold a.mu, and must publish the result
+// only after releasing it - same convention as recomputeRoomLocked/a.publish.
+func (a *aggregator) refreshBuildingOccupiedLocked(buildingID string) *api2.BuildingUpdate {
+	occupied := a.buildingOccupiedLocked(buildingID)
+	if boolPtrEqual(a.buildingOccupiedPublished[buildingID], occupied) {
+		return nil
+	}
+	a.buildingOccupiedPublished[buildingID] = occupied
+	return &api2.BuildingUpdate{
+		BuildingId: buildingID,
+		State:      &api2.Building_State{Occupied: occupied, Mode: a.buildingMode[buildingID]},
+	}
+}
+
+// armDecayTimerLocked (re)schedules a recheck of buildingID's occupied value
+// for buildingOccupiedWindow from now, replacing any pending one. Call only
+// when a room in buildingID just recorded fresh motion (see
+// recomputeRoomLocked) - occupied is driven by the room with the most
+// recent motion, so each such event needs the recheck pushed back out to
+// cover it; once no further motion arrives before the timer fires,
+// refreshBuildingOccupiedLocked finds occupied has decayed to false and
+// publishes the transition that nothing else would otherwise trigger.
+// Callers must hold a.mu.
+func (a *aggregator) armDecayTimerLocked(buildingID string) {
+	if t, ok := a.decayTimers[buildingID]; ok {
+		t.Stop()
+	}
+	a.decayTimers[buildingID] = a.afterFunc(buildingOccupiedWindow, func() {
+		a.mu.Lock()
+		delete(a.decayTimers, buildingID)
+		update := a.refreshBuildingOccupiedLocked(buildingID)
+		a.mu.Unlock()
+		a.publishBuilding(update)
+	})
+}
+
+// setBuildingMode records buildingID's new mode and publishes a
+// BuildingUpdate reflecting it combined with the building's current
+// occupied value. Call from Service.SetHouseMode after a successful write -
+// mode is db-owned, so Service, not the aggregator, is what learns of a
+// change; unlike an occupied change this always publishes, since it only
+// runs when a caller actually asked to change the mode.
+func (a *aggregator) setBuildingMode(buildingID, mode string) {
+	a.mu.Lock()
+	a.buildingMode[buildingID] = mode
+	occupied := a.buildingOccupiedLocked(buildingID)
+	a.buildingOccupiedPublished[buildingID] = occupied
+	update := &api2.BuildingUpdate{
+		BuildingId: buildingID,
+		State:      &api2.Building_State{Occupied: occupied, Mode: mode},
+	}
+	a.mu.Unlock()
+
+	a.publishBuilding(update)
 }
 
 // aggregatingDeviceKind reports whether d has a Device.details kind set at
@@ -323,9 +439,18 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 	// after handleUpdate returns.
 	a.deviceState[device.GetId()] = proto.Clone(device).(*apiDevice.Device)
 	update := a.recomputeRoomLocked(roomID)
+	// Only a fresh occupied=true reading can have moved the building's
+	// occupied value (lastMotion is only ever written on one, and
+	// buildingOccupiedLocked only reads lastMotion) - every other update
+	// leaves it unchanged, so skip the building-wide rescan for those.
+	var buildingUpdate *api2.BuildingUpdate
+	if update.GetProperties().GetOccupied() {
+		buildingUpdate = a.refreshBuildingOccupiedLocked(a.roomBuilding[roomID])
+	}
 	a.mu.Unlock()
 
 	a.publish(update)
+	a.publishBuilding(buildingUpdate)
 }
 
 // recomputeRoomLocked rebuilds roomID's cached Properties from the current
@@ -347,6 +472,11 @@ func (a *aggregator) recomputeRoomLocked(roomID string) *api2.RoomUpdate {
 	newProps := computeProperties(a.roomConfig[roomID], devices)
 	if newProps.GetOccupied() {
 		a.lastMotion[roomID] = a.now()
+		// Arm the decay timer here, anchored to this actual motion event,
+		// not wherever handleUpdate next happens to recheck the building -
+		// an unrelated device update elsewhere in the building must never
+		// push the real decay deadline out (see armDecayTimerLocked).
+		a.armDecayTimerLocked(a.roomBuilding[roomID])
 	}
 	oldProps := a.properties[roomID]
 	a.properties[roomID] = newProps
@@ -362,13 +492,24 @@ func (a *aggregator) recomputeRoomLocked(roomID string) *api2.RoomUpdate {
 	return &api2.RoomUpdate{RoomId: roomID, Properties: newProps}
 }
 
-// publish sends update on a.updates, a no-op if update is nil. Must be
-// called without holding a.mu (see recomputeRoomLocked).
+// publish sends update on a.updates wrapped in a HouseUpdate, a no-op if
+// update is nil. Must be called without holding a.mu (see
+// recomputeRoomLocked).
 func (a *aggregator) publish(update *api2.RoomUpdate) {
 	if update == nil {
 		return
 	}
-	a.updates.SendMessage(update)
+	a.updates.SendMessage(&api2.HouseUpdate{Update: &api2.HouseUpdate_Room{Room: update}})
+}
+
+// publishBuilding sends update on a.updates wrapped in a HouseUpdate, a
+// no-op if update is nil. Must be called without holding a.mu (see
+// refreshBuildingOccupiedLocked).
+func (a *aggregator) publishBuilding(update *api2.BuildingUpdate) {
+	if update == nil {
+		return
+	}
+	a.updates.SendMessage(&api2.HouseUpdate{Update: &api2.HouseUpdate_Building{Building: update}})
 }
 
 /* ----- pure aggregation math ----- */
