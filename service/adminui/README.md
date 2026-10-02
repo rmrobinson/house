@@ -31,6 +31,15 @@ to a separately-run `bridgefacaded` instead. `adminui.policy_addr` is
 optional - point it at a running `policyd` (`service/policy/cmd/policyd`)
 for the `/policies`/`/logs` pages; leave it unset to run without them.
 
+The `/devices` Rename action only works when `housed` embeds the
+BridgeService facade itself: housed registers a `house.DeviceConfigOverlay`
+in front of its embedded facade (`service/house/deviceconfig.go`) that
+persists a renamed device's name to housedb and layers it over every device
+read, since no bridge in this repo implements `UpdateDeviceConfig` itself.
+Pointing `adminui.bridge_facade_addr` at a standalone `bridgefacaded`
+bypasses housed - and that overlay - entirely, so Rename fails against the
+raw facade in that topology.
+
 ## Pages
 
 | Route | Purpose |

@@ -19,6 +19,7 @@
           <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">
             {{if .RoomID}}Move{{else}}Link{{end}}
           </button>
+          <button hx-get="/devices/{{.ID}}/rename" hx-target="#picker" hx-swap="innerHTML">Rename</button>
         </td>
       </tr>
     {{else}}

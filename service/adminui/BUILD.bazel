@@ -42,6 +42,7 @@ go_library(
         "templates/policy_editor.html",
         "templates/policy_unavailable.html",
         "templates/settings.html",
+        "templates/partials/device_rename.html",
     ],
     importpath = "github.com/rmrobinson/house/service/adminui",
     visibility = ["//visibility:private"],

@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS device_config(
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL
+);

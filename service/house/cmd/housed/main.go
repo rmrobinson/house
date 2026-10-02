@@ -139,7 +139,13 @@ func main() {
 	switch {
 	case facadeCfg != nil:
 		f := facade.NewFromConfig(ctx, logger, facadeCfg)
-		api2.RegisterBridgeServiceServer(grpcServer, f)
+		// Wrapped with a db-backed device-name overlay rather than
+		// registering f directly - see house.DeviceConfigOverlay's doc
+		// comment for why a rename can't just be forwarded upstream like
+		// every other BridgeService write. Both of this registration's
+		// callers (adminui's direct BridgeService dial, and bridgeClient
+		// below, dialed over loopback) go through the same overlay this way.
+		api2.RegisterBridgeServiceServer(grpcServer, house.NewDeviceConfigOverlay(logger, f, buildingDB))
 
 		// Dialing "localhost" needs its own TLS config: grpc verifies the
 		// peer's certificate against the dial target's hostname by default,
