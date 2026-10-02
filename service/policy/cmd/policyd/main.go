@@ -21,6 +21,15 @@
 // configured (e.g. local testing); --house-addr takes precedence over them
 // when both are set.
 //
+// The same --house-addr/--building-id connection also backs GetHouseState's
+// "occupied"/"mode" keys and SetHouseState's "mode" key (see
+// housestate.Adapter): Building.State has no update stream yet, so the
+// adapter polls GetBuilding on an interval instead, which is what drives the
+// "sys.occupied" condition type and the "sys.occupancy" default policy built
+// on it. Left unconfigured (no --house-addr), both keys stay
+// policy.ErrNotImplemented, same as any other HomeAPI method bridgehome/the
+// stub don't back.
+//
 // --tls-cert/--tls-key/--tls-ca configure mutual TLS for every role this
 // process plays: dialing --bridge-addr/--house-addr as a client, and --addr's
 // own PolicyService listener as a server (see the flags' doc comments).
@@ -44,6 +53,7 @@ import (
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
 	"github.com/rmrobinson/house/service/policy/bridgehome"
+	"github.com/rmrobinson/house/service/policy/housestate"
 )
 
 var (
@@ -147,11 +157,16 @@ func main() {
 	// indistinguishable from "no --lat/--lon/--location-tz and no
 	// --house-addr at all".
 	haveLocation := *lat != 0 || *lon != 0 || *locationTZ != ""
+	var houseStateAdapter *housestate.Adapter
 	if *houseAddr != "" {
 		if *buildingID == "" {
 			logger.Fatal("--building-id is required when --house-addr is set")
 		}
 
+		// Kept open for the process lifetime (not closed after the location
+		// fetch below): houseStateAdapter polls this same connection for
+		// Building.State ("occupied"/"mode") and calls SetHouseMode on it for
+		// the whole time policyd runs, unlike the one-shot location fetch.
 		houseConn, err := grpcutil.Dial(*houseAddr, tlsCfg)
 		if err != nil {
 			logger.Fatal("unable to dial house service", zap.String("address", *houseAddr), zap.Error(err))
@@ -173,6 +188,9 @@ func main() {
 		}
 		logger.Info("using location from house service",
 			zap.String("building_id", *buildingID), zap.Float64("lat", loc.lat), zap.Float64("lon", loc.lon), zap.String("tz", loc.tz))
+
+		houseStateAdapter = housestate.New(logger, houseClient, *buildingID, home)
+		home = houseStateAdapter
 	}
 
 	if haveLocation {
@@ -197,6 +215,9 @@ func main() {
 	// publish anything a condition would need to catch before it's listening.
 	if adapter != nil {
 		adapter.Start(ctx, engine)
+	}
+	if houseStateAdapter != nil {
+		houseStateAdapter.Start(ctx, engine)
 	}
 
 	lis, err := net.Listen("tcp", *addr)

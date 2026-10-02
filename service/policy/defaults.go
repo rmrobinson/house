@@ -3,6 +3,8 @@ package policy
 import (
 	_ "embed"
 	"fmt"
+
+	"go.uber.org/zap"
 )
 
 //go:embed scripts/sys_occupancy.lua
@@ -11,13 +13,26 @@ var sysOccupancyScript string
 //go:embed scripts/sys_power_restore.lua
 var sysPowerRestoreScript string
 
+// HouseStateChangedTopic is the engine Bus topic a HomeAPI implementation
+// backing GetHouseState with live data (e.g. service/policy/housestate.
+// Adapter, polling HouseService since it has no Building-level update
+// stream yet) should Publish on whenever a GetHouseState key such as
+// "occupied" or "mode" changes, so "sys.occupied" (and any other condition
+// type built on GetHouseState) can react without polling itself. It carries
+// no meaningful Payload — like "device.updated.<id>", it's just a signal to
+// re-check, not itself a fact.
+const HouseStateChangedTopic = "house.state.changed"
+
 // RegisterSystemConditionTypes registers the condition types the shipped
 // system policies are built from: "sys.any-motion-detected" (fires on a
-// "motion.detected" event on the engine's Bus) and "sys.power-restored"
-// (fires on a "power.restored" event). Whatever wires in real motion
-// detection or power-restore detection from the device stream should
-// Publish those events on Engine.Bus() — the engine doesn't derive them
-// itself.
+// "motion.detected" event on the engine's Bus), "sys.power-restored" (fires
+// on a "power.restored" event), and "sys.occupied" (true while
+// HomeAPI.GetHouseState("occupied") is true, re-checked on
+// HouseStateChangedTopic). Whatever wires in real motion detection or
+// power-restore detection from the device stream should Publish those
+// events on Engine.Bus() — the engine doesn't derive them itself — and
+// whatever backs GetHouseState with live data should Publish
+// HouseStateChangedTopic whenever it changes.
 //
 // LoadSystemPolicies calls this itself. A caller that also loads persisted
 // policies (see LoadPersistedPolicies) must call it directly, before
@@ -31,6 +46,17 @@ func RegisterSystemConditionTypes(e *Engine) {
 	})
 	RegisterConditionType(e.registry, "sys.power-restored", func(_ struct{}) Condition {
 		return NewEventCondition(e.bus, "power.restored", nil, nil)
+	})
+	RegisterConditionType(e.registry, "sys.occupied", func(_ struct{}) Condition {
+		return NewPredicateCondition(e.bus, HouseStateChangedTopic, func() bool {
+			v, err := e.home.GetHouseState("occupied")
+			if err != nil {
+				e.logger.Warn("sys.occupied: GetHouseState(\"occupied\") failed, treating as unoccupied", zap.Error(err))
+				return false
+			}
+			occupied, _ := v.(bool)
+			return occupied
+		})
 	})
 }
 
@@ -47,7 +73,7 @@ func LoadDefaultSystemPolicies(e *Engine) error {
 	policies := []*Policy{
 		{
 			ID:            "sys.occupancy",
-			ConditionExpr: Use("sys.any-motion-detected", struct{}{}),
+			ConditionExpr: Use("sys.occupied", struct{}{}),
 			Script:        sysOccupancyScript,
 		},
 		{
