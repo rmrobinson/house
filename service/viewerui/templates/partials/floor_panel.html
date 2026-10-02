@@ -17,4 +17,16 @@
 {{/* floor_panel_select is a floor switch's response: the panel, plus an
 out-of-band swap of the detail pane to the floor's first room. */}}
 {{define "floor_panel_select"}}{{template "floor_panel" .Panel}}
-<div id="detail" class="col-detail" hx-swap-oob="innerHTML">{{if .Room}}{{template "room_detail" .Room}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}</div>{{end}}
+<div id="detail" class="col-detail" hx-swap-oob="innerHTML">{{template "detail_content" .}}</div>{{end}}
+
+{{/* detail_content is the detail pane: the open room, else (only a floor
+selected) that floor's summary. Takes anything with .Panel and .Room. */}}
+{{define "detail_content"}}{{if .Room}}{{template "room_detail" .Room}}{{else}}{{template "floor_summary" .Panel}}{{end}}{{end}}
+
+{{/* floor_summary: one box per room with whatever readings it has. Each box's
+grid reuses room-props-<id> so live room updates refresh it too. */}}
+{{define "floor_summary"}}{{if .Rooms}}{{$b := .BuildingID}}{{range .Rooms}}<div class="box">
+  <div class="box-title title-bar"><button class="row" data-room="{{.ID}}" hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML" hx-push-url="/buildings/{{$b}}?room={{.ID}}"><span id="room-sum-dot-{{.ID}}" class="dot dot-{{.Occ}}" role="img" aria-label="{{.OccLabel}}" title="{{.OccLabel}}"></span>{{.Name}}</button></div>
+  {{template "room_props" .}}
+</div>
+{{end}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}{{end}}

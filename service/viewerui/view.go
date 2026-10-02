@@ -25,6 +25,8 @@ type roomRowView struct {
 	// Occ is "yes", "no" or "unknown" (no linked sensor has reported) -
 	// used as a CSS class suffix for the occupancy dot.
 	Occ string
+	// Properties feeds the floor summary's per-room readings.
+	Properties houseview.Properties
 }
 
 // OccLabel is the dot's text alternative.
@@ -65,6 +67,7 @@ type floorPanelView struct {
 	BuildingID string
 	Floors     []floorView
 	FloorID    string
+	FloorName  string
 	Rooms      []roomRowView
 }
 

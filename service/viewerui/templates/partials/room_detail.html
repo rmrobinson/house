@@ -20,11 +20,5 @@
 {{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}
 {{define "room_props"}}<div id="room-props-{{.ID}}" class="stats">{{template "room_props_cells" .}}</div>{{end}}
 
-{{define "room_props_cells"}}<div class="stat"><div class="label">Occupied</div><div class="val">{{if .Properties.Occupied}}{{.Properties.Occupied}}{{else}}—{{end}}</div></div>
-  <div class="stat"><div class="label">Temp</div><div class="val">{{if .Properties.TemperatureC}}{{.Properties.TemperatureC}}{{else}}—{{end}}</div></div>
-  <div class="stat"><div class="label">Light</div><div class="val">{{if .Properties.LightLevelLux}}{{.Properties.LightLevelLux}}{{else}}—{{end}}</div></div>
-  <div class="stat"><div class="label">Air quality</div><div class="val">{{if .Properties.AirQualityIndex}}{{.Properties.AirQualityIndex}}{{else}}—{{end}}</div></div>
-  {{if .Properties.Co2Ppm}}<div class="stat"><div class="label">CO2</div><div class="val">{{.Properties.Co2Ppm}}</div></div>{{end}}
-  {{if .Properties.VocPpb}}<div class="stat"><div class="label">VOC</div><div class="val">{{.Properties.VocPpb}}</div></div>{{end}}
-  {{if .Properties.RadonBqM3}}<div class="stat"><div class="label">Radon</div><div class="val">{{.Properties.RadonBqM3}}</div></div>{{end}}
-  <div class="stat"><div class="label">Power</div><div class="val">{{if .Properties.PowerDrawW}}{{.Properties.PowerDrawW}}{{else}}—{{end}}</div></div>{{end}}
+{{/* Only measures the room actually has are shown. */}}
+{{define "room_props_cells"}}{{with .Properties}}{{if .Occupied}}<div class="stat"><div class="label">Occupied</div><div class="val">{{.Occupied}}</div></div>{{end}}{{if .TemperatureC}}<div class="stat"><div class="label">Temp</div><div class="val">{{.TemperatureC}}</div></div>{{end}}{{if .LightLevelLux}}<div class="stat"><div class="label">Light</div><div class="val">{{.LightLevelLux}}</div></div>{{end}}{{if .AirQualityIndex}}<div class="stat"><div class="label">Air quality</div><div class="val">{{.AirQualityIndex}}</div></div>{{end}}{{if .Co2Ppm}}<div class="stat"><div class="label">CO2</div><div class="val">{{.Co2Ppm}}</div></div>{{end}}{{if .VocPpb}}<div class="stat"><div class="label">VOC</div><div class="val">{{.VocPpb}}</div></div>{{end}}{{if .RadonBqM3}}<div class="stat"><div class="label">Radon</div><div class="val">{{.RadonBqM3}}</div></div>{{end}}{{if .WaterDetected}}<div class="stat{{if eq .WaterDetected "Detected"}} alert{{end}}"><div class="label">Water</div><div class="val">{{.WaterDetected}}</div></div>{{end}}{{if .PowerDrawW}}<div class="stat"><div class="label">Power</div><div class="val">{{.PowerDrawW}}</div></div>{{end}}{{end}}{{end}}

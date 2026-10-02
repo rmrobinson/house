@@ -51,6 +51,7 @@ func (s *Server) loadFloorPanel(r *http.Request, buildingID, floorID string) (fl
 		}
 	}
 	panel.FloorID = active.GetId()
+	panel.FloorName = active.GetName()
 	for _, f := range floors {
 		panel.Floors = append(panel.Floors, floorView{ID: f.GetId(), Name: f.GetName(), Active: f.GetId() == active.GetId()})
 	}
@@ -62,9 +63,10 @@ func (s *Server) loadFloorPanel(r *http.Request, buildingID, floorID string) (fl
 	sortRooms(rooms)
 	for _, room := range rooms {
 		panel.Rooms = append(panel.Rooms, roomRowView{
-			ID:   room.GetId(),
-			Name: room.GetConfig().GetName(),
-			Occ:  occupancy(room.GetProperties()),
+			ID:         room.GetId(),
+			Name:       room.GetConfig().GetName(),
+			Occ:        occupancy(room.GetProperties()),
+			Properties: houseview.PropertiesToView(room.GetProperties()),
 		})
 	}
 	return panel, nil
@@ -131,13 +133,10 @@ func (s *Server) handleFloor(w http.ResponseWriter, r *http.Request) {
 	}{panel, room})
 }
 
-// selectRoom marks roomID (default: the panel's first room) active in panel
-// and loads its detail. Returns nil with no error when the floor has no
-// rooms.
+// selectRoom marks roomID active in panel and loads its detail. Returns nil
+// with no error when roomID is empty: only the floor is selected, and the
+// detail pane shows the floor summary instead.
 func (s *Server) selectRoom(r *http.Request, panel *floorPanelView, roomID string) (*roomDetailView, error) {
-	if roomID == "" && len(panel.Rooms) > 0 {
-		roomID = panel.Rooms[0].ID
-	}
 	if roomID == "" {
 		return nil, nil
 	}

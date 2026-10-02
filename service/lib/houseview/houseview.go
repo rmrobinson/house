@@ -153,6 +153,8 @@ type Properties struct {
 	VocPpb          string
 	RadonBqM3       string
 	PowerDrawW      string
+	// WaterDetected is "Detected" or "Dry".
+	WaterDetected string
 }
 
 // PropertiesToView formats p's set fields for display, leaving an unset
@@ -191,6 +193,13 @@ func PropertiesToView(p *api2.Room_Properties) Properties {
 	}
 	if p.PowerDrawW != nil {
 		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
+	}
+	if p.WaterDetected != nil {
+		if p.GetWaterDetected() {
+			pv.WaterDetected = "Detected"
+		} else {
+			pv.WaterDetected = "Dry"
+		}
 	}
 	return pv
 }
