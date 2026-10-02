@@ -155,6 +155,11 @@ func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRe
 		s.logger.Error("unable to update building", zap.String("building_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "building")
 	}
+	// Shrinking available_modes can leave db.UpdateBuilding clearing the
+	// building's mode as a side effect (see its doc comment) - keep the
+	// aggregator's cached mode, which only otherwise changes via
+	// SetHouseMode, from going stale against that.
+	s.agg.setBuildingMode(res.ID, res.Mode)
 
 	return s.buildingToAPI(*res), nil
 }
@@ -164,6 +169,7 @@ func (s *Service) DeleteBuilding(ctx context.Context, req *api2.DeleteBuildingRe
 		s.logger.Error("unable to delete building", zap.String("building_id", req.GetId()), zap.Error(err))
 		return nil, mapDBErr(err, "building")
 	}
+	s.agg.removeBuilding(req.GetId())
 	return &emptypb.Empty{}, nil
 }
 

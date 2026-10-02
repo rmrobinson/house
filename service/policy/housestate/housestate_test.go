@@ -170,6 +170,38 @@ func TestAdapterSubscribesAndCachesOccupiedAndMode(t *testing.T) {
 	assert.Equal(t, "home", mode)
 }
 
+// TestAdapterGetHouseStateOccupiedUnknownBeforeFirstSignal guards against a
+// real bug caught in review: Building.State.occupied is nil ("no room has
+// ever reported occupancy", api/house.proto) before any room signals, and
+// that must surface as ErrOccupancyUnknown, not be collapsed into a plain
+// false that looks like a confirmed "unoccupied".
+func TestAdapterGetHouseStateOccupiedUnknownBeforeFirstSignal(t *testing.T) {
+	srv := newFakeHouseServer()
+	srv.setBuilding(&api2.Building{
+		Id:    testBuildingID,
+		State: &api2.Building_State{Mode: "away"},
+	})
+	addr := startFakeHouseServer(t, srv)
+
+	home := newFakeHomeAPI()
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, home)
+	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.Start(ctx, engine)
+
+	require.Eventually(t, func() bool {
+		mode, err := a.GetHouseState("mode")
+		return err == nil && mode == "away"
+	}, 2*time.Second, 10*time.Millisecond, "the stream's first BuildingUpdate should be applied")
+
+	occupied, err := a.GetHouseState("occupied")
+	assert.ErrorIs(t, err, ErrOccupancyUnknown)
+	assert.Nil(t, occupied)
+}
+
 func TestAdapterGetHouseStateDelegatesUnknownKeys(t *testing.T) {
 	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, ""))

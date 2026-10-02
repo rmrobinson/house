@@ -86,15 +86,13 @@ type aggregator struct {
 	buildingOccupiedPublished map[string]*bool
 	// decayTimers holds each building's pending occupied-decay recheck
 	// timer (see armDecayTimerLocked) - keyed so a fresh motion event can
-	// replace a still-pending one instead of leaving two races in flight.
+	// replace a still-pending one instead of leaving two races in flight. A
+	// fired callback only deletes its building's entry if it's still the
+	// same *time.Timer the callback was armed with - otherwise a newer timer
+	// has already replaced it (this one lost the race between firing and
+	// being Stop()'d), and deleting unconditionally would orphan that newer
+	// timer, leaving it untracked and un-cancelable.
 	decayTimers map[string]*time.Timer
-	// decayGen counts how many times armDecayTimerLocked has (re)armed each
-	// building's timer. A fired callback only deletes its building's
-	// decayTimers entry if decayGen still matches the value it captured when
-	// armed - otherwise a newer timer has already replaced it (this one lost
-	// the race between firing and being Stop()'d), and deleting unconditionally
-	// would orphan that newer timer, leaving it untracked and un-cancelable.
-	decayGen map[string]uint64
 	// now is overridden in tests; defaults to time.Now.
 	now func() time.Time
 	// afterFunc schedules a decay recheck like time.AfterFunc; overridden in
@@ -117,7 +115,6 @@ func newAggregator(logger *zap.Logger) *aggregator {
 		buildingMode:              make(map[string]string),
 		buildingOccupiedPublished: make(map[string]*bool),
 		decayTimers:               make(map[string]*time.Timer),
-		decayGen:                  make(map[string]uint64),
 		now:                       time.Now,
 		afterFunc:                 time.AfterFunc,
 	}
@@ -181,14 +178,29 @@ func (a *aggregator) setDeviceRoom(deviceID, roomID string) {
 	prevRoomID, hadPrev := a.deviceRoom[deviceID]
 	a.linkLocked(deviceID, roomID)
 	var prevUpdate *api2.RoomUpdate
+	var prevBuildingUpdate *api2.BuildingUpdate
 	if hadPrev && prevRoomID != roomID {
 		prevUpdate = a.recomputeRoomLocked(prevRoomID)
+		// Same "only a fresh occupied=true reading can have moved the
+		// building's occupied value" reasoning handleUpdate documents -
+		// relinking a device that's already reporting occupied=true can
+		// move that signal into a different building immediately, which
+		// must be published now rather than left to decay/arm on its own.
+		if prevUpdate.GetProperties().GetOccupied() {
+			prevBuildingUpdate = a.refreshBuildingOccupiedLocked(a.roomBuilding[prevRoomID])
+		}
 	}
 	update := a.recomputeRoomLocked(roomID)
+	var buildingUpdate *api2.BuildingUpdate
+	if update.GetProperties().GetOccupied() {
+		buildingUpdate = a.refreshBuildingOccupiedLocked(a.roomBuilding[roomID])
+	}
 	a.mu.Unlock()
 
 	a.publish(prevUpdate)
 	a.publish(update)
+	a.publishBuilding(prevBuildingUpdate)
+	a.publishBuilding(buildingUpdate)
 }
 
 // removeDeviceRoom unlinks deviceID from whatever room it was linked to (a
@@ -258,6 +270,27 @@ func (a *aggregator) removeRoom(roomID string) {
 	delete(a.roomBuilding, roomID)
 	delete(a.lastMotion, roomID)
 	delete(a.buildingRooms[buildingID], roomID)
+}
+
+// removeBuilding drops all cached per-building state for a deleted building.
+// Call from Service.DeleteBuilding - DeleteBuilding only succeeds once every
+// floor/room referencing buildingID is already gone (ErrHasChildren
+// otherwise), so buildingRooms[buildingID] is already empty by the time this
+// runs; this only needs to clean up the building-level entries
+// refreshBuildingOccupiedLocked/setBuildingMode/armDecayTimerLocked populate
+// directly, which would otherwise leak for the life of the process (a stale
+// map entry forever, or a pending *time.Timer leaked if one was armed at
+// deletion time).
+func (a *aggregator) removeBuilding(buildingID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if t, ok := a.decayTimers[buildingID]; ok {
+		t.Stop()
+		delete(a.decayTimers, buildingID)
+	}
+	delete(a.buildingMode, buildingID)
+	delete(a.buildingOccupiedPublished, buildingID)
+	delete(a.buildingRooms, buildingID)
 }
 
 // getProperties returns the cached Properties for roomID, or nil if the
@@ -376,18 +409,17 @@ func (a *aggregator) armDecayTimerLocked(buildingID string) {
 		t.Stop()
 	}
 
-	a.decayGen[buildingID]++
-	gen := a.decayGen[buildingID]
-
-	a.decayTimers[buildingID] = a.afterFunc(buildingOccupiedWindow, func() {
+	var timer *time.Timer
+	timer = a.afterFunc(buildingOccupiedWindow, func() {
 		a.mu.Lock()
-		if a.decayGen[buildingID] == gen {
+		if a.decayTimers[buildingID] == timer {
 			delete(a.decayTimers, buildingID)
 		}
 		update := a.refreshBuildingOccupiedLocked(buildingID)
 		a.mu.Unlock()
 		a.publishBuilding(update)
 	})
+	a.decayTimers[buildingID] = timer
 }
 
 // setBuildingMode records buildingID's new mode and publishes a

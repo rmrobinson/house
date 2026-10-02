@@ -609,6 +609,53 @@ func TestAggregator_BuildingOccupied(t *testing.T) {
 	assert.Nil(t, a.buildingOccupied("building-1"))
 }
 
+// TestAggregator_SetDeviceRoomPublishesBuildingUpdateImmediately guards
+// against a real bug caught in review: relinking a device that's already
+// reporting occupied=true into a room in a different building must publish
+// that building's new occupied state right away (same as handleUpdate does
+// for the same transition), not leave a stale occupied=false/unknown for
+// subscribers until the decay window happens to expire.
+func TestAggregator_SetDeviceRoomPublishesBuildingUpdateImmediately(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	a.registerRoom("room-1", "building-1")
+	a.registerRoom("room-2", "building-2")
+	a.setDeviceRoom("sensor-1", "room-1")
+
+	a.handleUpdate(motionUpdate("sensor-1", true))
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.True(t, *a.buildingOccupied("building-1"))
+	assert.Nil(t, a.buildingOccupied("building-2"))
+
+	sink := a.updates.NewSink()
+	defer sink.Close()
+
+	a.setDeviceRoom("sensor-1", "room-2")
+
+	// setDeviceRoom publishes up to 4 messages for this move: room-1's
+	// RoomUpdate (its Properties go from occupied to nil, since sensor-1 was
+	// its only device), room-2's RoomUpdate (now occupied), and building-2's
+	// BuildingUpdate - drain generously and look for the one that matters.
+	var sawBuildingTwoOccupied bool
+drain:
+	for i := 0; i < 4; i++ {
+		select {
+		case msg := <-sink.Messages():
+			if b := msg.(*api2.HouseUpdate).GetBuilding(); b != nil {
+				require.Equal(t, "building-2", b.BuildingId)
+				require.NotNil(t, b.State.Occupied)
+				assert.True(t, b.State.GetOccupied())
+				sawBuildingTwoOccupied = true
+			}
+		case <-time.After(100 * time.Millisecond):
+			break drain
+		}
+	}
+	assert.True(t, sawBuildingTwoOccupied, "building-2 should become occupied immediately, not after the decay window")
+
+	require.NotNil(t, a.buildingOccupied("building-2"))
+	assert.True(t, *a.buildingOccupied("building-2"))
+}
+
 // TestAggregator_DecayTimerPublishesOccupiedFalse covers the push side of
 // occupied's decay: nothing short of a timer would ever notice a building
 // going unoccupied with no further room activity to trigger a recheck (see

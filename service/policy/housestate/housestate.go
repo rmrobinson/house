@@ -35,6 +35,12 @@ const rpcTimeout = 10 * time.Second
 // regardless of readiness.
 var ErrNotReady = errors.New("housestate: adapter not started")
 
+// ErrOccupancyUnknown is returned by GetHouseState("occupied") when the
+// stream is connected but no room in the building has ever reported an
+// occupancy signal - Building.State.occupied's own "nil = no data yet"
+// contract (api/house.proto), distinct from false ("confirmed unoccupied").
+var ErrOccupancyUnknown = errors.New("housestate: building occupancy has never been reported")
+
 // Adapter is a policy.HomeAPI that answers GetHouseState's "occupied" and
 // "mode" keys from a subscribed HouseService connection, backs
 // SetHouseState's "mode" key with the SetHouseMode RPC, and delegates every
@@ -51,7 +57,7 @@ type Adapter struct {
 	ctx      context.Context
 	engine   *policy.Engine
 	have     bool
-	occupied bool
+	occupied *bool // nil = no room has ever reported an occupancy signal
 	mode     string
 }
 
@@ -125,9 +131,15 @@ func (a *Adapter) streamOnce(ctx context.Context, backoff *bridgeconn.Backoff) e
 // carries the building's new State, so there's no need to wait for the next
 // stream message to see a mode change take effect.
 func (a *Adapter) applyState(state *api2.Building_State) {
+	var occupied *bool
+	if state.Occupied != nil {
+		v := state.GetOccupied()
+		occupied = &v
+	}
+
 	a.mu.Lock()
 	a.have = true
-	a.occupied = state.GetOccupied()
+	a.occupied = occupied
 	a.mode = state.GetMode()
 	engine := a.engine
 	a.mu.Unlock()
@@ -149,7 +161,10 @@ func (a *Adapter) GetHouseState(key string) (any, error) {
 		if !a.have {
 			return nil, ErrNotReady
 		}
-		return a.occupied, nil
+		if a.occupied == nil {
+			return nil, ErrOccupancyUnknown
+		}
+		return *a.occupied, nil
 	case "mode":
 		a.mu.Lock()
 		defer a.mu.Unlock()

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"google.golang.org/protobuf/proto"
+
 	api2 "github.com/rmrobinson/house/api"
 )
 
@@ -120,27 +122,28 @@ func (s *Server) handleBuildingUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// available_modes has no field in this form; carry over the building's
-	// current value so this update doesn't clobber it - UpdateBuilding
-	// replaces Config wholesale (see Building.Config.available_modes's doc
-	// comment), and an empty list here would leave no mode settable until
-	// someone reconfigures it via housecli.
+	// This form only exposes name/tz/lat/lon; start from the building's
+	// current Config and override just those fields, rather than building a
+	// Config from form fields alone - UpdateBuilding replaces Config
+	// wholesale, so any field with no form input (available_modes today,
+	// anything added to Building.Config later) must be carried forward
+	// explicitly or this update would silently clear it.
 	current, err := s.house.GetBuilding(r.Context(), &api2.GetBuildingRequest{Id: id})
 	if err != nil {
 		s.httpError(w, r, err)
 		return
 	}
 
+	cfg := proto.Clone(current.GetConfig()).(*api2.Building_Config)
+	cfg.Name = r.FormValue("name")
+	cfg.Tz = r.FormValue("tz")
+	cfg.Lat = lat
+	cfg.Lon = lon
+
 	_, err = s.house.UpdateBuilding(r.Context(), &api2.UpdateBuildingRequest{
 		Id:      id,
 		Version: r.FormValue("version"),
-		Config: &api2.Building_Config{
-			Name:           r.FormValue("name"),
-			Tz:             r.FormValue("tz"),
-			Lat:            lat,
-			Lon:            lon,
-			AvailableModes: current.GetConfig().GetAvailableModes(),
-		},
+		Config:  cfg,
 	})
 	flash, isError := successOrError(err, "Building updated")
 

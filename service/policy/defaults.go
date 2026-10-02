@@ -15,12 +15,11 @@ var sysPowerRestoreScript string
 
 // HouseStateChangedTopic is the engine Bus topic a HomeAPI implementation
 // backing GetHouseState with live data (e.g. service/policy/housestate.
-// Adapter, polling HouseService since it has no Building-level update
-// stream yet) should Publish on whenever a GetHouseState key such as
-// "occupied" or "mode" changes, so "sys.occupied" (and any other condition
-// type built on GetHouseState) can react without polling itself. It carries
-// no meaningful Payload — like "device.updated.<id>", it's just a signal to
-// re-check, not itself a fact.
+// Adapter, subscribed to HouseService.StreamHouseUpdates) should Publish on
+// whenever a GetHouseState key such as "occupied" or "mode" changes, so
+// "sys.occupied" (and any other condition type built on GetHouseState) can
+// react without polling itself. It carries no meaningful Payload — like
+// "device.updated.<id>", it's just a signal to re-check, not itself a fact.
 const HouseStateChangedTopic = "house.state.changed"
 
 // RegisterSystemConditionTypes registers the condition types the shipped
@@ -72,8 +71,14 @@ func RegisterSystemConditionTypes(e *Engine) {
 func LoadDefaultSystemPolicies(e *Engine) error {
 	policies := []*Policy{
 		{
-			ID:            "sys.occupancy",
-			ConditionExpr: Use("sys.occupied", struct{}{}),
+			ID: "sys.occupancy",
+			// Or'd with the raw motion event so this still fires in a
+			// bridge-only topology with no --house-addr configured, where
+			// "sys.occupied" is permanently false (housestate.Adapter isn't
+			// wired, so GetHouseState("occupied") is bridgehome.Adapter's
+			// unconditional policy.ErrNotImplemented) - see
+			// RegisterSystemConditionTypes.
+			ConditionExpr: ExprOr(Use("sys.occupied", struct{}{}), Use("sys.any-motion-detected", struct{}{})),
 			Script:        sysOccupancyScript,
 		},
 		{
