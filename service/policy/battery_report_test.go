@@ -1,6 +1,7 @@
 package policy
 
 import (
+	_ "embed"
 	"testing"
 	"time"
 
@@ -8,28 +9,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// batteryReportScript and batteryReportPolicyID are test-only: unlike
+// defaults.go's sys.* scripts, the battery-report policy is a user policy
+// specific to this house's actual device inventory, registered entirely as
+// Lua text through adminui's policy editor and persisted in the policy
+// store - it has no business being embedded in policyd's own binary. This
+// embed exists solely so scripts/battery_report.lua is exercised by these
+// tests; production code never references it.
+//
+//go:embed scripts/battery_report.lua
+var batteryReportScript string
+
+const batteryReportPolicyID = "battery-report"
+
 // TestBatteryReportPolicyRegistersWithScheduleDaily proves
-// BatteryReportScript registers cleanly against the production-shaped
+// batteryReportScript registers cleanly against the production-shaped
 // condition (schedule.daily, 07:00, a house timezone) - the same
-// Engine.Register call adminui's policy editor makes once this is entered
-// there (see BatteryReportPolicyID's doc comment).
+// Engine.Register call adminui's policy editor makes once this is pasted
+// in there.
 func TestBatteryReportPolicyRegistersWithScheduleDaily(t *testing.T) {
 	e, r := newTestEngine(t, newFakeHomeAPI())
 	RegisterBuiltinConditionTypes(e)
 
 	require.NoError(t, e.Register(&Policy{
-		ID:            BatteryReportPolicyID,
+		ID:            batteryReportPolicyID,
 		ConditionExpr: Use("schedule.daily", ScheduleDailyParams{Hour: 7, Minute: 0, TZ: "America/Toronto"}),
-		Script:        BatteryReportScript,
+		Script:        batteryReportScript,
 	}))
 
-	info, ok := e.Policy(BatteryReportPolicyID)
+	info, ok := e.Policy(batteryReportPolicyID)
 	require.True(t, ok)
-	assert.Equal(t, BatteryReportScript, info.Script)
+	assert.Equal(t, batteryReportScript, info.Script)
 	_ = r
 }
 
-// TestBatteryReportPolicyExecutesAndNotifies runs BatteryReportScript
+// TestBatteryReportPolicyExecutesAndNotifies runs batteryReportScript
 // through the real engine pipeline (Register -> condition fires -> trigger
 // -> runScript -> notify.send), standing in for schedule.daily with a
 // manualCondition - ScheduleCondition's own timing is already covered in
@@ -65,9 +79,9 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	home.setDeviceName("sensor.no-battery", "Front Door Contact")
 
 	require.NoError(t, e.Register(&Policy{
-		ID:            BatteryReportPolicyID,
+		ID:            batteryReportPolicyID,
 		ConditionExpr: Use("trigger", struct{}{}),
-		Script:        BatteryReportScript,
+		Script:        batteryReportScript,
 	}))
 
 	trigger.set(true)
@@ -76,7 +90,7 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 		return len(notify.calls) == 1
 	}, time.Second, 10*time.Millisecond)
 
-	logs := e.LogsForPolicy(BatteryReportPolicyID)
+	logs := e.LogsForPolicy(batteryReportPolicyID)
 	require.Len(t, logs, 1)
 	assert.Equal(t, StatusSuccess, logs[0].Status)
 	assert.Empty(t, logs[0].Error)

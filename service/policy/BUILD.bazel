@@ -4,7 +4,6 @@ go_library(
     name = "policy",
     srcs = [
         "attribute_conditions.go",
-        "battery_report.go",
         "bindings.go",
         "bus.go",
         "cache.go",
@@ -20,7 +19,6 @@ go_library(
         "sun.go",
     ],
     embedsrcs = [
-        "scripts/battery_report.lua",
         "scripts/sys_occupancy.lua",
         "scripts/sys_power_restore.lua",
         "migrations/000001_setup.down.sql",
@@ -59,6 +57,9 @@ go_test(
         "policy_test.go",
         "store_test.go",
         "sun_test.go",
+    ],
+    embedsrcs = [
+        "scripts/battery_report.lua",
     ],
     embed = [":policy"],
     deps = [
