@@ -246,6 +246,102 @@ func Brightness(d *apiDevice.Device) *apiTrait.Brightness {
 	}
 }
 
+// Media returns d's Media trait, or nil if its device type has none.
+func Media(d *apiDevice.Device) *apiTrait.Media {
+	switch {
+	case d.GetMediaPlayer() != nil:
+		return d.GetMediaPlayer().GetMedia()
+	case d.GetTelevision() != nil:
+		return d.GetTelevision().GetMedia()
+	default:
+		return nil
+	}
+}
+
+// Volume returns d's Volume trait, or nil if its device type has none.
+func Volume(d *apiDevice.Device) *apiTrait.Volume {
+	switch {
+	case d.GetMediaPlayer() != nil:
+		return d.GetMediaPlayer().GetVolume()
+	case d.GetTelevision() != nil:
+		return d.GetTelevision().GetVolume()
+	case d.GetAvReceiver() != nil:
+		return d.GetAvReceiver().GetVolume()
+	default:
+		return nil
+	}
+}
+
+// MediaSummary renders m's current playback for display - "" when nothing is
+// actively playing or paused (stopped/completed/unspecified collapse to the
+// same "nothing to show" case a client would otherwise have to special-case
+// itself). PLAYING renders bare; every other visible state is prefixed with
+// its own label so a paused/buffering/seeking track isn't mistaken for one
+// that's actively playing.
+func MediaSummary(m *apiTrait.Media) string {
+	if m == nil {
+		return ""
+	}
+	state := m.GetState()
+	track := mediaTrackSummary(state)
+	if track == "" {
+		return ""
+	}
+	switch state.GetPlaybackState() {
+	case apiTrait.Media_PS_PLAYING:
+		return track
+	case apiTrait.Media_PS_PAUSED:
+		return "Paused — " + track
+	case apiTrait.Media_PS_BUFFERING:
+		return "Buffering — " + track
+	case apiTrait.Media_PS_FAST_FORWARD:
+		return "Fast-forwarding — " + track
+	case apiTrait.Media_PS_REWIND:
+		return "Rewinding — " + track
+	default:
+		// PS_STOPPED, PS_COMPLETED, PS_UNSPECIFIED: media metadata may still
+		// be sitting in State from the last active session, but nothing is
+		// actually playing or paused, so there's nothing worth surfacing.
+		return ""
+	}
+}
+
+// mediaTrackSummary formats just the track/show/movie identity part of
+// state, independent of playback state - "" if state carries no details for
+// its declared media_type.
+func mediaTrackSummary(state *apiTrait.Media_State) string {
+	switch state.GetMediaType() {
+	case apiTrait.Media_TYPE_SONG:
+		song := state.GetSongDetails()
+		if song.GetSongName() == "" {
+			return ""
+		}
+		if len(song.GetArtists()) == 0 {
+			return song.GetSongName()
+		}
+		return song.GetSongName() + " — " + strings.Join(song.GetArtists(), ", ")
+	case apiTrait.Media_TYPE_SHOW:
+		show := state.GetShowDetails()
+		if show.GetShowTitle() == "" {
+			return ""
+		}
+		if show.GetEpisodeTitle() == "" {
+			return show.GetShowTitle()
+		}
+		return show.GetShowTitle() + " — " + show.GetEpisodeTitle()
+	case apiTrait.Media_TYPE_MOVIE:
+		return state.GetMovieDetails().GetTitle()
+	case apiTrait.Media_TYPE_GENERIC:
+		generic := state.GetGenericDetails()
+		if generic.GetSubtitle() == "" {
+			return generic.GetTitle()
+		}
+		return generic.GetTitle() + " — " + generic.GetSubtitle()
+	default:
+		return ""
+	}
+}
+
 // ListBuildings/ListFloors/ListRoomsByFloor wrap HouseService's streaming
 // List* RPCs into a plain slice - every caller wants the whole list at once
 // (home-scale result sets, not worth consuming the stream incrementally).

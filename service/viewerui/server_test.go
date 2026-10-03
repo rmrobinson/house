@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -83,6 +84,40 @@ func dimLamp(on bool, level int32) *apiDevice.Device {
 			Brightness: &apiTrait.Brightness{
 				Attributes: &apiTrait.Brightness_Attributes{CanControl: true},
 				State:      &apiTrait.Brightness_State{Level: level},
+			},
+		}},
+	}
+}
+
+// speaker builds a MediaPlayer fixture. playing picks PS_PLAYING vs
+// PS_PAUSED so tests can exercise the play/pause button's two states;
+// skipFwd/skipBack independently gate the next/previous buttons, matching
+// how a real bridge (e.g. cast) reports them.
+func speaker(name string, playing, skipFwd, skipBack bool) *apiDevice.Device {
+	state := apiTrait.Media_PS_PAUSED
+	if playing {
+		state = apiTrait.Media_PS_PLAYING
+	}
+	return &apiDevice.Device{
+		Id:      "speaker-" + name,
+		Config:  &apiDevice.Device_Config{Name: name},
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Details: &apiDevice.Device_MediaPlayer{MediaPlayer: &apiDevice.MediaPlayer{
+			Media: &apiTrait.Media{
+				Attributes: &apiTrait.Media_Attributes{
+					CanControl:      true,
+					CanSkipForward:  proto.Bool(skipFwd),
+					CanSkipBackward: proto.Bool(skipBack),
+				},
+				State: &apiTrait.Media_State{
+					PlaybackState: state,
+					MediaType:     apiTrait.Media_TYPE_SONG,
+					SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody", Artists: []string{"Queen"}},
+				},
+			},
+			Volume: &apiTrait.Volume{
+				Attributes: &apiTrait.Volume_Attributes{CanControl: true, MaximumLevel: 16},
+				State:      &apiTrait.Volume_State{Level: 7},
 			},
 		}},
 	}
@@ -479,6 +514,88 @@ func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(cam())))
 	assert.Contains(t, sb.String(), `id="device-info-cam1"`)
 	assert.NotContains(t, sb.String(), "<tr", "replacing the row would drop its VIEW button")
+}
+
+func TestDeviceToViewPopulatesMediaAndVolume(t *testing.T) {
+	dv := deviceToView(speaker("Kitchen Speaker", true, false, true))
+	assert.True(t, dv.CanControlMedia)
+	assert.True(t, dv.IsPlaying)
+	assert.False(t, dv.CanSkipForward)
+	assert.True(t, dv.CanSkipBackward)
+	assert.Equal(t, "Bohemian Rhapsody — Queen", dv.NowPlaying)
+	assert.True(t, dv.CanControlVolume)
+	assert.Equal(t, 7, dv.VolumeLevel)
+	assert.Equal(t, 16, dv.VolumeMax)
+
+	paused := deviceToView(speaker("Kitchen Speaker", false, true, true))
+	assert.False(t, paused.IsPlaying)
+}
+
+func TestRoomNowPlayingPicksFirstActiveDevice(t *testing.T) {
+	assert.Equal(t, "", roomNowPlaying([]*apiDevice.Device{lamp(false)}), "no media-capable device")
+
+	devices := []*apiDevice.Device{lamp(false), speaker("Kitchen Speaker", true, true, true)}
+	assert.Equal(t, "Kitchen Speaker: Bohemian Rhapsody — Queen", roomNowPlaying(devices))
+}
+
+func TestMediaEventLine(t *testing.T) {
+	assert.Equal(t, "Kitchen Speaker: Bohemian Rhapsody — Queen", mediaEventLine(speaker("Kitchen Speaker", true, true, true)))
+	assert.Equal(t, "Kitchen Speaker: Paused — Bohemian Rhapsody — Queen", mediaEventLine(speaker("Kitchen Speaker", false, true, true)))
+
+	stopped := speaker("Kitchen Speaker", true, true, true)
+	stopped.GetMediaPlayer().GetMedia().GetState().PlaybackState = apiTrait.Media_PS_STOPPED
+	assert.Equal(t, "Kitchen Speaker: Stopped", mediaEventLine(stopped))
+
+	finished := speaker("Kitchen Speaker", true, true, true)
+	finished.GetMediaPlayer().GetMedia().GetState().PlaybackState = apiTrait.Media_PS_COMPLETED
+	assert.Equal(t, "Kitchen Speaker: Finished", mediaEventLine(finished))
+
+	assert.Equal(t, "", mediaEventLine(lamp(false)), "no media trait")
+}
+
+func TestDeviceRowRendersMediaControlsGatedOnSkipCapability(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_cells", deviceToView(speaker("Kitchen Speaker", true, false, true))))
+	body := sb.String()
+
+	assert.Contains(t, body, `[ || ]`, "playing shows the pause icon")
+	assert.Contains(t, body, `hx-vals='{"playback": "pause"}'`)
+	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
+	assert.Contains(t, body, ` disabled aria-label="Kitchen Speaker next"`, "can_skip_forward false disables next")
+	assert.NotContains(t, body, ` disabled aria-label="Kitchen Speaker previous"`, "can_skip_backward true enables previous")
+	assert.Contains(t, body, `class="volume" name="volume" min="0" max="16" step="1" value="7"`)
+}
+
+func TestNowPlayingRowHiddenWhenEmpty(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "now_playing", roomDetailView{ID: "r1"}))
+	assert.Contains(t, sb.String(), `id="room-nowplaying-r1" class="nowplaying" hidden`)
+
+	sb.Reset()
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "now_playing", roomDetailView{ID: "r1", NowPlaying: "Kitchen Speaker: Bohemian Rhapsody — Queen"}))
+	assert.Contains(t, sb.String(), `id="room-nowplaying-r1" class="nowplaying">Kitchen Speaker: Bohemian Rhapsody — Queen</div>`)
+}
+
+func TestDeviceCommandPlaybackSkipAndVolume(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+
+	post(s, "/devices/speaker1/commands", "playback=play", true)
+	assert.Equal(t, command.Playback_ACTION_PLAY, bridge.gotCmd.GetPlayback().GetAction())
+
+	post(s, "/devices/speaker1/commands", "playback=pause", true)
+	assert.Equal(t, command.Playback_ACTION_PAUSE, bridge.gotCmd.GetPlayback().GetAction())
+
+	post(s, "/devices/speaker1/commands", "skip=forward", true)
+	assert.NotNil(t, bridge.gotCmd.GetSkipForward())
+
+	post(s, "/devices/speaker1/commands", "skip=backward", true)
+	assert.NotNil(t, bridge.gotCmd.GetSkipBackward())
+
+	post(s, "/devices/speaker1/commands", "volume=9", true)
+	assert.Equal(t, int32(9), bridge.gotCmd.GetVolumeAbsolute().GetLevel())
+
+	rec := post(s, "/devices/speaker1/commands", "volume=-1", true)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestRoomPropsCellsWater(t *testing.T) {

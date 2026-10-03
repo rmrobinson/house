@@ -86,6 +86,12 @@ func dispatchCommand(ctx context.Context, cd *castDevice, cmd *command.Command) 
 		}
 		return translateErr(sess.SeekAbsolute(ctx, target))
 
+	case cmd.GetSkipForward() != nil:
+		return translateErr(sess.QueueNext(ctx))
+
+	case cmd.GetSkipBackward() != nil:
+		return translateErr(sess.QueuePrevious(ctx))
+
 	case cmd.GetVolumeAbsolute() != nil:
 		return setVolumeAbsolute(ctx, cd, cmd.GetVolumeAbsolute().GetLevel())
 

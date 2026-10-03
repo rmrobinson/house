@@ -178,3 +178,13 @@ type seekPayload struct {
 	MediaSessionID int      `json:"mediaSessionId"`
 	CurrentTime    *float64 `json:"currentTime,omitempty"`
 }
+
+// queueUpdatePayload moves the active queue by Jump items - Cast has no
+// dedicated "skip to next/previous track" message; queue navigation is a
+// QUEUE_UPDATE carrying a relative jump (1: next item, -1: previous item).
+type queueUpdatePayload struct {
+	Type           string `json:"type"`
+	RequestID      uint32 `json:"requestId"`
+	MediaSessionID int    `json:"mediaSessionId"`
+	Jump           int    `json:"jump"`
+}

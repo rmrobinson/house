@@ -47,6 +47,8 @@ type castSession interface {
 	Pause(ctx context.Context) error
 	StopMedia(ctx context.Context) error
 	SeekAbsolute(ctx context.Context, positionS float64) error
+	QueueNext(ctx context.Context) error
+	QueuePrevious(ctx context.Context) error
 	SetVolumeLevel(ctx context.Context, level float64) error
 	SetMuted(ctx context.Context, muted bool) error
 	LaunchApp(ctx context.Context, appID string) error

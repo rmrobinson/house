@@ -39,6 +39,7 @@ const (
 	TypePause       = "PAUSE"
 	TypeStop        = "STOP"
 	TypeSeek        = "SEEK"
+	TypeQueueUpdate = "QUEUE_UPDATE"
 
 	// TypeInvalidRequest, TypeLoadFailed, and TypeLaunchError are error
 	// responses the device may send in place of the expected status type;

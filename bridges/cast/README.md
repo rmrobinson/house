@@ -55,13 +55,22 @@ enabling `cast.discovery.mdns_enabled`:
 |---|---|
 | `Playback` (PLAY/PAUSE/STOP) | An active media session (`AppConnected`, media playing/paused) |
 | `SeekAbsolute` / `SeekRelative` | Same as above |
+| `SkipForward` / `SkipBackward` | Same as above, and `can_skip_forward`/`can_skip_backward` true |
 | `VolumeAbsolute` / `VolumeRelative` | Receiver connected (works even with no app running) |
 | `Mute` | Same as above |
 | `AppLaunch` | Receiver connected (no app needs to already be running) |
 
 The table above applies equally to `Television`-kind devices (`Playback`/`SeekAbsolute`/
-`SeekRelative`/`VolumeAbsolute`/`VolumeRelative`/`Mute`/`AppLaunch`; `OnOff` isn't wired up for
-either kind — `Normalize()` never sets `Television.OnOff`, so it's always rejected as unsupported).
+`SeekRelative`/`SkipForward`/`SkipBackward`/`VolumeAbsolute`/`VolumeRelative`/`Mute`/`AppLaunch`;
+`OnOff` isn't wired up for either kind — `Normalize()` never sets `Television.OnOff`, so it's
+always rejected as unsupported).
+
+`SkipForward`/`SkipBackward` send a `QUEUE_UPDATE` with a relative `jump` (`1`/`-1`) — the
+mechanism real Cast sender apps use for "next track"/"previous track" navigation. This is
+**untested against real hardware**: unlike every other command in the table, no live device has
+confirmed a `QUEUE_UPDATE` jump actually advances the queue (see `castctrl.Session.sendQueueJump`).
+It should be exercised against a real queued session (e.g. a Spotify or YouTube Music playlist
+cast to a Chromecast Audio or Google Home Mini) before being relied on.
 
 Confirmed live against a real Google TV Streamer: `VolumeRelative` and `Mute` both round-trip
 successfully at the protocol level (the receiver acknowledges the new level/muted state, and

@@ -20,6 +20,7 @@ go_test(
     embed = [":houseview"],
     deps = [
         "//api",
+        "//api/trait",
         "@com_github_stretchr_testify//assert",
     ],
 )

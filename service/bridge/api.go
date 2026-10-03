@@ -139,7 +139,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 	} else if d.GetMediaPlayer() != nil {
 		if d.GetMediaPlayer().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
-		} else if d.GetMediaPlayer().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil) {
+		} else if d.GetMediaPlayer().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetSkipForward() != nil || req.GetSkipBackward() != nil) {
 			return true
 		} else if d.GetMediaPlayer().GetApp() != nil && req.GetAppLaunch() != nil {
 			return true
@@ -158,7 +158,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		} else if d.GetTelevision().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
-		} else if d.GetTelevision().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil) {
+		} else if d.GetTelevision().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetSkipForward() != nil || req.GetSkipBackward() != nil) {
 			return true
 		} else if d.GetTelevision().GetApp() != nil && (req.GetAppLaunch() != nil || req.GetAppClose() != nil) {
 			return true

@@ -1,6 +1,7 @@
 {{define "room_detail"}}<div class="box">
   <div class="box-title">{{.Name}}</div>
   {{template "room_props" .}}
+  {{template "now_playing" .}}
 </div>
 <div class="box">
   <div class="box-title title-bar">DEVICES{{if gt (len .Cameras) 1}}
@@ -19,6 +20,14 @@
 
 {{/* room_props_oob (room_update.html) is the same grid with hx-swap-oob, for live pushes. */}}
 {{define "room_props"}}<div id="room-props-{{.ID}}" class="stats">{{template "room_props_cells" .}}</div>{{end}}
+
+{{/* now_playing is a room's "what's playing" row, below the stats grid -
+empty (and hidden) when roomNowPlaying found nothing active. Shared by
+floor_summary (floor_panel.html) and room_detail, live-updated via
+now_playing_oob (sse.go's handleMediaUpdate) - same id either way, since only
+one of the two is ever on the page for a given room at once. */}}
+{{define "now_playing"}}<div id="room-nowplaying-{{.ID}}" class="nowplaying"{{if not .NowPlaying}} hidden{{end}}>{{.NowPlaying}}</div>{{end}}
+{{define "now_playing_oob"}}<div id="room-nowplaying-{{.ID}}" class="nowplaying" hx-swap-oob="true"{{if not .NowPlaying}} hidden{{end}}>{{.NowPlaying}}</div>{{end}}
 
 {{/* Only measures the room actually has are shown. */}}
 {{define "room_props_cells"}}{{with .Properties}}{{if .Occupied}}<div class="stat"><div class="label">Occupied</div><div class="val">{{.Occupied}}</div></div>{{end}}{{if .TemperatureC}}<div class="stat"><div class="label">Temp</div><div class="val">{{.TemperatureC}}</div></div>{{end}}{{if .LightLevelLux}}<div class="stat"><div class="label">Light</div><div class="val">{{.LightLevelLux}}</div></div>{{end}}{{if .AirQualityIndex}}<div class="stat"><div class="label">Air quality</div><div class="val">{{.AirQualityIndex}}</div></div>{{end}}{{if .Co2Ppm}}<div class="stat"><div class="label">CO2</div><div class="val">{{.Co2Ppm}}</div></div>{{end}}{{if .VocPpb}}<div class="stat"><div class="label">VOC</div><div class="val">{{.VocPpb}}</div></div>{{end}}{{if .RadonBqM3}}<div class="stat"><div class="label">Radon</div><div class="val">{{.RadonBqM3}}</div></div>{{end}}{{if .WaterDetected}}<div class="stat{{if eq .WaterDetected "Detected"}} alert{{end}}"><div class="label">Water</div><div class="val">{{.WaterDetected}}</div></div>{{end}}{{if .PowerDrawW}}<div class="stat"><div class="label">Power</div><div class="val">{{.PowerDrawW}}</div></div>{{end}}{{end}}{{end}}

@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	apiDevice "github.com/rmrobinson/house/api/device"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/lib/houseview"
 	"github.com/rmrobinson/house/service/lib/htmxutil"
 )
@@ -80,15 +82,24 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !s.writeFragments(w, "device_row_oob", deviceToView(du.GetDevice())) {
 				return
 			}
+			if houseview.Media(du.GetDevice()) != nil {
+				if !s.handleMediaUpdate(w, r, names, du.GetDevice()) {
+					return
+				}
+			}
 			flusher.Flush()
 		}
 	}
 }
 
-// nameCache maps room ID -> name for the event log's labels.
+// nameCache maps room ID -> name for the event log's labels, plus device ID
+// -> room ID so a BridgeService update (which carries a Device, with no room
+// reference of its own - only Room lists its Devices) can be routed to the
+// room whose "now playing" row and event-log line it should refresh.
 type nameCache struct {
-	mu sync.Mutex
-	m  map[string]string
+	mu         sync.Mutex
+	m          map[string]string
+	deviceRoom map[string]string
 }
 
 func (c *nameCache) get(id string) string {
@@ -100,8 +111,17 @@ func (c *nameCache) get(id string) string {
 	return id
 }
 
+// roomFor returns the room ID deviceID is linked to, or "" if it isn't
+// linked to any room on this building's floors (or the cache predates the
+// link - built once per SSE connection, like the rest of nameCache).
+func (c *nameCache) roomFor(deviceID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.deviceRoom[deviceID]
+}
+
 func (s *Server) roomNames(r *http.Request, buildingID string) *nameCache {
-	c := &nameCache{m: map[string]string{}}
+	c := &nameCache{m: map[string]string{}, deviceRoom: map[string]string{}}
 	floors, err := houseview.ListFloors(r.Context(), s.house, buildingID)
 	if err != nil {
 		s.logger.Warn("event log: unable to list floors, rooms will be labelled by id", zap.Error(err))
@@ -114,6 +134,9 @@ func (s *Server) roomNames(r *http.Request, buildingID string) *nameCache {
 		}
 		for _, room := range rooms {
 			c.m[room.GetId()] = room.GetConfig().GetName()
+			for _, d := range room.GetDevices() {
+				c.deviceRoom[d.GetId()] = room.GetId()
+			}
 		}
 	}
 	return c
@@ -135,6 +158,74 @@ func roomUpdateView(ru *api2.RoomUpdate, name string) roomUpdateData {
 		Name:       name,
 		Occ:        occupancy(ru.GetProperties()),
 		Properties: houseview.PropertiesToView(ru.GetProperties()),
+	}
+}
+
+// roomNowPlayingView feeds now_playing_oob (room_detail.html) - the same
+// ID/NowPlaying shape roomRowView and roomDetailView already carry for the
+// non-live render.
+type roomNowPlayingView struct {
+	ID         string
+	NowPlaying string
+}
+
+// handleMediaUpdate pushes the owning room's recomputed "now playing" row
+// and an event-log line for d, a device whose update just carried a Media
+// trait. Returns false (like writeFragments) only on a write error that
+// should end the SSE connection.
+//
+// The room is re-fetched rather than summarized from d alone: a room can
+// have more than one media-capable device, and roomNowPlaying picks across
+// all of them, so an accurate "now playing" row needs the room's current
+// device list, not just the one that changed. The event-log line, by
+// contrast, is about d specifically - it uses d's own state directly.
+func (s *Server) handleMediaUpdate(w http.ResponseWriter, r *http.Request, names *nameCache, d *apiDevice.Device) bool {
+	roomID := names.roomFor(d.GetId())
+	if roomID == "" {
+		// Not linked to a room on this building's floors (or linked after
+		// this cache was built) - nothing on the page to refresh.
+		return true
+	}
+
+	room, err := s.house.GetRoom(r.Context(), &api2.GetRoomRequest{Id: roomID})
+	if err != nil {
+		s.logger.Warn("event log: unable to refresh room for now-playing update", zap.String("room_id", roomID), zap.Error(err))
+		return true
+	}
+	if !s.writeFragments(w, "now_playing_oob", roomNowPlayingView{ID: roomID, NowPlaying: roomNowPlaying(room.GetDevices())}) {
+		return false
+	}
+
+	if line := mediaEventLine(d); line != "" {
+		if !s.writeFragments(w, "media_event_oob", struct{ Line string }{line}) {
+			return false
+		}
+	}
+	return true
+}
+
+// mediaEventLine renders one event-log entry for d's current media state -
+// "" for a state not worth logging (no media trait, or State unset). Unlike
+// houseview.MediaSummary (which goes silent once playback stops, so the
+// "now playing" row doesn't linger on stale content), a stopped or finished
+// session still gets its own line here - that transition is exactly the
+// "stops" half of what the event log is for.
+func mediaEventLine(d *apiDevice.Device) string {
+	m := houseview.Media(d)
+	name := houseview.DisplayName(d)
+	switch m.GetState().GetPlaybackState() {
+	case apiTrait.Media_PS_PLAYING, apiTrait.Media_PS_PAUSED, apiTrait.Media_PS_BUFFERING,
+		apiTrait.Media_PS_FAST_FORWARD, apiTrait.Media_PS_REWIND:
+		if s := houseview.MediaSummary(m); s != "" {
+			return name + ": " + s
+		}
+		return ""
+	case apiTrait.Media_PS_STOPPED:
+		return name + ": Stopped"
+	case apiTrait.Media_PS_COMPLETED:
+		return name + ": Finished"
+	default:
+		return ""
 	}
 }
 

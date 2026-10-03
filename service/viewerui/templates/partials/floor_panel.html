@@ -28,5 +28,6 @@ grid reuses room-props-<id> so live room updates refresh it too. */}}
 {{define "floor_summary"}}{{if .Rooms}}{{$b := .BuildingID}}{{range .Rooms}}<div class="box">
   <div class="box-title title-bar"><button class="row" data-room="{{.ID}}" hx-get="/rooms/{{.ID}}" hx-target="#detail" hx-swap="innerHTML" hx-push-url="/buildings/{{$b}}?room={{.ID}}"><span id="room-sum-dot-{{.ID}}" class="dot dot-{{.Occ}}" role="img" aria-label="{{.OccLabel}}" title="{{.OccLabel}}"></span>{{.Name}}</button></div>
   {{template "room_props" .}}
+  {{template "now_playing" .}}
 </div>
 {{end}}{{else}}<p class="dim">No rooms on this floor.</p>{{end}}{{end}}
