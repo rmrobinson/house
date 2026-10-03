@@ -1,0 +1,27 @@
+notification:
+  listen_port: 17040
+
+  # Outbound SMTP relay this service sends email through - no
+  # authentication, since it's reached only from the trusted house network,
+  # not the public internet.
+  smtp_addr: mail1.ktc1.net.faltung.ca:25
+  from: house@ktc1.net.faltung.ca
+
+  # Recipients are resolved by id from a SendMessageRequest's recipient_ids
+  # - a caller (e.g. a policy script, via notify.send) never sees a channel
+  # type or address, only ever this id. One recipient can list more than one
+  # channel; every channel listed gets its own copy of the message.
+  recipients:
+    - id: r
+      name: Robert
+      channels:
+        - type: email
+          address: r@faltung.ca
+
+  # Optional: mutual TLS for this process's own NotificationService
+  # listener, same convention as every other service here. Leave all three
+  # blank (the default) to speak plaintext gRPC.
+  tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""

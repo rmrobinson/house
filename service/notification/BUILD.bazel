@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "notification",
+    srcs = [
+        "recipients.go",
+        "service.go",
+        "smtp.go",
+    ],
+    importpath = "github.com/rmrobinson/house/service/notification",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "notification_test",
+    srcs = [
+        "recipients_test.go",
+        "service_test.go",
+        "smtp_test.go",
+    ],
+    embed = [":notification"],
+    deps = [
+        "//api",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

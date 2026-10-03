@@ -11,6 +11,7 @@ proto_library(
     srcs = [
         "bridge.proto",
         "house.proto",
+        "notification.proto",
         "policy.proto",
         "sensor.proto",
     ],
