@@ -109,6 +109,7 @@
       <tr>
         {{template "device_info" .}}
         <td>
+          <button hx-get="/rooms/{{$roomID}}/devices/{{.ID}}/rename" hx-target="#picker" hx-swap="innerHTML">Rename</button>
           <form class="inline" hx-post="/rooms/{{$roomID}}/unlink" hx-target="#page-content" hx-swap="outerHTML">
             <input type="hidden" name="device_id" value="{{.ID}}">
             <button type="submit">Unlink</button>

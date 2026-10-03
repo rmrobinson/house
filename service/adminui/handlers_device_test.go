@@ -79,3 +79,19 @@ func TestDevicesPageAndPickersRender(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `<dialog class="picker-dialog">`)
 	assert.Contains(t, rec.Body.String(), "Acme")
 }
+
+func TestDeviceRenameFormTarget(t *testing.T) {
+	s := &Server{logger: zaptest.NewLogger(t)}
+
+	// Opened from /devices (no RoomID) - posts back to the devices rename
+	// endpoint.
+	rec := httptest.NewRecorder()
+	s.renderFragment(rec, "device_rename", deviceRenameData{DeviceID: "d1", CurrentName: "Lamp"})
+	assert.Contains(t, rec.Body.String(), `hx-post="/devices/d1/rename"`)
+
+	// Opened from a room's device list - posts back to that room's rename
+	// endpoint instead.
+	rec = httptest.NewRecorder()
+	s.renderFragment(rec, "device_rename", deviceRenameData{DeviceID: "d1", CurrentName: "Lamp", RoomID: "r1"})
+	assert.Contains(t, rec.Body.String(), `hx-post="/rooms/r1/devices/d1/rename"`)
+}

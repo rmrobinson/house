@@ -78,6 +78,8 @@ func newApp(rootCtx context.Context, logger *zap.Logger, configPath string, tlsC
 	mux.HandleFunc("GET /rooms/{id}/device-picker", a.handle((*Server).handleRoomDevicePicker))
 	mux.HandleFunc("POST /rooms/{id}/link", a.handle((*Server).handleRoomLinkDevice))
 	mux.HandleFunc("POST /rooms/{id}/unlink", a.handle((*Server).handleRoomUnlinkDevice))
+	mux.HandleFunc("GET /rooms/{id}/devices/{deviceID}/rename", a.handle((*Server).handleRoomDeviceRenamePicker))
+	mux.HandleFunc("POST /rooms/{id}/devices/{deviceID}/rename", a.handle((*Server).handleRoomDeviceRename))
 
 	mux.HandleFunc("GET /devices", a.handle((*Server).handleDevicesList))
 	mux.HandleFunc("GET /devices/{id}/room-picker", a.handle((*Server).handleDeviceRoomPicker))

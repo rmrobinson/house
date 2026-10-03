@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	apiDevice "github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
@@ -246,6 +247,61 @@ func (s *Server) handleRoomLinkDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.respond(w, "room", data, flash, false)
+}
+
+// handleRoomDeviceRenamePicker opens the rename dialog for a device shown in
+// a room's own device list - the room-page counterpart to
+// handleDeviceRenamePicker, which does the same for a /devices row. The
+// dialog it renders is identical except for carrying RoomID, which routes
+// the Save POST back to this room's rename endpoint instead of /devices'.
+func (s *Server) handleRoomDeviceRenamePicker(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	deviceID := r.PathValue("deviceID")
+	ctx := r.Context()
+
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	s.renderFragment(w, "device_rename", deviceRenameData{
+		DeviceID:    deviceID,
+		CurrentName: houseview.DisplayName(d),
+		Version:     d.GetVersion(),
+		RoomID:      roomID,
+	})
+}
+
+// handleRoomDeviceRename saves a new display name for a device from the room
+// page - the room-page counterpart to handleDeviceRename, re-rendering the
+// room's own content instead of /devices' after the save.
+func (s *Server) handleRoomDeviceRename(w http.ResponseWriter, r *http.Request) {
+	roomID := r.PathValue("id")
+	deviceID := r.PathValue("deviceID")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	name := r.FormValue("name")
+	ctx := r.Context()
+
+	_, err := s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:      deviceID,
+		Version: r.FormValue("version"),
+		Config:  &apiDevice.Device_Config{Name: name},
+	})
+
+	data, loadErr := s.loadRoomPageData(r, roomID)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
+	}
+	if err != nil {
+		s.respond(w, "room", data, houseview.Message(err), true)
+		return
+	}
+	s.respond(w, "room", data, fmt.Sprintf("Renamed to %s", name), false)
 }
 
 func (s *Server) handleRoomUnlinkDevice(w http.ResponseWriter, r *http.Request) {

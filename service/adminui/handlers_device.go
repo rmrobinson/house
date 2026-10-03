@@ -199,6 +199,11 @@ type deviceRenameData struct {
 	// handleDeviceRename can detect it's changed since - see
 	// house.DeviceConfigOverlay.UpdateDeviceConfig.
 	Version string
+	// RoomID is set when this dialog was opened from a room's device list
+	// (/rooms/{RoomID}/devices/{DeviceID}/rename) rather than /devices, so
+	// the form can post back to the right page's rename endpoint - see
+	// device_rename.html.
+	RoomID string
 }
 
 // handleDeviceRename saves a new display name for a device - persisted as a
