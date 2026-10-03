@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiTrait "github.com/rmrobinson/house/api/trait"
@@ -50,8 +51,9 @@ func TestPropertiesToView(t *testing.T) {
 }
 
 func TestMediaSummary(t *testing.T) {
-	assert.Equal(t, "", MediaSummary(nil))
-	assert.Equal(t, "", MediaSummary(&apiTrait.Media{}))
+	assert.Equal(t, "", MediaSummary(nil, ""))
+	assert.Equal(t, "", MediaSummary(&apiTrait.Media{}, ""))
+	assert.Equal(t, "", MediaSummary(&apiTrait.Media{}, "Plex"))
 
 	song := &apiTrait.Media{State: &apiTrait.Media_State{
 		PlaybackState: apiTrait.Media_PS_PLAYING,
@@ -61,14 +63,14 @@ func TestMediaSummary(t *testing.T) {
 			Artists:  []string{"Queen"},
 		},
 	}}
-	assert.Equal(t, "Bohemian Rhapsody — Queen", MediaSummary(song))
+	assert.Equal(t, "Bohemian Rhapsody — Queen", MediaSummary(song, ""))
 
 	paused := &apiTrait.Media{State: &apiTrait.Media_State{
 		PlaybackState: apiTrait.Media_PS_PAUSED,
 		MediaType:     apiTrait.Media_TYPE_SONG,
 		SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody"},
 	}}
-	assert.Equal(t, "Paused — Bohemian Rhapsody", MediaSummary(paused))
+	assert.Equal(t, "Paused — Bohemian Rhapsody", MediaSummary(paused, ""))
 
 	// Stopped/completed media carries no visible summary even if stale
 	// details are still sitting in State from the last active session.
@@ -77,7 +79,7 @@ func TestMediaSummary(t *testing.T) {
 		MediaType:     apiTrait.Media_TYPE_SONG,
 		SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody"},
 	}}
-	assert.Equal(t, "", MediaSummary(stopped))
+	assert.Equal(t, "", MediaSummary(stopped, ""))
 
 	show := &apiTrait.Media{State: &apiTrait.Media_State{
 		PlaybackState: apiTrait.Media_PS_PLAYING,
@@ -87,7 +89,25 @@ func TestMediaSummary(t *testing.T) {
 			EpisodeTitle: "Chapter One",
 		},
 	}}
-	assert.Equal(t, "Stranger Things — Chapter One", MediaSummary(show))
+	assert.Equal(t, "Stranger Things — Chapter One", MediaSummary(show, ""))
+
+	// Confirmed live against a real Google TV Streamer running Plex's
+	// Android TV app: CASTV2 reports metadataType MOVIE with artwork but no
+	// title - appName is the only identifiable text available in that case.
+	movieNoTitle := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_PLAYING,
+		MediaType:     apiTrait.Media_TYPE_MOVIE,
+		MovieDetails:  &apiTrait.Media_MovieDetails{ArtUrl: proto.String("https://example.com/art.jpg")},
+	}}
+	assert.Equal(t, "", MediaSummary(movieNoTitle, ""))
+	assert.Equal(t, "Plex", MediaSummary(movieNoTitle, "Plex"))
+
+	movieWithTitle := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_PLAYING,
+		MediaType:     apiTrait.Media_TYPE_MOVIE,
+		MovieDetails:  &apiTrait.Media_MovieDetails{Title: "Inception"},
+	}}
+	assert.Equal(t, "Inception", MediaSummary(movieWithTitle, "Plex"))
 }
 
 func TestPropertiesToView_BatteryRuntime(t *testing.T) {

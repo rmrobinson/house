@@ -22,5 +22,6 @@ go_test(
         "//api",
         "//api/trait",
         "@com_github_stretchr_testify//assert",
+        "@org_golang_google_protobuf//proto",
     ],
 )

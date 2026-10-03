@@ -239,7 +239,7 @@ func mediaEventLine(d *apiDevice.Device) string {
 	switch m.GetState().GetPlaybackState() {
 	case apiTrait.Media_PS_PLAYING, apiTrait.Media_PS_PAUSED, apiTrait.Media_PS_BUFFERING,
 		apiTrait.Media_PS_FAST_FORWARD, apiTrait.Media_PS_REWIND:
-		if s := houseview.MediaSummary(m); s != "" {
+		if s := houseview.MediaSummary(m, houseview.App(d).GetState().GetApplicationName()); s != "" {
 			return name + ": " + s
 		}
 		return ""
