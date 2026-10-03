@@ -44,7 +44,6 @@
   button.toggle:hover, button.action:hover { border-color: var(--fg); }
   .err { color: var(--err); font-size: 0.8rem; }
   video { width: 100%; background: #000; display: block; }
-  input.dimmer { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
   output.level { display: inline-block; min-width: 3rem; margin-right: 0.6rem; text-align: right; }
   #status { position: fixed; top: 0.5rem; right: 0.75rem; font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); }
   #status.down { color: var(--err); }
@@ -55,6 +54,12 @@
   dialog { background: var(--bg); color: var(--fg); border: 1px solid var(--line); padding: 0; min-width: min(20rem, 90vw); }
   dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
   .pad { padding: 0.5rem 0.75rem; }
+  .nowplaying { padding: 0.5rem 0.75rem; border-top: 1px solid var(--line); color: var(--accent); }
+  .nowplaying[hidden] { display: none; }
+  .nowplaying-device { font-size: 0.8rem; }
+  input.dimmer, input.volume { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
+  button.action:disabled, button.toggle:disabled { opacity: 0.35; cursor: default; border-color: var(--line); }
+  button.action:disabled:hover, button.toggle:disabled:hover { border-color: var(--line); }
 </style>
 </head>
 <body>
@@ -106,18 +111,25 @@ document.addEventListener('htmx:responseError', function (e) {
 });
 document.addEventListener('htmx:sendError', function () { flash('Unable to reach the server'); });
 
-// Live level readout while dragging a dimmer (the command goes out on release).
+// Live level readout while dragging a dimmer or volume slider (the command
+// goes out on release). Brightness is always a 0-100 percentage; volume's
+// range is whatever the device reports (Volume.Attributes.maximum_level),
+// so only the dimmer gets a "%" suffix.
 document.addEventListener('input', function (e) {
-  if (!e.target.matches('input.dimmer')) return;
-  var o = e.target.nextElementSibling;
-  if (o) o.textContent = e.target.value + '%';
+  if (e.target.matches('input.dimmer')) {
+    var o = e.target.nextElementSibling;
+    if (o) o.textContent = e.target.value + '%';
+  } else if (e.target.matches('input.volume')) {
+    var o = e.target.nextElementSibling;
+    if (o) o.textContent = e.target.value;
+  }
 });
 
 // Don't let a live push redraw a row while the user is interacting with it
-// (it would snap the slider back mid-drag).
+// (it would snap a slider back mid-drag).
 document.addEventListener('htmx:oobBeforeSwap', function (e) {
   var t = e.detail.target;
-  if (t && t.tagName === 'TR' && t.contains(document.activeElement) && document.activeElement.matches('input.dimmer')) {
+  if (t && t.tagName === 'TR' && t.contains(document.activeElement) && document.activeElement.matches('input.dimmer, input.volume')) {
     e.detail.shouldSwap = false;
   }
 });

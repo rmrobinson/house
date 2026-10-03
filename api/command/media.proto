@@ -28,3 +28,11 @@ message SeekAbsolute {
 message SeekRelative {
   double delta_s = 1;
 }
+
+// SkipForward advances to the next item in the device's playback queue.
+// Only meaningful when trait.Media.Attributes.can_skip_forward is true.
+message SkipForward {}
+
+// SkipBackward returns to the previous item in the device's playback queue.
+// Only meaningful when trait.Media.Attributes.can_skip_backward is true.
+message SkipBackward {}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -27,6 +29,24 @@ import (
 type fakeHouse struct {
 	api2.UnimplementedHouseServiceServer
 	updates chan *api2.HouseUpdate
+
+	mu sync.Mutex
+	// extraDevice, when set, is appended to room r1's Devices in both
+	// ListRooms and GetRoom - used to put a media-capable device on a room
+	// a test can then push BridgeService updates for.
+	extraDevice *apiDevice.Device
+}
+
+func (f *fakeHouse) setExtraDevice(d *apiDevice.Device) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.extraDevice = d
+}
+
+func (f *fakeHouse) getExtraDevice() *apiDevice.Device {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.extraDevice
 }
 
 func (f *fakeHouse) ListBuildings(_ *api2.ListBuildingsRequest, s api2.HouseService_ListBuildingsServer) error {
@@ -43,16 +63,24 @@ func (f *fakeHouse) ListRooms(_ *api2.ListRoomsRequest, s api2.HouseService_List
 	occ := true
 	s.Send(&api2.Room{Id: "r2", Config: &api2.Room_Config{Name: "Kitchen"}, Properties: &api2.Room_Properties{Occupied: &occ}})
 	temp := 19.5
-	return s.Send(&api2.Room{Id: "r1", Config: &api2.Room_Config{Name: "Bath"}, Properties: &api2.Room_Properties{TemperatureC: &temp}})
+	r1 := &api2.Room{Id: "r1", Config: &api2.Room_Config{Name: "Bath"}, Properties: &api2.Room_Properties{TemperatureC: &temp}}
+	if d := f.getExtraDevice(); d != nil {
+		r1.Devices = []*apiDevice.Device{d}
+	}
+	return s.Send(r1)
 }
 func (f *fakeHouse) GetRoom(context.Context, *api2.GetRoomRequest) (*api2.Room, error) {
 	temp := 21.4
 	co2 := int32(640)
+	devices := []*apiDevice.Device{lamp(false), cam()}
+	if d := f.getExtraDevice(); d != nil {
+		devices = append(devices, d)
+	}
 	return &api2.Room{
 		Id: "r1", FloorId: "f1", BuildingId: "b1",
 		Config:     &api2.Room_Config{Name: "Bath"},
 		Properties: &api2.Room_Properties{TemperatureC: &temp, Co2Ppm: &co2},
-		Devices:    []*apiDevice.Device{lamp(false), cam()},
+		Devices:    devices,
 	}, nil
 }
 func (f *fakeHouse) StreamHouseUpdates(_ *api2.StreamHouseUpdatesRequest, s api2.HouseService_StreamHouseUpdatesServer) error {
@@ -88,6 +116,40 @@ func dimLamp(on bool, level int32) *apiDevice.Device {
 	}
 }
 
+// speaker builds a MediaPlayer fixture. playing picks PS_PLAYING vs
+// PS_PAUSED so tests can exercise the play/pause button's two states;
+// skipFwd/skipBack independently gate the next/previous buttons, matching
+// how a real bridge (e.g. cast) reports them.
+func speaker(name string, playing, skipFwd, skipBack bool) *apiDevice.Device {
+	state := apiTrait.Media_PS_PAUSED
+	if playing {
+		state = apiTrait.Media_PS_PLAYING
+	}
+	return &apiDevice.Device{
+		Id:      "speaker-" + name,
+		Config:  &apiDevice.Device_Config{Name: name},
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Details: &apiDevice.Device_MediaPlayer{MediaPlayer: &apiDevice.MediaPlayer{
+			Media: &apiTrait.Media{
+				Attributes: &apiTrait.Media_Attributes{
+					CanControl:      true,
+					CanSkipForward:  proto.Bool(skipFwd),
+					CanSkipBackward: proto.Bool(skipBack),
+				},
+				State: &apiTrait.Media_State{
+					PlaybackState: state,
+					MediaType:     apiTrait.Media_TYPE_SONG,
+					SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody", Artists: []string{"Queen"}},
+				},
+			},
+			Volume: &apiTrait.Volume{
+				Attributes: &apiTrait.Volume_Attributes{CanControl: true, MaximumLevel: 16},
+				State:      &apiTrait.Volume_State{Level: 7},
+			},
+		}},
+	}
+}
+
 func cam() *apiDevice.Device {
 	return &apiDevice.Device{
 		Id:      "cam1",
@@ -105,6 +167,9 @@ type fakeBridge struct {
 	camEndpoints []*apiTrait.MediaStream_Endpoint
 	// cmdErr, when set, is returned from ExecuteCommand.
 	cmdErr error
+	// updates, when non-nil, feeds StreamUpdates - a test can push an
+	// *api2.Update onto it to simulate a live BridgeService device update.
+	updates chan *api2.Update
 }
 
 func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*apiDevice.Device, error) {
@@ -133,8 +198,20 @@ func (f *fakeBridge) ExecuteCommand(_ context.Context, c *command.Command) (*api
 	return lamp(c.GetOnOff().GetOn()), nil
 }
 func (f *fakeBridge) StreamUpdates(_ *api2.StreamUpdatesRequest, s api2.BridgeService_StreamUpdatesServer) error {
-	<-s.Context().Done()
-	return nil
+	if f.updates == nil {
+		<-s.Context().Done()
+		return nil
+	}
+	for {
+		select {
+		case <-s.Context().Done():
+			return nil
+		case u := <-f.updates:
+			if err := s.Send(u); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func startTestServer(t *testing.T) (*Server, *fakeHouse, *fakeBridge) {
@@ -143,7 +220,7 @@ func startTestServer(t *testing.T) (*Server, *fakeHouse, *fakeBridge) {
 	require.NoError(t, err)
 
 	house := &fakeHouse{updates: make(chan *api2.HouseUpdate, 4)}
-	bridge := &fakeBridge{}
+	bridge := &fakeBridge{updates: make(chan *api2.Update, 4)}
 	gs := grpc.NewServer()
 	api2.RegisterHouseServiceServer(gs, house)
 	api2.RegisterBridgeServiceServer(gs, bridge)
@@ -329,6 +406,83 @@ func TestEventsStreamsRoomUpdateAsOOB(t *testing.T) {
 	}
 }
 
+// TestEventsMediaUpdateSkipsNoopButRefreshesOnChange guards against the
+// now-playing row and event log being spammed by every BridgeService update
+// for a media-capable device, even ones that don't touch playback (a volume
+// change on a device that's mid-session still carries its unchanged Media
+// trait alongside the Volume one - see nameCache.mediaChanged). Only a
+// devUpdate whose houseview.MediaSignature actually differs from the last
+// one seen should trigger the now_playing_oob/media_event_oob refresh.
+func TestEventsMediaUpdateSkipsNoopButRefreshesOnChange(t *testing.T) {
+	playing := speaker("Kitchen Speaker", true, true, true)
+	s, house, bridge := startTestServer(t)
+	house.setExtraDevice(playing)
+
+	srv := httptest.NewServer(s.routes())
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/buildings/b1/events")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	read := func() <-chan string {
+		ch := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 8192)
+			n, _ := resp.Body.Read(buf)
+			ch <- string(buf[:n])
+		}()
+		return ch
+	}
+
+	// Resend the unchanged, already-playing device until the hub delivers
+	// something for it (a message sent before a subscriber connects is
+	// lost - same caveat as TestEventsStreamsRoomUpdateAsOOB above).
+	pending := read()
+	var gotUnchanged string
+	deadline := time.After(5 * time.Second)
+	for gotUnchanged == "" {
+		select {
+		case got := <-pending:
+			gotUnchanged = got
+		case <-time.After(50 * time.Millisecond):
+			select {
+			case bridge.updates <- &api2.Update{Action: api2.Update_CHANGED, Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{DeviceId: playing.GetId(), Device: playing}}}:
+			default:
+			}
+		case <-deadline:
+			t.Fatal("no SSE message for unchanged update")
+		}
+	}
+	assert.Contains(t, gotUnchanged, `id="device-`+playing.GetId()+`"`, "the device row itself still refreshes")
+	assert.NotContains(t, gotUnchanged, `id="room-nowplaying-r1"`, "unchanged media signature must not re-push now playing")
+	assert.NotContains(t, gotUnchanged, `afterbegin:#event-log"><div>Kitchen Speaker:`, "unchanged media signature must not re-log an event")
+
+	// Now actually change playback state - the room's device list (as
+	// GetRoom would report it) needs to agree with the pushed update.
+	paused := speaker("Kitchen Speaker", false, true, true)
+	house.setExtraDevice(paused)
+
+	pending = read()
+	var gotChanged string
+	deadline = time.After(5 * time.Second)
+	for gotChanged == "" {
+		select {
+		case got := <-pending:
+			gotChanged = got
+		case <-time.After(50 * time.Millisecond):
+			select {
+			case bridge.updates <- &api2.Update{Action: api2.Update_CHANGED, Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{DeviceId: paused.GetId(), Device: paused}}}:
+			default:
+			}
+		case <-deadline:
+			t.Fatal("no SSE message for changed update")
+		}
+	}
+	assert.Contains(t, gotChanged, `id="room-nowplaying-r1"`, "changed media signature must refresh now playing")
+	assert.Contains(t, gotChanged, "Kitchen Speaker: Paused — Bohemian Rhapsody — Queen", "changed media signature must log an event")
+}
+
 func TestDeviceCommandRejectsRequestsWithoutHXRequest(t *testing.T) {
 	s, _, bridge := startTestServer(t)
 	rec := post(s, "/devices/lamp/commands", "on=true", false)
@@ -479,6 +633,88 @@ func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(cam())))
 	assert.Contains(t, sb.String(), `id="device-info-cam1"`)
 	assert.NotContains(t, sb.String(), "<tr", "replacing the row would drop its VIEW button")
+}
+
+func TestDeviceToViewPopulatesMediaAndVolume(t *testing.T) {
+	dv := deviceToView(speaker("Kitchen Speaker", true, false, true))
+	assert.True(t, dv.CanControlMedia)
+	assert.True(t, dv.IsPlaying)
+	assert.False(t, dv.CanSkipForward)
+	assert.True(t, dv.CanSkipBackward)
+	assert.Equal(t, "Bohemian Rhapsody — Queen", dv.NowPlaying)
+	assert.True(t, dv.CanControlVolume)
+	assert.Equal(t, 7, dv.VolumeLevel)
+	assert.Equal(t, 16, dv.VolumeMax)
+
+	paused := deviceToView(speaker("Kitchen Speaker", false, true, true))
+	assert.False(t, paused.IsPlaying)
+}
+
+func TestRoomNowPlayingPicksFirstActiveDevice(t *testing.T) {
+	assert.Equal(t, "", roomNowPlaying([]*apiDevice.Device{lamp(false)}), "no media-capable device")
+
+	devices := []*apiDevice.Device{lamp(false), speaker("Kitchen Speaker", true, true, true)}
+	assert.Equal(t, "Kitchen Speaker: Bohemian Rhapsody — Queen", roomNowPlaying(devices))
+}
+
+func TestMediaEventLine(t *testing.T) {
+	assert.Equal(t, "Kitchen Speaker: Bohemian Rhapsody — Queen", mediaEventLine(speaker("Kitchen Speaker", true, true, true)))
+	assert.Equal(t, "Kitchen Speaker: Paused — Bohemian Rhapsody — Queen", mediaEventLine(speaker("Kitchen Speaker", false, true, true)))
+
+	stopped := speaker("Kitchen Speaker", true, true, true)
+	stopped.GetMediaPlayer().GetMedia().GetState().PlaybackState = apiTrait.Media_PS_STOPPED
+	assert.Equal(t, "Kitchen Speaker: Stopped", mediaEventLine(stopped))
+
+	finished := speaker("Kitchen Speaker", true, true, true)
+	finished.GetMediaPlayer().GetMedia().GetState().PlaybackState = apiTrait.Media_PS_COMPLETED
+	assert.Equal(t, "Kitchen Speaker: Finished", mediaEventLine(finished))
+
+	assert.Equal(t, "", mediaEventLine(lamp(false)), "no media trait")
+}
+
+func TestDeviceRowRendersMediaControlsGatedOnSkipCapability(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_cells", deviceToView(speaker("Kitchen Speaker", true, false, true))))
+	body := sb.String()
+
+	assert.Contains(t, body, `[ || ]`, "playing shows the pause icon")
+	assert.Contains(t, body, `hx-vals='{"playback": "pause"}'`)
+	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
+	assert.Contains(t, body, ` disabled aria-label="Kitchen Speaker next"`, "can_skip_forward false disables next")
+	assert.NotContains(t, body, ` disabled aria-label="Kitchen Speaker previous"`, "can_skip_backward true enables previous")
+	assert.Contains(t, body, `class="volume" name="volume" min="0" max="16" step="1" value="7"`)
+}
+
+func TestNowPlayingRowHiddenWhenEmpty(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "now_playing", roomDetailView{ID: "r1"}))
+	assert.Contains(t, sb.String(), `id="room-nowplaying-r1" class="nowplaying" hidden`)
+
+	sb.Reset()
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "now_playing", roomDetailView{ID: "r1", NowPlaying: "Kitchen Speaker: Bohemian Rhapsody — Queen"}))
+	assert.Contains(t, sb.String(), `id="room-nowplaying-r1" class="nowplaying">Kitchen Speaker: Bohemian Rhapsody — Queen</div>`)
+}
+
+func TestDeviceCommandPlaybackSkipAndVolume(t *testing.T) {
+	s, _, bridge := startTestServer(t)
+
+	post(s, "/devices/speaker1/commands", "playback=play", true)
+	assert.Equal(t, command.Playback_ACTION_PLAY, bridge.gotCmd.GetPlayback().GetAction())
+
+	post(s, "/devices/speaker1/commands", "playback=pause", true)
+	assert.Equal(t, command.Playback_ACTION_PAUSE, bridge.gotCmd.GetPlayback().GetAction())
+
+	post(s, "/devices/speaker1/commands", "skip=forward", true)
+	assert.NotNil(t, bridge.gotCmd.GetSkipForward())
+
+	post(s, "/devices/speaker1/commands", "skip=backward", true)
+	assert.NotNil(t, bridge.gotCmd.GetSkipBackward())
+
+	post(s, "/devices/speaker1/commands", "volume=9", true)
+	assert.Equal(t, int32(9), bridge.gotCmd.GetVolumeAbsolute().GetLevel())
+
+	rec := post(s, "/devices/speaker1/commands", "volume=-1", true)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestRoomPropsCellsWater(t *testing.T) {

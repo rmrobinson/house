@@ -67,6 +67,7 @@ func (s *Server) loadFloorPanel(r *http.Request, buildingID, floorID string) (fl
 			Name:       room.GetConfig().GetName(),
 			Occ:        occupancy(room.GetProperties()),
 			Properties: houseview.PropertiesToView(room.GetProperties()),
+			NowPlaying: roomNowPlaying(room.GetDevices()),
 		})
 	}
 	return panel, nil
@@ -197,7 +198,9 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 
 // handleDeviceCommand applies one control to a device and swaps in its
 // updated row: form field "on" (true|false) sends OnOff, "brightness"
-// (0-100) sends BrightnessAbsolute.
+// (0-100) sends BrightnessAbsolute, "playback" (play|pause) sends Playback,
+// "skip" (forward|backward) sends SkipForward/SkipBackward, "volume" (0-N)
+// sends VolumeAbsolute.
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -216,8 +219,23 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		cmd.Details = &command.Command_BrightnessAbsolute{BrightnessAbsolute: &command.BrightnessAbsolute{BrightnessPercent: int32(level)}}
 	case r.PostForm.Get("on") == "true", r.PostForm.Get("on") == "false":
 		cmd.Details = &command.Command_OnOff{OnOff: &command.OnOff{On: r.PostForm.Get("on") == "true"}}
+	case r.PostForm.Get("playback") == "play":
+		cmd.Details = &command.Command_Playback{Playback: &command.Playback{Action: command.Playback_ACTION_PLAY}}
+	case r.PostForm.Get("playback") == "pause":
+		cmd.Details = &command.Command_Playback{Playback: &command.Playback{Action: command.Playback_ACTION_PAUSE}}
+	case r.PostForm.Get("skip") == "forward":
+		cmd.Details = &command.Command_SkipForward{SkipForward: &command.SkipForward{}}
+	case r.PostForm.Get("skip") == "backward":
+		cmd.Details = &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}
+	case r.PostForm.Has("volume"):
+		level, err := strconv.Atoi(r.PostForm.Get("volume"))
+		if err != nil || level < 0 {
+			http.Error(w, "volume must be a non-negative integer", http.StatusBadRequest)
+			return
+		}
+		cmd.Details = &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: int32(level)}}
 	default:
-		http.Error(w, `expected on=true|false or brightness=0-100`, http.StatusBadRequest)
+		http.Error(w, `expected on=true|false, brightness=0-100, playback=play|pause, skip=forward|backward, or volume=0-N`, http.StatusBadRequest)
 		return
 	}
 

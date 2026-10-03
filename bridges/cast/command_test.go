@@ -20,6 +20,7 @@ type fakeSession struct {
 
 	playCalled, pauseCalled, stopCalled bool
 	seekCalls                           []float64
+	queueJumpCalls                      []int
 	volumeCalls                         []float64
 	muteCalls                           []bool
 	launchCalls                         []string
@@ -48,6 +49,16 @@ func (f *fakeSession) StopMedia(ctx context.Context) error {
 
 func (f *fakeSession) SeekAbsolute(ctx context.Context, positionS float64) error {
 	f.seekCalls = append(f.seekCalls, positionS)
+	return f.err
+}
+
+func (f *fakeSession) QueueNext(ctx context.Context) error {
+	f.queueJumpCalls = append(f.queueJumpCalls, 1)
+	return f.err
+}
+
+func (f *fakeSession) QueuePrevious(ctx context.Context) error {
+	f.queueJumpCalls = append(f.queueJumpCalls, -1)
 	return f.err
 }
 
@@ -105,6 +116,26 @@ func TestDispatchCommand_SeekAbsolute(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []float64{42}, f.seekCalls)
+}
+
+func TestDispatchCommand_SkipForward(t *testing.T) {
+	f := &fakeSession{}
+	cd := &castDevice{session: f}
+	err := dispatchCommand(context.Background(), cd, &command.Command{
+		Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []int{1}, f.queueJumpCalls)
+}
+
+func TestDispatchCommand_SkipBackward(t *testing.T) {
+	f := &fakeSession{}
+	cd := &castDevice{session: f}
+	err := dispatchCommand(context.Background(), cd, &command.Command{
+		Details: &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []int{-1}, f.queueJumpCalls)
 }
 
 func TestDispatchCommand_SeekRelative_ClampedToDuration(t *testing.T) {

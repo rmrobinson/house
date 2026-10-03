@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	api2 "github.com/rmrobinson/house/api"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 )
 
 func TestPropertiesToView(t *testing.T) {
@@ -46,6 +47,47 @@ func TestPropertiesToView(t *testing.T) {
 	pv = PropertiesToView(&api2.Room_Properties{Occupied: &notOccupied})
 	assert.Equal(t, "No", pv.Occupied)
 	assert.Equal(t, "", pv.TemperatureC)
+}
+
+func TestMediaSummary(t *testing.T) {
+	assert.Equal(t, "", MediaSummary(nil))
+	assert.Equal(t, "", MediaSummary(&apiTrait.Media{}))
+
+	song := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_PLAYING,
+		MediaType:     apiTrait.Media_TYPE_SONG,
+		SongDetails: &apiTrait.Media_SongDetails{
+			SongName: "Bohemian Rhapsody",
+			Artists:  []string{"Queen"},
+		},
+	}}
+	assert.Equal(t, "Bohemian Rhapsody — Queen", MediaSummary(song))
+
+	paused := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_PAUSED,
+		MediaType:     apiTrait.Media_TYPE_SONG,
+		SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody"},
+	}}
+	assert.Equal(t, "Paused — Bohemian Rhapsody", MediaSummary(paused))
+
+	// Stopped/completed media carries no visible summary even if stale
+	// details are still sitting in State from the last active session.
+	stopped := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_STOPPED,
+		MediaType:     apiTrait.Media_TYPE_SONG,
+		SongDetails:   &apiTrait.Media_SongDetails{SongName: "Bohemian Rhapsody"},
+	}}
+	assert.Equal(t, "", MediaSummary(stopped))
+
+	show := &apiTrait.Media{State: &apiTrait.Media_State{
+		PlaybackState: apiTrait.Media_PS_PLAYING,
+		MediaType:     apiTrait.Media_TYPE_SHOW,
+		ShowDetails: &apiTrait.Media_ShowDetails{
+			ShowTitle:    "Stranger Things",
+			EpisodeTitle: "Chapter One",
+		},
+	}}
+	assert.Equal(t, "Stranger Things — Chapter One", MediaSummary(show))
 }
 
 func TestPropertiesToView_BatteryRuntime(t *testing.T) {

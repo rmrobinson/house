@@ -27,6 +27,9 @@ type roomRowView struct {
 	Occ string
 	// Properties feeds the floor summary's per-room readings.
 	Properties houseview.Properties
+	// NowPlaying is "" when nothing in the room is playing or paused -
+	// see roomNowPlaying.
+	NowPlaying string
 }
 
 // OccLabel is the dot's text alternative.
@@ -43,9 +46,25 @@ type deviceView struct {
 	On        bool
 	// CanDim is true when the device has a controllable Brightness trait;
 	// Level is its current 0-100 level.
-	CanDim   bool
-	Level    int
-	IsCamera bool
+	CanDim bool
+	Level  int
+	// NowPlaying is this device's own MediaSummary, shown under its name in
+	// the devices table regardless of whether CanControlMedia is set (a
+	// read-only media player still reports what's playing).
+	NowPlaying string
+	// CanControlMedia is true when the device's Media trait allows control;
+	// IsPlaying picks the play/pause button's icon and action. CanSkipForward/
+	// CanSkipBackward gate the next/previous buttons individually.
+	CanControlMedia bool
+	IsPlaying       bool
+	CanSkipForward  bool
+	CanSkipBackward bool
+	// CanControlVolume is true when the device's Volume trait allows
+	// control; VolumeLevel/VolumeMax bound the slider.
+	CanControlVolume bool
+	VolumeLevel      int
+	VolumeMax        int
+	IsCamera         bool
 	// ViewHref opens this camera's player. RowView is true when it's the
 	// room's only camera, so its own row carries the [ VIEW ] button; with
 	// several, the DEVICES header offers one [ VIEW ] that opens a picker.
@@ -58,6 +77,9 @@ type roomDetailView struct {
 	ID         string
 	Name       string
 	Properties houseview.Properties
+	// NowPlaying is "" when nothing in the room is playing or paused -
+	// see roomNowPlaying.
+	NowPlaying string
 	Devices    []deviceView
 	// Cameras are the linked Camera devices - one VIEW CAMERA button each.
 	Cameras []deviceView
@@ -156,7 +178,41 @@ func deviceToView(d *apiDevice.Device) deviceView {
 		dv.CanDim = true
 		dv.Level = int(max(0, min(100, b.GetState().GetLevel())))
 	}
+	if m := houseview.Media(d); m != nil {
+		dv.NowPlaying = houseview.MediaSummary(m)
+		if attrs := m.GetAttributes(); attrs.GetCanControl() {
+			dv.CanControlMedia = true
+			dv.IsPlaying = m.GetState().GetPlaybackState() == apiTrait.Media_PS_PLAYING
+			dv.CanSkipForward = attrs.GetCanSkipForward()
+			dv.CanSkipBackward = attrs.GetCanSkipBackward()
+		}
+	}
+	if v := houseview.Volume(d); v != nil && v.GetAttributes().GetCanControl() {
+		dv.CanControlVolume = true
+		dv.VolumeLevel = int(v.GetState().GetLevel())
+		dv.VolumeMax = int(v.GetAttributes().GetMaximumLevel())
+		if dv.VolumeMax <= 0 {
+			// Attributes.maximum_level is required by the trait's contract,
+			// but a slider with max=0 is degenerate - fall back rather than
+			// render one no drag can move.
+			dv.VolumeMax = 100
+		}
+	}
 	return dv
+}
+
+// roomNowPlaying summarizes what's audibly or visibly active among devices -
+// the first device (in display order) with a non-empty MediaSummary, prefixed
+// with its name so a room with more than one media-capable device isn't
+// ambiguous about which one is meant. Used by both the floor summary row and
+// the room detail top bar, live-updated the same way (see sse.go).
+func roomNowPlaying(devices []*apiDevice.Device) string {
+	for _, d := range houseview.SortDevices(devices) {
+		if s := houseview.MediaSummary(houseview.Media(d)); s != "" {
+			return houseview.DisplayName(d) + ": " + s
+		}
+	}
+	return ""
 }
 
 func roomToDetail(r *api2.Room) roomDetailView {
@@ -164,6 +220,7 @@ func roomToDetail(r *api2.Room) roomDetailView {
 		ID:         r.GetId(),
 		Name:       r.GetConfig().GetName(),
 		Properties: houseview.PropertiesToView(r.GetProperties()),
+		NowPlaying: roomNowPlaying(r.GetDevices()),
 	}
 	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		dv := deviceToView(d)

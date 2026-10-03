@@ -17,6 +17,7 @@ go_library(
         "//api",
         "//api/command",
         "//api/device",
+        "//api/trait",
         "//service/lib/grpcutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_spf13_viper//:viper",

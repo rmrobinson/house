@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap/zaptest"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -114,6 +115,76 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			d:    mediaPlayerDevice("d1"),
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_OnOff{OnOff: &command.OnOff{On: true}}},
 			want: false,
+		},
+		{
+			// mediaPlayerDevice's Media carries no Attributes at all, so
+			// GetCanSkipForward() is the proto nil-safe default (false) -
+			// unlike Playback/Seek, skip isn't accepted just because a
+			// Media trait is present.
+			name: "media player skip forward not supported when attribute unset",
+			d:    mediaPlayerDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},
+			want: false,
+		},
+		{
+			name: "media player skip forward supported when attribute true",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_MediaPlayer{
+					MediaPlayer: &device.MediaPlayer{
+						Media: &trait.Media{Attributes: &trait.Media_Attributes{CanSkipForward: proto.Bool(true)}},
+					},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},
+			want: true,
+		},
+		{
+			// can_skip_forward and can_skip_backward are independent -
+			// one being true doesn't imply the other.
+			name: "media player skip backward not supported when only skip forward is true",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_MediaPlayer{
+					MediaPlayer: &device.MediaPlayer{
+						Media: &trait.Media{Attributes: &trait.Media_Attributes{CanSkipForward: proto.Bool(true)}},
+					},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}},
+			want: false,
+		},
+		{
+			name: "media player skip backward supported when attribute true",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_MediaPlayer{
+					MediaPlayer: &device.MediaPlayer{
+						Media: &trait.Media{Attributes: &trait.Media_Attributes{CanSkipBackward: proto.Bool(true)}},
+					},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}},
+			want: true,
+		},
+		{
+			name: "television skip forward not supported when attribute unset",
+			d:    televisionDevice("d1"),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},
+			want: false,
+		},
+		{
+			name: "television skip forward supported when attribute true",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_Television{
+					Television: &device.Television{
+						Media: &trait.Media{Attributes: &trait.Media_Attributes{CanSkipForward: proto.Bool(true)}},
+					},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},
+			want: true,
 		},
 		{
 			name: "light onoff supported",
