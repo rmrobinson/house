@@ -834,3 +834,23 @@ func TestComputeProperties_WaterDetected(t *testing.T) {
 
 	assert.Nil(t, computeProperties(nil, []*apiDevice.Device{sensorDevice(&apiDevice.Sensor{})}), "no water sensor -> unset")
 }
+
+func upsDevice(mins int32) *apiDevice.Device {
+	return &apiDevice.Device{Details: &apiDevice.Device_Ups{Ups: &apiDevice.UPS{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{CapacityRemainingMins: mins}},
+	}}}
+}
+
+func TestComputeProperties_BatteryRuntimeIsMinAcrossUPSes(t *testing.T) {
+	props := computeProperties(nil, []*apiDevice.Device{upsDevice(90), upsDevice(35)})
+	require.NotNil(t, props)
+	require.NotNil(t, props.BatteryRuntimeMins)
+	assert.Equal(t, int32(35), *props.BatteryRuntimeMins)
+}
+
+func TestComputeProperties_BatteryRuntimeIgnoresSensorBatteries(t *testing.T) {
+	props := computeProperties(nil, []*apiDevice.Device{sensorDevice(&apiDevice.Sensor{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{CapacityRemainingPct: 80}},
+	})})
+	assert.Nil(t, props)
+}
