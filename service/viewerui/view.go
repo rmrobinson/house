@@ -179,7 +179,7 @@ func deviceToView(d *apiDevice.Device) deviceView {
 		dv.Level = int(max(0, min(100, b.GetState().GetLevel())))
 	}
 	if m := houseview.Media(d); m != nil {
-		dv.NowPlaying = houseview.MediaSummary(m)
+		dv.NowPlaying = houseview.MediaSummary(m, houseview.App(d).GetState().GetApplicationName())
 		if attrs := m.GetAttributes(); attrs.GetCanControl() {
 			dv.CanControlMedia = true
 			dv.IsPlaying = m.GetState().GetPlaybackState() == apiTrait.Media_PS_PLAYING
@@ -208,7 +208,7 @@ func deviceToView(d *apiDevice.Device) deviceView {
 // the room detail top bar, live-updated the same way (see sse.go).
 func roomNowPlaying(devices []*apiDevice.Device) string {
 	for _, d := range houseview.SortDevices(devices) {
-		if s := houseview.MediaSummary(houseview.Media(d)); s != "" {
+		if s := houseview.MediaSummary(houseview.Media(d), houseview.App(d).GetState().GetApplicationName()); s != "" {
 			return houseview.DisplayName(d) + ": " + s
 		}
 	}

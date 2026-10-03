@@ -285,18 +285,43 @@ func Volume(d *apiDevice.Device) *apiTrait.Volume {
 	}
 }
 
+// App returns d's App trait, or nil if its device type has none.
+func App(d *apiDevice.Device) *apiTrait.App {
+	switch {
+	case d.GetMediaPlayer() != nil:
+		return d.GetMediaPlayer().GetApp()
+	case d.GetTelevision() != nil:
+		return d.GetTelevision().GetApp()
+	default:
+		return nil
+	}
+}
+
 // MediaSummary renders m's current playback for display - "" when nothing is
 // actively playing or paused (stopped/completed/unspecified collapse to the
 // same "nothing to show" case a client would otherwise have to special-case
 // itself). PLAYING renders bare; every other visible state is prefixed with
 // its own label so a paused/buffering/seeking track isn't mistaken for one
 // that's actively playing.
-func MediaSummary(m *apiTrait.Media) string {
+//
+// appName is a fallback track identity, used only when the Media trait's own
+// metadata has none - confirmed live against a real Google TV Streamer
+// running Plex's Android TV app: its CASTV2 session reports metadataType
+// MOVIE with artwork but no title at all (unlike a classic Cast-receiver
+// session, e.g. Spotify on a Chromecast Audio, which always includes one).
+// Without this fallback, an actively-playing Android-TV-native app never
+// shows up as "now playing" anywhere in the UI - pass "" if the caller has
+// no App trait for the device (houseview.App(d).GetState().
+// GetApplicationName()).
+func MediaSummary(m *apiTrait.Media, appName string) string {
 	if m == nil {
 		return ""
 	}
 	state := m.GetState()
 	track := mediaTrackSummary(state)
+	if track == "" {
+		track = appName
+	}
 	if track == "" {
 		return ""
 	}
