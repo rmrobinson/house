@@ -4,6 +4,7 @@ go_library(
     name = "policy",
     srcs = [
         "attribute_conditions.go",
+        "battery_report.go",
         "bindings.go",
         "bus.go",
         "cache.go",
@@ -19,6 +20,7 @@ go_library(
         "sun.go",
     ],
     embedsrcs = [
+        "scripts/battery_report.lua",
         "scripts/sys_occupancy.lua",
         "scripts/sys_power_restore.lua",
         "migrations/000001_setup.down.sql",
@@ -44,6 +46,7 @@ go_test(
     name = "policy_test",
     srcs = [
         "attribute_conditions_test.go",
+        "battery_report_test.go",
         "bindings_test.go",
         "bus_test.go",
         "condition_test.go",
