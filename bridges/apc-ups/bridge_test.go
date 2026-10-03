@@ -251,3 +251,29 @@ func TestRefresh_RecoversAfterFailure_MarkedReachableAgain(t *testing.T) {
 	require.Len(t, devices, 1)
 	assert.True(t, devices[0].GetAddress().GetIsReachable())
 }
+
+func TestStatusToDevice_PowerWIsNominalPowerTimesLoadPercent(t *testing.T) {
+	d := statusToDevice(&apcupsd.Status{SerialNumber: "0B2542L21100", NominalPower: 865, LoadPercent: 20})
+	assert.InDelta(t, 173.0, d.GetUps().GetPower().GetState().GetPowerW(), 0.001)
+}
+
+func TestStatusToDevice_CapacityRemainingPctIsBatteryCharge(t *testing.T) {
+	d := statusToDevice(&apcupsd.Status{SerialNumber: "0B2542L21100", BatteryChargePercent: 100, TimeLeft: 42 * time.Minute})
+	assert.EqualValues(t, 100, d.GetUps().GetBattery().GetState().GetCapacityRemainingPct())
+	assert.EqualValues(t, 42, d.GetUps().GetBattery().GetState().GetCapacityRemainingMins())
+}
+
+func TestStatusToDevice_PowerTraitCurrentFrequencyStatus(t *testing.T) {
+	d := statusToDevice(&apcupsd.Status{SerialNumber: "0B2542L21100", Status: "ONLINE", OutputAmps: 1.5, LineFrequency: 60, LineVoltage: 121})
+	st := d.GetUps().GetPower().GetState()
+	assert.InDelta(t, 1.5, st.GetCurrentA(), 0.001)
+	assert.InDelta(t, 60.0, st.GetFrequencyHz(), 0.001)
+	assert.Equal(t, "ONLINE", st.GetStatus())
+	assert.InDelta(t, 121.0, st.GetVoltageV(), 0.001)
+	assert.Contains(t, d.GetUps().GetPower().GetAttributes().GetStatuses(), "ONBATT")
+}
+
+func TestStatusToDevice_NoLineFrequency_LeftUnset(t *testing.T) {
+	d := statusToDevice(&apcupsd.Status{SerialNumber: "0B2542L21100"})
+	assert.Nil(t, d.GetUps().GetPower().GetState().FrequencyHz)
+}

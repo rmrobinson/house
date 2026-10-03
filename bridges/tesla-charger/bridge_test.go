@@ -117,3 +117,18 @@ func TestRefresh_PartialChargerState_DoesNotCrash(t *testing.T) {
 	require.Len(t, devices, 1, "the previously published device must still be there, just marked unreachable")
 	assert.False(t, devices[0].GetAddress().GetIsReachable())
 }
+
+func TestToDevice_WallPowerReportsVoltageFrequencyAndPhaseCurrentSum(t *testing.T) {
+	cs := &ChargerState{
+		vitals: &vitalAPIResponse{
+			GridVoltage: 240.8, GridFrequencyHertz: 59.685,
+			CurrentAAmps: 0, CurrentBAmps: 47, CurrentCAmps: 0, CurrentNAmps: 0,
+		},
+		version:  &versionAPIResponse{SerialNumber: "1234ASDF"},
+		lifetime: &lifetimeAPIResponse{},
+	}
+	st := cs.toDevice().GetEvCharger().GetWallPower().GetState()
+	assert.InDelta(t, 240.8, st.GetVoltageV(), 0.001)
+	assert.InDelta(t, 59.685, st.GetFrequencyHz(), 0.001)
+	assert.InDelta(t, 47.0, st.GetCurrentA(), 0.001)
+}

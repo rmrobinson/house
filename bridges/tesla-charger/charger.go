@@ -139,6 +139,10 @@ func (cs *ChargerState) toDevice() *device.Device {
 					State: &trait.Power_State{
 						VoltageV:    cs.vitals.GridVoltage,
 						FrequencyHz: &cs.vitals.GridFrequencyHertz,
+						// The charge current rides on whichever phase(s) the install uses - e.g. only
+						// currentB_a on a split-phase feed - so sum them rather than reading one.
+						// Neutral is excluded: it's the return, not extra draw.
+						CurrentA: cs.vitals.CurrentAAmps + cs.vitals.CurrentBAmps + cs.vitals.CurrentCAmps,
 					},
 				},
 				ExteriorConditions: &trait.AirProperties{

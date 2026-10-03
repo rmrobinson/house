@@ -832,6 +832,7 @@ func extractDeviceTraits(d *apiDevice.Device) (t deviceTraits, ok bool) {
 func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device) *api2.Room_Properties {
 	var occupancy, temp, light, aqi, co2, voc, radon, power []numericSample
 	var waterSeen, waterDetected bool
+	var runtimeMins *int32
 
 	for _, d := range devices {
 		// Sensor.water is a Sensor-local BinarySensor, not a shared trait, so
@@ -839,6 +840,13 @@ func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device)
 		if w := d.GetSensor().GetWater(); w != nil {
 			waterSeen = true
 			waterDetected = waterDetected || w.GetIsActive()
+		}
+		// Only a UPS's Battery trait carries a runtime estimate; a sensor's
+		// Battery leaves capacity_remaining_mins at 0, which isn't a reading.
+		if b := d.GetUps().GetBattery().GetState(); b != nil {
+			if m := b.GetCapacityRemainingMins(); runtimeMins == nil || m < *runtimeMins {
+				runtimeMins = &m
+			}
 		}
 		traits, ok := extractDeviceTraits(d)
 		if !ok {
@@ -918,6 +926,7 @@ func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device)
 	if waterSeen {
 		props.WaterDetected = &waterDetected
 	}
+	props.BatteryRuntimeMins = runtimeMins
 
 	// A room with no linked device that has ever reported any metric gets
 	// no Properties at all, not an all-fields-unset one - so a fresh link
@@ -926,7 +935,8 @@ func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device)
 	// empty result.
 	if props.Occupied == nil && props.TemperatureC == nil && props.LightLevelLux == nil &&
 		props.AirQualityIndex == nil && props.Co2Ppm == nil && props.VocPpb == nil &&
-		props.RadonBqM3 == nil && props.PowerDrawW == nil && props.WaterDetected == nil {
+		props.RadonBqM3 == nil && props.PowerDrawW == nil && props.WaterDetected == nil &&
+		props.BatteryRuntimeMins == nil {
 		return nil
 	}
 	return props

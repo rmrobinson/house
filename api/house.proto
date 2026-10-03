@@ -67,6 +67,11 @@ message Room {
     // if none has a water sensor. Always "any" - a leak anywhere in the room
     // counts, so this has no aggregation strategy.
     optional bool water_detected = 10;
+    // Shortest estimated battery runtime, in minutes, across the room's linked
+    // UPSes (UPS.battery.capacity_remaining_mins); unset if none is linked.
+    // Always "min" - the first UPS to run out is the one that matters - so
+    // this has no aggregation strategy.
+    optional int32 battery_runtime_mins = 11;
   }
 
   string id = 1;
