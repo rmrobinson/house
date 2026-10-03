@@ -58,7 +58,13 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 
-		case ru := <-roomUpdates:
+		case hu := <-roomUpdates:
+			// viewerui only renders room-level occupancy/properties today;
+			// a BuildingUpdate (Building.State) has nothing to swap in yet.
+			ru := hu.GetRoom()
+			if ru == nil {
+				continue
+			}
 			if !s.writeFragments(w, "room_update_oob", roomUpdateView(ru, names.get(ru.GetRoomId()))) {
 				return
 			}

@@ -26,7 +26,7 @@ import (
 
 type fakeHouse struct {
 	api2.UnimplementedHouseServiceServer
-	updates chan *api2.RoomUpdate
+	updates chan *api2.HouseUpdate
 }
 
 func (f *fakeHouse) ListBuildings(_ *api2.ListBuildingsRequest, s api2.HouseService_ListBuildingsServer) error {
@@ -142,7 +142,7 @@ func startTestServer(t *testing.T) (*Server, *fakeHouse, *fakeBridge) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	house := &fakeHouse{updates: make(chan *api2.RoomUpdate, 4)}
+	house := &fakeHouse{updates: make(chan *api2.HouseUpdate, 4)}
 	bridge := &fakeBridge{}
 	gs := grpc.NewServer()
 	api2.RegisterHouseServiceServer(gs, house)
@@ -320,7 +320,7 @@ func TestEventsStreamsRoomUpdateAsOOB(t *testing.T) {
 			return
 		case <-time.After(50 * time.Millisecond):
 			select {
-			case house.updates <- &api2.RoomUpdate{RoomId: "r1", Properties: &api2.Room_Properties{Occupied: &occ}}:
+			case house.updates <- &api2.HouseUpdate{Update: &api2.HouseUpdate_Room{Room: &api2.RoomUpdate{RoomId: "r1", Properties: &api2.Room_Properties{Occupied: &occ}}}}:
 			default:
 			}
 		case <-deadline:

@@ -43,6 +43,13 @@ func splitModes(s string) []string {
 	return strings.Split(s, ",")
 }
 
+// defaultAvailableModes mirrors house.Service.CreateBuilding's default for
+// an empty --available_modes - housecli talks to db.Database directly,
+// bypassing Service, so it would otherwise leave a building with no mode
+// settable at all (unlike the same call through the gRPC API/adminui) until
+// someone noticed and ran UpdateBuilding to fix it.
+var defaultAvailableModes = []string{"home", "away", "vacation"}
+
 // optionalFlag returns nil for an unset (empty) string flag, or its value
 // otherwise - db methods that accept optional filters take *string.
 func optionalFlag(f *string) *string {
@@ -109,6 +116,10 @@ func main() {
 		}
 
 	case "CreateBuilding":
+		modes := splitModes(*availableModes)
+		if len(modes) == 0 {
+			modes = defaultAvailableModes
+		}
 		building := &db.Building{
 			Name: *name,
 			TZ:   *tz,
@@ -116,7 +127,7 @@ func main() {
 				Latitude:  *lat,
 				Longitude: *lon,
 			},
-			AvailableModes: splitModes(*availableModes),
+			AvailableModes: modes,
 		}
 		res, err := buildingDB.CreateBuilding(ctx, building)
 		if err != nil {

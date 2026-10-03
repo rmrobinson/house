@@ -39,7 +39,7 @@ type Server struct {
 	// roomHubs holds one HouseService.StreamHouseUpdates hub per building,
 	// started lazily on first SSE subscription (the RPC is per-building).
 	roomMu   sync.Mutex
-	roomHubs map[string]*hub.Hub[*api2.RoomUpdate]
+	roomHubs map[string]*hub.Hub[*api2.HouseUpdate]
 }
 
 func dialServer(ctx context.Context, logger *zap.Logger, houseAddr, bridgeAddr string, tlsCfg *grpcutil.ClientTLSConfig) (*Server, error) {
@@ -64,7 +64,7 @@ func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceC
 		bridge:         bridge,
 		ctx:            ctx,
 		iceServersJSON: "[]",
-		roomHubs:       map[string]*hub.Hub[*api2.RoomUpdate]{},
+		roomHubs:       map[string]*hub.Hub[*api2.HouseUpdate]{},
 		devHub: hub.New(logger, func(ctx context.Context) (func() (*api2.Update, error), error) {
 			stream, err := bridge.StreamUpdates(ctx, &api2.StreamUpdatesRequest{})
 			if err != nil {
@@ -78,14 +78,14 @@ func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceC
 }
 
 // roomHub returns buildingID's room-update hub, starting it on first use.
-func (s *Server) roomHub(buildingID string) *hub.Hub[*api2.RoomUpdate] {
+func (s *Server) roomHub(buildingID string) *hub.Hub[*api2.HouseUpdate] {
 	s.roomMu.Lock()
 	defer s.roomMu.Unlock()
 
 	if h, ok := s.roomHubs[buildingID]; ok {
 		return h
 	}
-	h := hub.New(s.logger, func(ctx context.Context) (func() (*api2.RoomUpdate, error), error) {
+	h := hub.New(s.logger, func(ctx context.Context) (func() (*api2.HouseUpdate, error), error) {
 		stream, err := s.house.StreamHouseUpdates(ctx, &api2.StreamHouseUpdatesRequest{BuildingId: buildingID})
 		if err != nil {
 			return nil, err

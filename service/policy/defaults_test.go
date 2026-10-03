@@ -8,16 +8,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadSystemPoliciesOccupancyOnMotion(t *testing.T) {
+func TestLoadSystemPoliciesOccupancyOnHouseStateOccupied(t *testing.T) {
 	home := newFakeHomeAPI()
 	e, _ := newTestEngine(t, home)
 
 	require.NoError(t, LoadSystemPolicies(e))
 
-	e.Bus().Publish(Event{Topic: "motion.detected"})
+	require.NoError(t, home.SetHouseState("occupied", true))
+	e.Bus().Publish(Event{Topic: HouseStateChangedTopic})
 
 	require.Eventually(t, func() bool {
-		return home.getHouseState("occupancy") == "occupied"
+		return home.getHouseState("mode") == "home"
 	}, time.Second, 10*time.Millisecond)
 }
 
@@ -71,13 +72,14 @@ func TestSystemPolicyOverride(t *testing.T) {
 	// A user can silently replace a system policy ID.
 	require.NoError(t, e.Register(&Policy{
 		ID:            "sys.occupancy",
-		ConditionExpr: Use("sys.any-motion-detected", struct{}{}),
-		Script:        `home.setHouseState("occupancy", "override")`,
+		ConditionExpr: Use("sys.occupied", struct{}{}),
+		Script:        `home.setHouseState("mode", "override")`,
 	}))
 
-	e.Bus().Publish(Event{Topic: "motion.detected"})
+	require.NoError(t, home.SetHouseState("occupied", true))
+	e.Bus().Publish(Event{Topic: HouseStateChangedTopic})
 
 	require.Eventually(t, func() bool {
-		return home.getHouseState("occupancy") == "override"
+		return home.getHouseState("mode") == "override"
 	}, time.Second, 10*time.Millisecond)
 }

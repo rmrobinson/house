@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "housestate",
+    srcs = ["housestate.go"],
+    importpath = "github.com/rmrobinson/house/service/policy/housestate",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//service/lib/bridgeconn",
+        "//service/policy",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "housestate_test",
+    srcs = ["housestate_test.go"],
+    embed = [":housestate"],
+    deps = [
+        "//api",
+        "//service/lib/bridgeconn",
+        "//service/lib/grpcutil",
+        "//service/policy",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_zap//zaptest",
+    ],
+)

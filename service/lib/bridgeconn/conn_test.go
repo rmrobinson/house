@@ -124,7 +124,7 @@ func TestRun_BackoffOnlyResetsAfterFirstMessage(t *testing.T) {
 		go c.Run(ctx, func(u *api2.Update) {}, nil)
 
 		require.Eventually(t, func() bool {
-			return time.Duration(c.backoff.Load()) > MinBackoff
+			return c.backoff.Current() > MinBackoff
 		}, 5*time.Second, 20*time.Millisecond, "backoff should grow past the minimum when every attempt fails before delivering a message")
 	})
 
@@ -134,14 +134,14 @@ func TestRun_BackoffOnlyResetsAfterFirstMessage(t *testing.T) {
 		c := New(zaptest.NewLogger(t), addr, nil)
 		// Seed a high value, as if prior failures had already grown it - a
 		// successful connection should collapse it back to the minimum.
-		c.backoff.Store(int64(MaxBackoff))
+		c.backoff.Set(MaxBackoff)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		go c.Run(ctx, func(u *api2.Update) {}, nil)
 
 		require.Eventually(t, func() bool {
-			return time.Duration(c.backoff.Load()) == MinBackoff
+			return c.backoff.Current() == MinBackoff
 		}, 2*time.Second, 10*time.Millisecond, "backoff should reset once the upstream actually delivers a message")
 	})
 }

@@ -443,19 +443,37 @@ func TestAggregator_PublishesOnlyWhenPropertiesChange(t *testing.T) {
 	}
 
 	send(true)
-	select {
-	case msg := <-sink.Messages():
-		ru, ok := msg.(*api2.RoomUpdate)
-		require.True(t, ok)
-		assert.Equal(t, "room-1", ru.RoomId)
-		require.NotNil(t, ru.Properties.Occupied)
-		assert.True(t, ru.Properties.GetOccupied())
-	default:
-		t.Fatal("expected a RoomUpdate on the first real reading")
+	// The room's first real reading publishes both a RoomUpdate (new
+	// Properties) and a BuildingUpdate (occupied goes from unknown to true).
+	var ru *api2.RoomUpdate
+	var bu *api2.BuildingUpdate
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-sink.Messages():
+			hu, ok := msg.(*api2.HouseUpdate)
+			require.True(t, ok)
+			if r := hu.GetRoom(); r != nil {
+				ru = r
+			} else {
+				bu = hu.GetBuilding()
+			}
+		default:
+			t.Fatal("expected both a RoomUpdate and a BuildingUpdate on the first real reading")
+		}
 	}
+	require.NotNil(t, ru)
+	assert.Equal(t, "room-1", ru.RoomId)
+	require.NotNil(t, ru.Properties.Occupied)
+	assert.True(t, ru.Properties.GetOccupied())
+	require.NotNil(t, bu)
+	assert.Equal(t, "building-1", bu.BuildingId)
+	require.NotNil(t, bu.State.Occupied)
+	assert.True(t, bu.State.GetOccupied())
 
-	// The identical reading again produces no new computed Properties, so
-	// no update is published (see recomputeRoomLocked's proto.Equal check).
+	// The identical reading again produces no new computed Properties and no
+	// occupied change, so nothing is published at all (see
+	// recomputeRoomLocked's proto.Equal check and
+	// refreshBuildingOccupiedLocked's *bool dedup).
 	send(true)
 	select {
 	case msg := <-sink.Messages():
@@ -463,14 +481,22 @@ func TestAggregator_PublishesOnlyWhenPropertiesChange(t *testing.T) {
 	default:
 	}
 
-	// A genuinely different reading does publish again.
+	// A genuinely different reading does publish the room's own update again
+	// - but lastMotion is never cleared on a false reading (see its doc
+	// comment), so the building stays occupied and no second BuildingUpdate
+	// follows.
 	send(false)
 	select {
 	case msg := <-sink.Messages():
-		ru := msg.(*api2.RoomUpdate)
-		assert.False(t, ru.Properties.GetOccupied())
+		hu := msg.(*api2.HouseUpdate)
+		assert.False(t, hu.GetRoom().GetProperties().GetOccupied())
 	default:
 		t.Fatal("expected a RoomUpdate when occupancy actually changed")
+	}
+	select {
+	case msg := <-sink.Messages():
+		t.Fatalf("unexpected extra update: %+v", msg)
+	default:
 	}
 }
 
@@ -581,6 +607,216 @@ func TestAggregator_BuildingOccupied(t *testing.T) {
 	a.removeRoom("room-1")
 	a.removeRoom("room-2")
 	assert.Nil(t, a.buildingOccupied("building-1"))
+}
+
+// TestAggregator_SetDeviceRoomPublishesBuildingUpdateImmediately guards
+// against a real bug caught in review: relinking a device that's already
+// reporting occupied=true into a room in a different building must publish
+// that building's new occupied state right away (same as handleUpdate does
+// for the same transition), not leave a stale occupied=false/unknown for
+// subscribers until the decay window happens to expire.
+func TestAggregator_SetDeviceRoomPublishesBuildingUpdateImmediately(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	a.registerRoom("room-1", "building-1")
+	a.registerRoom("room-2", "building-2")
+	a.setDeviceRoom("sensor-1", "room-1")
+
+	a.handleUpdate(motionUpdate("sensor-1", true))
+	require.NotNil(t, a.buildingOccupied("building-1"))
+	assert.True(t, *a.buildingOccupied("building-1"))
+	assert.Nil(t, a.buildingOccupied("building-2"))
+
+	sink := a.updates.NewSink()
+	defer sink.Close()
+
+	a.setDeviceRoom("sensor-1", "room-2")
+
+	// setDeviceRoom publishes up to 4 messages for this move: room-1's
+	// RoomUpdate (its Properties go from occupied to nil, since sensor-1 was
+	// its only device), room-2's RoomUpdate (now occupied), and building-2's
+	// BuildingUpdate - drain generously and look for the one that matters.
+	var sawBuildingTwoOccupied bool
+drain:
+	for i := 0; i < 4; i++ {
+		select {
+		case msg := <-sink.Messages():
+			if b := msg.(*api2.HouseUpdate).GetBuilding(); b != nil {
+				require.Equal(t, "building-2", b.BuildingId)
+				require.NotNil(t, b.State.Occupied)
+				assert.True(t, b.State.GetOccupied())
+				sawBuildingTwoOccupied = true
+			}
+		case <-time.After(100 * time.Millisecond):
+			break drain
+		}
+	}
+	assert.True(t, sawBuildingTwoOccupied, "building-2 should become occupied immediately, not after the decay window")
+
+	require.NotNil(t, a.buildingOccupied("building-2"))
+	assert.True(t, *a.buildingOccupied("building-2"))
+}
+
+// TestAggregator_DecayTimerPublishesOccupiedFalse covers the push side of
+// occupied's decay: nothing short of a timer would ever notice a building
+// going unoccupied with no further room activity to trigger a recheck (see
+// armDecayTimerLocked). afterFunc is overridden to hand the scheduled
+// callback back to the test instead of actually waiting
+// buildingOccupiedWindow - the test fires it itself once it has advanced
+// now, rather than waiting for a real 10 minutes.
+func TestAggregator_DecayTimerPublishesOccupiedFalse(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	now := time.Unix(1_700_000_000, 0)
+	a.now = func() time.Time { return now }
+
+	fired := make(chan func(), 1)
+	a.afterFunc = func(d time.Duration, f func()) *time.Timer {
+		assert.Equal(t, buildingOccupiedWindow, d)
+		fired <- f
+		return nil
+	}
+
+	a.registerRoom("room-1", "building-1")
+	a.setDeviceRoom("sensor-1", "room-1")
+
+	sink := a.updates.NewSink()
+	defer sink.Close()
+
+	a.handleUpdate(motionUpdate("sensor-1", true))
+
+	// The first real reading publishes a RoomUpdate and a BuildingUpdate
+	// (occupied: unknown -> true), and arms the decay timer.
+	var bu *api2.BuildingUpdate
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-sink.Messages():
+			if b := msg.(*api2.HouseUpdate).GetBuilding(); b != nil {
+				bu = b
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for the initial updates")
+		}
+	}
+	require.NotNil(t, bu)
+	assert.True(t, bu.State.GetOccupied())
+
+	var decayFn func()
+	select {
+	case decayFn = <-fired:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the decay timer to be armed")
+	}
+
+	// Advance past the window, then fire the timer as if it had actually
+	// waited that long.
+	now = now.Add(buildingOccupiedWindow + time.Second)
+	decayFn()
+
+	select {
+	case msg := <-sink.Messages():
+		bu := msg.(*api2.HouseUpdate).GetBuilding()
+		require.NotNil(t, bu)
+		assert.Equal(t, "building-1", bu.BuildingId)
+		require.NotNil(t, bu.State.Occupied)
+		assert.False(t, bu.State.GetOccupied())
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the decay's BuildingUpdate")
+	}
+}
+
+// TestAggregator_UnrelatedUpdateDoesNotRearmDecayTimer guards against a real
+// bug caught in review: armDecayTimerLocked must only be (re)armed by an
+// actual fresh motion reading (inside recomputeRoomLocked), never by
+// refreshBuildingOccupiedLocked running for some unrelated reason - a
+// non-motion update to another device in the same building must not push
+// the real decay deadline out past when the motion itself would warrant.
+func TestAggregator_UnrelatedUpdateDoesNotRearmDecayTimer(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+	now := time.Unix(1_700_000_000, 0)
+	a.now = func() time.Time { return now }
+
+	fired := make(chan func(), 2)
+	a.afterFunc = func(d time.Duration, f func()) *time.Timer {
+		fired <- f
+		return nil
+	}
+
+	a.registerRoom("room-1", "building-1")
+	a.registerRoom("room-2", "building-1")
+	a.setDeviceRoom("sensor-1", "room-1")
+	a.setDeviceRoom("sensor-2", "room-2")
+
+	sink := a.updates.NewSink()
+	defer sink.Close()
+
+	a.handleUpdate(motionUpdate("sensor-1", true))
+	select {
+	case <-fired:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the decay timer to be armed")
+	}
+	// Drain the RoomUpdate and BuildingUpdate this first reading published.
+	for i := 0; i < 2; i++ {
+		select {
+		case <-sink.Messages():
+		case <-time.After(time.Second):
+			t.Fatal("timed out draining the initial updates")
+		}
+	}
+
+	// An unrelated, non-motion update to a different device in the same
+	// building must not arm a second timer.
+	a.handleUpdate(&api2.Update{
+		Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{
+			Device: &apiDevice.Device{
+				Id: "sensor-2",
+				Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+					Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 5}},
+				}},
+			},
+		}},
+	})
+	select {
+	case <-fired:
+		t.Fatal("unrelated update must not rearm the decay timer")
+	default:
+	}
+}
+
+// TestAggregator_StaleDecayTimerDoesNotOrphanNewOne guards against a real
+// race caught in review: if a decay timer fires at (almost) the same moment
+// a fresh motion event re-arms it, t.Stop() on the already-fired timer is a
+// no-op, so armDecayTimerLocked's new timer replaces the map entry while the
+// stale one is still about to run its callback. That callback must not then
+// delete the entry unconditionally - doing so orphans the still-pending new
+// timer, leaving it untracked and un-cancelable by any later arm.
+func TestAggregator_StaleDecayTimerDoesNotOrphanNewOne(t *testing.T) {
+	a := newAggregator(zaptest.NewLogger(t))
+
+	var fired []func()
+	a.afterFunc = func(d time.Duration, f func()) *time.Timer {
+		fired = append(fired, f)
+		// A real (but never-firing-in-this-test) *time.Timer, so
+		// armDecayTimerLocked's t.Stop() on the first one has a non-nil
+		// receiver to call, same as production - the callback it would have
+		// run is instead invoked manually below, standing in for the race
+		// where Stop() fails to prevent it (it already fired).
+		return time.AfterFunc(time.Hour, func() {})
+	}
+
+	a.mu.Lock()
+	a.armDecayTimerLocked("building-1")
+	a.armDecayTimerLocked("building-1")
+	a.mu.Unlock()
+	require.Len(t, fired, 2)
+
+	// Run the stale (first) timer's callback, as a real race would once
+	// Stop() failed to prevent it from firing.
+	fired[0]()
+
+	a.mu.Lock()
+	_, stillTracked := a.decayTimers["building-1"]
+	a.mu.Unlock()
+	assert.True(t, stillTracked, "the second (current) timer's entry must survive the stale first timer firing")
 }
 
 func TestComputeProperties_WaterDetected(t *testing.T) {

@@ -115,12 +115,57 @@ func TestBuilding_AvailableModesAndSetMode(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 
 	// UpdateBuilding replaces available_modes wholesale, like every other
-	// Config field, and never touches Mode.
+	// Config field, and otherwise leaves Mode untouched - here it's already
+	// "" so there's nothing to invalidate (see
+	// TestBuilding_UpdateAvailableModesClearsInvalidatedMode for the case
+	// where shrinking available_modes invalidates a mode that's actually
+	// set).
 	got.AvailableModes = nil
 	replaced, err := d.UpdateBuilding(ctx, got)
 	require.NoError(t, err)
 	assert.Empty(t, replaced.AvailableModes)
 	assert.Empty(t, replaced.Mode)
+}
+
+// TestBuilding_UpdateAvailableModesClearsInvalidatedMode guards against a
+// real bug caught in review: shrinking available_modes out from under a
+// building's current mode must clear Mode rather than leave it set to a
+// value no longer in available_modes, which would violate
+// Building.State.mode's documented invariant (api/house.proto: "one of
+// Config.available_modes, or \"\" if never set").
+func TestBuilding_UpdateAvailableModesClearsInvalidatedMode(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	b, err := d.CreateBuilding(ctx, &Building{Name: "Home", AvailableModes: []string{"home", "away"}})
+	require.NoError(t, err)
+
+	_, err = d.SetBuildingMode(ctx, b.ID, "away")
+	require.NoError(t, err)
+
+	got, err := d.GetBuilding(ctx, b.ID)
+	require.NoError(t, err)
+	got.AvailableModes = []string{"home"}
+
+	updated, err := d.UpdateBuilding(ctx, got)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"home"}, updated.AvailableModes)
+	assert.Empty(t, updated.Mode, "mode must be cleared once it's no longer in available_modes")
+
+	persisted, err := d.GetBuilding(ctx, b.ID)
+	require.NoError(t, err)
+	assert.Empty(t, persisted.Mode, "the clear must actually be persisted, not just reflected on the return value")
+
+	// A mode that's still valid after the shrink is left alone.
+	_, err = d.SetBuildingMode(ctx, b.ID, "home")
+	require.NoError(t, err)
+	got, err = d.GetBuilding(ctx, b.ID)
+	require.NoError(t, err)
+	got.AvailableModes = []string{"home"}
+
+	updated, err = d.UpdateBuilding(ctx, got)
+	require.NoError(t, err)
+	assert.Equal(t, "home", updated.Mode)
 }
 
 func TestBuilding_DeleteBlockedByFloor(t *testing.T) {

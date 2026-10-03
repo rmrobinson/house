@@ -108,6 +108,35 @@ func (db *Database) checkVersionedUpdate(ctx context.Context, q querier, res sql
 	return ErrVersionMismatch
 }
 
+// withTx runs fn inside a transaction, committing if fn returns nil and
+// rolling back otherwise - the BeginTx/defer Rollback()/Commit boilerplate
+// shared by UpdateBuilding and SetBuildingMode. LinkDevice needs BEGIN
+// IMMEDIATE (which *sql.Tx's BeginTx can't request against the sqlite driver
+// in use here), so it still manages its own transaction directly instead of
+// going through this.
+func (db *Database) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// modeIsAvailable reports whether mode is one of availableModes.
+func modeIsAvailable(mode string, availableModes []string) bool {
+	for _, m := range availableModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
 // hasRows reports whether any row in table has fk = id. table and fk are
 // always fixed internal constants, never caller-supplied, so building the
 // query with them is safe.
@@ -274,15 +303,20 @@ func (db *Database) GetBuilding(ctx context.Context, buildingID string) (*Buildi
 // UpdateBuilding updates the specified building's Config fields (name, tz,
 // location, available_modes), enforcing that b.Version matches the row's
 // current version. Returns ErrNotFound or ErrVersionMismatch as appropriate
-// when it doesn't. Mode is left untouched in the database - it's State, set
-// only via SetBuildingMode, the same split UpdateRoom draws against room
-// aggregation's own setRoomAggregation path - but b.Mode is still
-// overwritten with the row's actual current value before returning, since a
-// caller (e.g. house.Service.UpdateBuilding, which never populates b.Mode at
-// all) would otherwise see whatever b.Mode happened to already be rather
-// than reality. The update and the mode read-back run in one transaction so
-// a concurrent SetBuildingMode can't be read mid-flight and attributed to
-// this call's result.
+// when it doesn't. Mode is otherwise left untouched in the database - it's
+// State, set only via SetBuildingMode, the same split UpdateRoom draws
+// against room aggregation's own setRoomAggregation path - but if shrinking
+// available_modes leaves the building's current mode no longer in the list,
+// it's cleared to "" here rather than left dangling, preserving
+// Building.State.mode's documented invariant (api/house.proto: "one of
+// Config.available_modes, or \"\" if never set"). b.Mode is always
+// overwritten with the row's actual resulting value before returning, since
+// a caller (e.g. house.Service.UpdateBuilding, which never populates b.Mode
+// at all) would otherwise see whatever b.Mode happened to already be rather
+// than reality. The update, the mode-validity check/clear, and the mode
+// read-back all run in one transaction so a concurrent SetBuildingMode can't
+// be read mid-flight and attributed to this call's result, or race the
+// clear into re-setting a mode this call is about to invalidate.
 func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building, error) {
 	newVersion := uuid.NewString()
 
@@ -291,35 +325,39 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 		return nil, err
 	}
 
-	tx, err := db.db.BeginTx(ctx, nil)
+	err = db.withTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,available_modes=?,version=? WHERE id=? AND version=?",
+			b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, availableModes, newVersion, b.ID, b.Version)
+		if err != nil {
+			db.logger.Error("unable to update building", zap.String("building_id", b.ID), zap.Error(err))
+			return err
+		}
+		if err := db.checkVersionedUpdate(ctx, tx, res, "building", b.ID); err != nil {
+			return err
+		}
+
+		var mode sql.NullString
+		row := tx.QueryRowContext(ctx, "SELECT mode FROM building WHERE id=?", b.ID)
+		if err := row.Scan(&mode); err != nil {
+			db.logger.Error("unable to read back building mode", zap.String("building_id", b.ID), zap.Error(err))
+			return err
+		}
+
+		if mode.String != "" && !modeIsAvailable(mode.String, b.AvailableModes) {
+			if _, err := tx.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", "", b.ID); err != nil {
+				db.logger.Error("unable to clear invalidated building mode", zap.String("building_id", b.ID), zap.Error(err))
+				return err
+			}
+			mode = sql.NullString{String: "", Valid: true}
+		}
+
+		b.Mode = mode.String
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
 
-	res, err := tx.ExecContext(ctx, "UPDATE building SET name=?,tz=?,lat=?,lon=?,available_modes=?,version=? WHERE id=? AND version=?",
-		b.Name, b.TZ, b.Location.Latitude, b.Location.Longitude, availableModes, newVersion, b.ID, b.Version)
-	if err != nil {
-		db.logger.Error("unable to update building", zap.String("building_id", b.ID), zap.Error(err))
-		return nil, err
-	}
-	if err := db.checkVersionedUpdate(ctx, tx, res, "building", b.ID); err != nil {
-		return nil, err
-	}
-
-	var mode sql.NullString
-	row := tx.QueryRowContext(ctx, "SELECT mode FROM building WHERE id=?", b.ID)
-	if err := row.Scan(&mode); err != nil {
-		db.logger.Error("unable to read back building mode", zap.String("building_id", b.ID), zap.Error(err))
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		db.logger.Error("unable to commit building update", zap.String("building_id", b.ID), zap.Error(err))
-		return nil, err
-	}
-
-	b.Mode = mode.String
 	b.Version = newVersion
 	return b, nil
 }
@@ -333,60 +371,51 @@ func (db *Database) UpdateBuilding(ctx context.Context, b *Building) (*Building,
 // a concurrent UpdateBuilding changing available_modes can't race it into
 // writing a mode that's no longer valid by the time it lands.
 func (db *Database) SetBuildingMode(ctx context.Context, buildingID, mode string) (*Building, error) {
-	tx, err := db.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
+	var building *Building
 
-	var availableModesCol sql.NullString
-	row := tx.QueryRowContext(ctx, "SELECT available_modes FROM building WHERE id=?", buildingID)
-	if err := row.Scan(&availableModesCol); err == sql.ErrNoRows {
-		return nil, ErrNotFound
-	} else if err != nil {
-		db.logger.Error("unable to read building available_modes", zap.String("building_id", buildingID), zap.Error(err))
-		return nil, err
-	}
-
-	if mode != "" {
-		availableModes, err := columnToModes(availableModesCol)
-		if err != nil {
-			return nil, err
+	err := db.withTx(ctx, func(tx *sql.Tx) error {
+		var availableModesCol sql.NullString
+		row := tx.QueryRowContext(ctx, "SELECT available_modes FROM building WHERE id=?", buildingID)
+		if err := row.Scan(&availableModesCol); err == sql.ErrNoRows {
+			return ErrNotFound
+		} else if err != nil {
+			db.logger.Error("unable to read building available_modes", zap.String("building_id", buildingID), zap.Error(err))
+			return err
 		}
-		valid := false
-		for _, m := range availableModes {
-			if m == mode {
-				valid = true
-				break
+
+		if mode != "" {
+			availableModes, err := columnToModes(availableModesCol)
+			if err != nil {
+				return err
+			}
+			if !modeIsAvailable(mode, availableModes) {
+				return ErrInvalidMode
 			}
 		}
-		if !valid {
-			return nil, ErrInvalidMode
+
+		res, err := tx.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", mode, buildingID)
+		if err != nil {
+			db.logger.Error("unable to set building mode", zap.String("building_id", buildingID), zap.Error(err))
+			return err
 		}
-	}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
 
-	res, err := tx.ExecContext(ctx, "UPDATE building SET mode=? WHERE id=?", mode, buildingID)
+		b := &Building{}
+		row = tx.QueryRowContext(ctx, "SELECT "+buildingColumns+" FROM building WHERE id=?", buildingID)
+		if err := scanBuilding(row, b); err != nil {
+			db.logger.Error("unable to read back building after setting mode", zap.String("building_id", buildingID), zap.Error(err))
+			return err
+		}
+		building = b
+		return nil
+	})
 	if err != nil {
-		db.logger.Error("unable to set building mode", zap.String("building_id", buildingID), zap.Error(err))
-		return nil, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		return nil, ErrNotFound
-	}
-
-	building := &Building{}
-	row = tx.QueryRowContext(ctx, "SELECT "+buildingColumns+" FROM building WHERE id=?", buildingID)
-	if err := scanBuilding(row, building); err != nil {
-		db.logger.Error("unable to read back building after setting mode", zap.String("building_id", buildingID), zap.Error(err))
-		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		db.logger.Error("unable to commit building mode change", zap.String("building_id", buildingID), zap.Error(err))
 		return nil, err
 	}
 	return building, nil
