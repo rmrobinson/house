@@ -32,6 +32,12 @@
   nav a.nav-disabled:hover, nav a.nav-disabled:visited:hover { color: #b0b0b5; }
   nav .nav-badge { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; color: #8a8a8e; border: 1px solid #4a4a4e; border-radius: 3px; padding: 0.05rem 0.3rem; margin-left: 0.3rem; vertical-align: middle; }
   main { max-width: 1000px; margin: 2rem auto; padding: 0 1.5rem; }
+  /* devices.html's table has an extra Manufacturer/Location column that
+     room.html's doesn't, leaving the action column too narrow for its two
+     buttons at the default main width - so this table opts into more room
+     via :has() rather than widening every page. */
+  main:has(.device-table) { max-width: 1300px; }
+  .device-table .actions-col { white-space: nowrap; }
   table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }
   th { background: #fafafa; }
@@ -126,7 +132,7 @@
   /* a:visited (above) outweighs a plain class like .btn on specificity
      alone, so an <a class="btn"> link reverts to link-blue once visited
      unless :visited is named here too. */
-  .btn, .btn:visited { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: none; background: #202124; color: #fff; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn, .btn:visited { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: none; background: #202124; color: #fff; font-weight: 600; font-size: 0.9rem; cursor: pointer; text-decoration: none; }
   .btn-danger, .btn-danger:visited { background: #a3231c; }
   .CodeMirror { border: 1px solid #ccc; border-radius: 4px; height: 260px; }
   .actions { margin-top: 1.2rem; }

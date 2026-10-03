@@ -7,7 +7,7 @@
     <span class="hint">{{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
   </p>
 
-  <table>
+  <table class="device-table">
     <thead><tr><th>Device</th><th>Manufacturer</th><th>Location</th><th></th></tr></thead>
     <tbody>
     {{range .Devices}}
@@ -15,7 +15,7 @@
         {{template "device_info" .}}
         <td>{{.Manufacturer}}{{if .Model}}<br><span class="hint">{{.Model}}</span>{{end}}</td>
         <td>{{.RoomName}}</td>
-        <td>
+        <td class="actions-col">
           <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">
             {{if .RoomID}}Move{{else}}Link{{end}}
           </button>
