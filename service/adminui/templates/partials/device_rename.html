@@ -1,0 +1,16 @@
+{{/* Opened as a modal by layout.html's htmx:afterSwap handler once this is
+swapped into #picker; a successful Save closes it by way of respond's
+out-of-band clear of #picker - same lifecycle as room_picker. */}}
+{{define "device_rename"}}
+<dialog class="picker-dialog">
+  <h3>Rename {{.CurrentName}}</h3>
+  <form hx-post="/devices/{{.DeviceID}}/rename" hx-target="#page-content" hx-swap="outerHTML">
+    <input type="hidden" name="version" value="{{.Version}}">
+    <label>Name <input type="text" name="name" value="{{.CurrentName}}" required autofocus></label>
+    <div class="dialog-actions">
+      <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+{{end}}

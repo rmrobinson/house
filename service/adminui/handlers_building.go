@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 type buildingsPageData struct {
@@ -169,7 +170,7 @@ func (s *Server) handleBuildingDelete(w http.ResponseWriter, r *http.Request) {
 			s.httpError(w, r, loadErr)
 			return
 		}
-		s.respond(w, "building", data, grpcMessage(err), true)
+		s.respond(w, "building", data, houseview.Message(err), true)
 		return
 	}
 	redirectAfterDelete(w, "/buildings")
@@ -188,7 +189,7 @@ func parseOptionalFloat(s string) (float64, error) {
 // shape shared by every create/update handler in this app.
 func successOrError(err error, successMsg string) (msg string, isError bool) {
 	if err != nil {
-		return grpcMessage(err), true
+		return houseview.Message(err), true
 	}
 	return successMsg, false
 }

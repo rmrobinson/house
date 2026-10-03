@@ -1,0 +1,13 @@
+{{/* device_row is one linked device's row. device_row_oob is the same markup
+with hx-swap-oob, used as the entire payload of a live SSE push (sse.go) - a
+separate block because an oob attribute on the normal render would make htmx
+drop a row with no matching id yet (same reasoning as adminui's
+device_info.html). */}}
+{{define "device_row"}}<tr id="device-{{.ID}}">{{template "device_row_cells" .}}</tr>{{end}}
+{{/* A camera's controls cell (its [ VIEW ] button) needs the room, which a live
+update doesn't carry, so a camera's push refreshes only its info cell. */}}
+{{define "device_row_oob"}}{{if .IsCamera}}{{template "device_info_oob" .}}{{else}}<tr id="device-{{.ID}}" hx-swap-oob="true">{{template "device_row_cells" .}}</tr>{{end}}{{end}}
+{{define "device_info_oob"}}<td id="device-info-{{.ID}}" hx-swap-oob="true">{{template "device_info" .}}</td>{{end}}
+{{define "device_info"}}{{.Name}}<span class="badge">{{.Kind}}</span>{{if not .Online}}<span class="badge offline">offline</span>{{end}}{{if .Error}}<div class="err">{{.Error}}</div>{{end}}{{end}}
+{{define "device_row_cells"}}<td id="device-info-{{.ID}}">{{template "device_info" .}}</td>
+<td style="text-align:right">{{if .CanDim}}<input type="range" class="dimmer" name="brightness" min="0" max="100" step="1" value="{{.Level}}" aria-label="{{.Name}} brightness" hx-post="/devices/{{.ID}}/commands" hx-trigger="change" hx-target="#device-{{.ID}}" hx-swap="outerHTML" hx-disabled-elt="this"><output class="dim level">{{.Level}}%</output>{{end}}{{if .CanToggle}}<button class="toggle {{if .On}}on{{end}}" aria-pressed="{{if .On}}true{{else}}false{{end}}" aria-label="{{.Name}}" hx-post="/devices/{{.ID}}/commands" hx-vals='{"on": "{{if .On}}false{{else}}true{{end}}"}' hx-target="#device-{{.ID}}" hx-swap="outerHTML" hx-disabled-elt="this">{{if .On}}[ ON ]{{else}}[ OFF ]{{end}}</button>{{end}}{{if .RowView}}<button class="action" hx-get="{{.ViewHref}}" hx-target="#detail" hx-swap="innerHTML">[ VIEW ]</button>{{end}}</td>{{end}}

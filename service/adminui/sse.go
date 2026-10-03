@@ -46,7 +46,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	updates, unsubscribe := s.hub.subscribe()
+	updates, unsubscribe := s.hub.Subscribe()
 	defer unsubscribe()
 
 	// policyHub is nil when adminui.policy_addr isn't configured - no
@@ -54,7 +54,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	var policyEvents <-chan *api2.PolicyEvent
 	if s.policyHub != nil {
 		var unsubPolicy func()
-		policyEvents, unsubPolicy = s.policyHub.subscribe()
+		policyEvents, unsubPolicy = s.policyHub.Subscribe()
 		defer unsubPolicy()
 	}
 

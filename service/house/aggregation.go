@@ -804,8 +804,15 @@ func extractDeviceTraits(d *apiDevice.Device) (t deviceTraits, ok bool) {
 // is left unset on the result, never defaulted to zero.
 func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device) *api2.Room_Properties {
 	var occupancy, temp, light, aqi, co2, voc, radon, power []numericSample
+	var waterSeen, waterDetected bool
 
 	for _, d := range devices {
+		// Sensor.water is a Sensor-local BinarySensor, not a shared trait, so
+		// extractDeviceTraits can't find it.
+		if w := d.GetSensor().GetWater(); w != nil {
+			waterSeen = true
+			waterDetected = waterDetected || w.GetIsActive()
+		}
 		traits, ok := extractDeviceTraits(d)
 		if !ok {
 			continue
@@ -881,6 +888,10 @@ func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device)
 		props.PowerDrawW = v
 	}
 
+	if waterSeen {
+		props.WaterDetected = &waterDetected
+	}
+
 	// A room with no linked device that has ever reported any metric gets
 	// no Properties at all, not an all-fields-unset one - so a fresh link
 	// (setDeviceRoom, before any Update has arrived for it) leaves
@@ -888,7 +899,7 @@ func computeProperties(cfg *api2.AggregationConfig, devices []*apiDevice.Device)
 	// empty result.
 	if props.Occupied == nil && props.TemperatureC == nil && props.LightLevelLux == nil &&
 		props.AirQualityIndex == nil && props.Co2Ppm == nil && props.VocPpb == nil &&
-		props.RadonBqM3 == nil && props.PowerDrawW == nil {
+		props.RadonBqM3 == nil && props.PowerDrawW == nil && props.WaterDetected == nil {
 		return nil
 	}
 	return props

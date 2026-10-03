@@ -1,0 +1,7 @@
+{{define "content"}}
+<h1>HOUSE</h1>
+<ul class="box list">
+{{range .}}  <li><a href="/buildings/{{.ID}}">{{.Name}}</a></li>
+{{else}}  <li>No buildings.</li>
+{{end}}</ul>
+{{end}}

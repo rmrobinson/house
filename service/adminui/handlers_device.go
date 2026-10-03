@@ -6,6 +6,8 @@ import (
 	"net/url"
 
 	api2 "github.com/rmrobinson/house/api"
+	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 type devicesPageData struct {
@@ -148,7 +150,7 @@ func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) 
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	current := links[deviceID]
@@ -166,6 +168,73 @@ func (s *Server) handleDeviceRoomPicker(w http.ResponseWriter, r *http.Request) 
 		Version:    current.Version,
 		Rooms:      filtered,
 	})
+}
+
+// handleDeviceRenamePicker opens the rename dialog for a /devices row,
+// seeded with the device's current name and version so the Save POST can
+// enforce the same optimistic-concurrency contract as any other
+// BridgeService write (see house.DeviceConfigOverlay.UpdateDeviceConfig).
+func (s *Server) handleDeviceRenamePicker(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	ctx := r.Context()
+
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	s.renderFragment(w, "device_rename", deviceRenameData{
+		DeviceID:    deviceID,
+		CurrentName: houseview.DisplayName(d),
+		Version:     d.GetVersion(),
+	})
+}
+
+type deviceRenameData struct {
+	DeviceID    string
+	CurrentName string
+	// Version is the device's current Device.version at the time the
+	// dialog was opened, round-tripped through the form so
+	// handleDeviceRename can detect it's changed since - see
+	// house.DeviceConfigOverlay.UpdateDeviceConfig.
+	Version string
+}
+
+// handleDeviceRename saves a new display name for a device - persisted as a
+// housedb override (service/house.DeviceConfigOverlay), not written to the
+// device itself, via BridgeService.UpdateDeviceConfig, the same existing RPC
+// every other BridgeService write already uses.
+func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	name := r.FormValue("name")
+	ctx := r.Context()
+
+	_, err := s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:      deviceID,
+		Version: r.FormValue("version"),
+		Config:  &apiDevice.Device_Config{Name: name},
+	})
+	if err != nil {
+		data, loadErr := s.loadDevicesPageData(r)
+		if loadErr != nil {
+			s.httpError(w, r, loadErr)
+			return
+		}
+		s.respond(w, "devices", data, houseview.Message(err), true)
+		return
+	}
+
+	data, loadErr := s.loadDevicesPageData(r)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
+	}
+	s.respond(w, "devices", data, fmt.Sprintf("Renamed to %s", name), false)
 }
 
 type roomPickerData struct {
@@ -190,7 +259,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 
 	deviceName := deviceID
 	if d, derr := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID}); derr == nil {
-		deviceName = deviceDisplayName(d)
+		deviceName = houseview.DisplayName(d)
 	}
 
 	resp, err := s.house.LinkDevice(ctx, &api2.LinkDeviceRequest{DeviceId: deviceID, RoomId: roomID, Version: r.FormValue("version")})
@@ -200,7 +269,7 @@ func (s *Server) handleDeviceLink(w http.ResponseWriter, r *http.Request) {
 			s.httpError(w, r, loadErr)
 			return
 		}
-		s.respond(w, "devices", data, grpcMessage(err), true)
+		s.respond(w, "devices", data, houseview.Message(err), true)
 		return
 	}
 

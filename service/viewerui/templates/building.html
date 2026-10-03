@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>{{.Name}}</h1>
+{{/* The SSE extension only listens on elements with sse-swap; each message is
+a set of hx-swap-oob fragments (sse.go), so the element itself swaps nothing. */}}
+<div hidden hx-ext="sse" sse-connect="/buildings/{{.ID}}/events" sse-swap="message" hx-swap="none"></div>
+<div class="cols">
+  <div id="floor-panel" class="col-list">{{template "floor_panel" .Panel}}</div>
+  <div id="detail" class="col-detail">
+    {{template "detail_content" .}}
+  </div>
+</div>
+<div class="box">
+  <div class="box-title">EVENTS</div>
+  <div id="event-log" class="log"></div>
+</div>
+{{end}}

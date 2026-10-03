@@ -818,3 +818,19 @@ func TestAggregator_StaleDecayTimerDoesNotOrphanNewOne(t *testing.T) {
 	a.mu.Unlock()
 	assert.True(t, stillTracked, "the second (current) timer's entry must survive the stale first timer firing")
 }
+
+func TestComputeProperties_WaterDetected(t *testing.T) {
+	dry := sensorDevice(&apiDevice.Sensor{Water: &apiDevice.Sensor_BinarySensor{}})
+	wet := sensorDevice(&apiDevice.Sensor{Water: &apiDevice.Sensor_BinarySensor{IsActive: true}})
+
+	props := computeProperties(nil, []*apiDevice.Device{dry})
+	require.NotNil(t, props)
+	require.NotNil(t, props.WaterDetected)
+	assert.False(t, *props.WaterDetected)
+
+	props = computeProperties(nil, []*apiDevice.Device{dry, wet})
+	require.NotNil(t, props.WaterDetected)
+	assert.True(t, *props.WaterDetected, "a leak on any sensor counts")
+
+	assert.Nil(t, computeProperties(nil, []*apiDevice.Device{sensorDevice(&apiDevice.Sensor{})}), "no water sensor -> unset")
+}

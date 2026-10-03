@@ -31,10 +31,16 @@ func TestLoadSystemPoliciesPowerRestore(t *testing.T) {
 	home := newFakeHomeAPI()
 	e, _ := newTestEngine(t, home)
 
+	// "on_off.state.is_on", not "light.on_off.state.is_on": bridgehome.Adapter.GetState's real
+	// dotted path already starts inside the device's populated trait message (Light, Sensor, ...)
+	// - see its doc comment - so a leading "light." segment doesn't resolve against a real
+	// backend. fakeHomeAPI stores whatever key string it's given and would pass this test either
+	// way, which is exactly how this mismatch shipped undetected; matching the real convention
+	// here is what keeps this test meaningful.
 	e.UpdateDeviceState("light.living_room", "light", nil)
-	require.NoError(t, home.SetState("light.living_room", "light.on_off.state.is_on", true))
+	require.NoError(t, home.SetState("light.living_room", "on_off.state.is_on", true))
 	e.UpdateDeviceState("light.porch", "light", nil)
-	require.NoError(t, home.SetState("light.porch", "light.on_off.state.is_on", false))
+	require.NoError(t, home.SetState("light.porch", "on_off.state.is_on", false))
 	e.UpdateDeviceState("sensor.hallway", "sensor", nil)
 
 	require.NoError(t, LoadSystemPolicies(e))
