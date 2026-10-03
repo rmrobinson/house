@@ -155,6 +155,8 @@ type Properties struct {
 	PowerDrawW      string
 	// WaterDetected is "Detected" or "Dry".
 	WaterDetected string
+	// BatteryRuntime is the shortest UPS runtime in the room, e.g. "42 min" or "1h 5m".
+	BatteryRuntime string
 }
 
 // PropertiesToView formats p's set fields for display, leaving an unset
@@ -194,6 +196,9 @@ func PropertiesToView(p *api2.Room_Properties) Properties {
 	if p.PowerDrawW != nil {
 		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
 	}
+	if p.BatteryRuntimeMins != nil {
+		pv.BatteryRuntime = formatRuntime(p.GetBatteryRuntimeMins())
+	}
 	if p.WaterDetected != nil {
 		if p.GetWaterDetected() {
 			pv.WaterDetected = "Detected"
@@ -202,6 +207,14 @@ func PropertiesToView(p *api2.Room_Properties) Properties {
 		}
 	}
 	return pv
+}
+
+// formatRuntime renders a runtime in minutes as "N min" or, from an hour up, "Hh Mm".
+func formatRuntime(mins int32) string {
+	if mins < 60 {
+		return fmt.Sprintf("%d min", mins)
+	}
+	return fmt.Sprintf("%dh %dm", mins/60, mins%60)
 }
 
 // OnOff returns d's OnOff trait, or nil if its device type has none - the

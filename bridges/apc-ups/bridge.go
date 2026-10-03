@@ -33,6 +33,18 @@ func hasStatusFlag(status, flag string) bool {
 	return false
 }
 
+// upsStatuses is the set of flags apcupsd's STATUS field can contain; a Status value is a
+// space-separated combination of these (see hasStatusFlag).
+var upsStatuses = []string{"CAL", "TRIM", "BOOST", "ONLINE", "ONBATT", "OVERLOAD", "LOWBATT", "REPLACEBATT", "NOBATT", "SLAVE", "SLAVEDOWN", "COMMLOST", "SHUTTING DOWN"}
+
+// frequencyHz returns a pointer to f, or nil when the UPS doesn't report line frequency (0).
+func frequencyHz(f float64) *float64 {
+	if f == 0 {
+		return nil
+	}
+	return &f
+}
+
 func statusToDevice(s *apcupsd.Status) *device.Device {
 	d := &device.Device{
 		Id:           s.SerialNumber,
@@ -54,17 +66,25 @@ func statusToDevice(s *apcupsd.Status) *device.Device {
 					},
 				},
 				Battery: &trait.Battery{
+					Attributes: &trait.Battery_Attributes{Statuses: upsStatuses},
 					State: &trait.Battery_State{
 						Discharging:           hasStatusFlag(s.Status, "ONBATT"),
 						Status:                s.Status,
-						CapacityRemainingPct:  100 - int32(s.BatteryChargePercent),
+						CapacityRemainingPct:  int32(s.BatteryChargePercent),
 						CapacityRemainingMins: int32(s.TimeLeft.Minutes()),
 					},
 				},
 				Power: &trait.Power{
-					Attributes: &trait.Power_Attributes{},
+					Attributes: &trait.Power_Attributes{Statuses: upsStatuses},
 					State: &trait.Power_State{
+						// Input (mains) voltage, deliberately not OutputVoltage: it drops to 0 on battery,
+						// which is how a consumer can tell the UPS has lost line power.
 						VoltageV: s.LineVoltage,
+						// Estimated draw: the UPS's rated wattage (NOMPOWER) scaled by its current load (LOADPCT).
+						PowerW:      float64(s.NominalPower) * s.LoadPercent / 100,
+						CurrentA:    s.OutputAmps,
+						FrequencyHz: frequencyHz(s.LineFrequency),
+						Status:      s.Status,
 					},
 				},
 			},

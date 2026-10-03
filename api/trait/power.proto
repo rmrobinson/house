@@ -17,7 +17,9 @@ message Power {
     double current_a = 1;
     // Power being measured; reported in watts.
     double power_w = 2;
-    // Voltage being measured; reported in volts.
+    // Voltage being measured; reported in volts. This is the voltage on the
+    // device's input/supply side (e.g. a UPS's mains input, an EV charger's
+    // grid voltage), so a drop to 0 on a UPS means it has lost line power.
     double voltage_v = 3;
     // Frequency of the line voltage, reported in Hz.
     optional double frequency_hz = 4;

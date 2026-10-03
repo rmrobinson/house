@@ -47,3 +47,11 @@ func TestPropertiesToView(t *testing.T) {
 	assert.Equal(t, "No", pv.Occupied)
 	assert.Equal(t, "", pv.TemperatureC)
 }
+
+func TestPropertiesToView_BatteryRuntime(t *testing.T) {
+	for mins, want := range map[int32]string{0: "0 min", 42: "42 min", 60: "1h 0m", 125: "2h 5m"} {
+		m := mins
+		assert.Equal(t, want, PropertiesToView(&api2.Room_Properties{BatteryRuntimeMins: &m}).BatteryRuntime)
+	}
+	assert.Equal(t, "", PropertiesToView(&api2.Room_Properties{}).BatteryRuntime)
+}
