@@ -1,5 +1,11 @@
 adminui:
   listen_port: 8080
+  # Optional: run every route under this path prefix instead of the site
+  # root - e.g. "/admin" when a reverse proxy in front of this process
+  # forwards that prefix here without stripping it first (see
+  # app.go/templates.go for how every route/link/redirect picks this up).
+  # Leave blank (the default) to serve at the site root exactly as before.
+  base_path: ""
   # Address of housed's HouseService.
   house_addr: "192.168.1.5:1337"
   # Address of the BridgeService facade. Defaults to house_addr if unset -

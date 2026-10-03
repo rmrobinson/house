@@ -99,7 +99,7 @@ func (s *Server) roomHub(buildingID string) *hub.Hub[*api2.HouseUpdate] {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	webassets.Register(mux)
+	webassets.Register(mux, "")
 
 	mux.HandleFunc("GET /{$}", s.handleRoot)
 	mux.HandleFunc("GET /buildings/{id}", s.handleBuilding)

@@ -2,7 +2,7 @@
 <div id="page-content">
   <h1>{{if .IsNew}}New Policy{{else}}Edit {{.ID}}{{end}}</h1>
 
-  <form hx-post="/policies" hx-target="#page-content" hx-swap="outerHTML">
+  <form hx-post="{{url "/policies"}}" hx-target="#page-content" hx-swap="outerHTML">
     <input type="hidden" name="is_new" value="{{.IsNew}}">
 
     <label for="id">Policy ID</label>
@@ -31,7 +31,7 @@
 
     <div class="actions">
       <button class="btn" type="submit">{{if .IsNew}}Create{{else}}Save{{end}}</button>
-      <a href="/policies">Cancel</a>
+      <a href="{{url "/policies"}}">Cancel</a>
     </div>
   </form>
 

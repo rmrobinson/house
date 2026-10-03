@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -67,7 +68,18 @@ func main() {
 		}
 	}
 
-	a, err := newApp(context.Background(), logger, configPath, tlsCfg, ep)
+	// Optional: run every route under a path prefix instead of the site
+	// root - for a reverse proxy (e.g. Caddy) that forwards a prefix like
+	// "/admin" to this process without stripping it first. Normalized to
+	// "" or a "/"-prefixed, no-trailing-slash form so every caller (app.go,
+	// server.go, templates.go, handlers_device.go) can just concatenate it
+	// in front of a path with no further checking.
+	basePath := strings.TrimSuffix(viper.GetString("adminui.base_path"), "/")
+	if basePath != "" && !strings.HasPrefix(basePath, "/") {
+		basePath = "/" + basePath
+	}
+
+	a, err := newApp(context.Background(), logger, configPath, tlsCfg, ep, basePath)
 	if err != nil {
 		logger.Fatal("unable to start admin ui", zap.Error(err))
 	}

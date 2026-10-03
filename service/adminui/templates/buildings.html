@@ -6,7 +6,7 @@
 
   <dialog id="add-building-dialog">
     <h3>Add building</h3>
-    <form hx-post="/buildings" hx-target="#page-content" hx-swap="outerHTML">
+    <form hx-post="{{url "/buildings"}}" hx-target="#page-content" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" required></label>
       <label>Timezone <input type="text" name="tz" placeholder="America/Toronto"></label>
       <label>Latitude <input type="number" step="any" min="-90" max="90" name="lat" placeholder="43.6532"></label>
@@ -23,7 +23,7 @@
     <tbody>
     {{range .Buildings}}
       <tr>
-        <td><a href="/buildings/{{.ID}}">{{.Name}}</a></td>
+        <td><a href="{{url "/buildings/" .ID}}">{{.Name}}</a></td>
         <td>{{.TZ}}</td>
         <td><button type="button" class="link-btn" onclick="document.getElementById('edit-building-dialog-{{.ID}}').showModal()">edit</button></td>
       </tr>
@@ -36,7 +36,7 @@
   {{range .Buildings}}
   <dialog id="edit-building-dialog-{{.ID}}">
     <h3>Edit building</h3>
-    <form hx-post="/buildings/{{.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+    <form hx-post="{{url "/buildings/" .ID}}" hx-target="#page-content" hx-swap="outerHTML">
       <input type="hidden" name="version" value="{{.Version}}">
       <label>Name <input type="text" name="name" value="{{.Name}}" required></label>
       <label>Timezone <input type="text" name="tz" value="{{.TZ}}" placeholder="America/Toronto"></label>
@@ -48,7 +48,7 @@
       </div>
     </form>
     <div class="panel-danger">
-      <form hx-post="/buildings/{{.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
+      <form hx-post="{{url "/buildings/" .ID "/delete"}}" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this building?">
         <input type="hidden" name="version" value="{{.Version}}">
         <button type="submit" class="danger">Delete building</button>
       </form>

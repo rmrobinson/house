@@ -5,7 +5,7 @@ greyed out (policyAvailable, templates.go) and which page a currently-open
 tab's live updates come from. */}}
 {{define "content"}}
 <div id="page-content">
-  <form hx-post="/settings" hx-target="#page-content" hx-swap="outerHTML">
+  <form hx-post="{{url "/settings"}}" hx-target="#page-content" hx-swap="outerHTML">
     <label for="house_addr">House service address</label>
     <input type="text" id="house_addr" name="house_addr" value="{{.HouseAddr}}" placeholder="192.168.1.5:1337" required>
     <div class="hint">HouseService/BridgeService facade - the adminui.house_addr this instance dials.</div>

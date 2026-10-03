@@ -50,7 +50,7 @@ func devicesFilterFromRequest(r *http.Request) devicesFilter {
 	return parseDevicesFilter(r.URL.Query())
 }
 
-// URL returns /devices with f applied.
+// URL returns basePath+/devices with f applied.
 func (f devicesFilter) URL() string {
 	q := url.Values{}
 	if f.Unlinked {
@@ -63,9 +63,9 @@ func (f devicesFilter) URL() string {
 		q.Set("hide_network", "1")
 	}
 	if len(q) == 0 {
-		return "/devices"
+		return basePath + "/devices"
 	}
-	return "/devices?" + q.Encode()
+	return basePath + "/devices?" + q.Encode()
 }
 
 // ToggleUnlinked/ToggleConnected return the /devices URL with that one

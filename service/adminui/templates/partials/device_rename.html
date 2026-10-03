@@ -4,7 +4,7 @@ out-of-band clear of #picker - same lifecycle as room_picker. */}}
 {{define "device_rename"}}
 <dialog class="picker-dialog">
   <h3>Rename {{.CurrentName}}</h3>
-  <form hx-post="{{if .RoomID}}/rooms/{{.RoomID}}/devices/{{.DeviceID}}/rename{{else}}/devices/{{.DeviceID}}/rename{{end}}" hx-target="#page-content" hx-swap="outerHTML">
+  <form hx-post="{{if .RoomID}}{{url "/rooms/" .RoomID "/devices/" .DeviceID "/rename"}}{{else}}{{url "/devices/" .DeviceID "/rename"}}{{end}}" hx-target="#page-content" hx-swap="outerHTML">
     <input type="hidden" name="version" value="{{.Version}}">
     <label>Name <input type="text" name="name" value="{{.CurrentName}}" required autofocus></label>
     <div class="dialog-actions">

@@ -14,7 +14,7 @@ out-of-band clear of #picker. */}}
           <td>{{.Manufacturer}}</td>
           <td><span class="badge">{{.Location}}</span></td>
           <td>
-            <form class="inline" hx-post="/rooms/{{$.TargetRoomID}}/link" hx-target="#page-content" hx-swap="outerHTML">
+            <form class="inline" hx-post="{{url "/rooms/" $.TargetRoomID "/link"}}" hx-target="#page-content" hx-swap="outerHTML">
               <input type="hidden" name="device_id" value="{{.ID}}">
               <input type="hidden" name="version" value="{{.Version}}">
               <button type="submit">Select</button>

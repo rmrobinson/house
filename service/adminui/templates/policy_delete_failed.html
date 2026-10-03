@@ -10,6 +10,6 @@ from). */}}
   {{else}}
   <p><strong>{{.ID}}</strong> is no longer active on the running engine, but removing it failed: {{.Err}}</p>
   {{end}}
-  <p><a href="/policies">Back to policies</a></p>
+  <p><a href="{{url "/policies"}}">Back to policies</a></p>
 </div>
 {{end}}
