@@ -116,8 +116,11 @@
   input[type=text], select, textarea { width: 100%; box-sizing: border-box; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
   textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   label { display: block; font-weight: 600; margin: 1rem 0 0.3rem; font-size: 0.85rem; }
-  .btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: none; background: #202124; color: #fff; font-weight: 600; cursor: pointer; text-decoration: none; }
-  .btn-danger { background: #a3231c; }
+  /* a:visited (above) outweighs a plain class like .btn on specificity
+     alone, so an <a class="btn"> link reverts to link-blue once visited
+     unless :visited is named here too. */
+  .btn, .btn:visited { display: inline-block; padding: 0.5rem 1rem; border-radius: 4px; border: none; background: #202124; color: #fff; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn-danger, .btn-danger:visited { background: #a3231c; }
   .CodeMirror { border: 1px solid #ccc; border-radius: 4px; height: 260px; }
   .actions { margin-top: 1.2rem; }
   .type-list { list-style: none; padding: 0; font-size: 0.8rem; color: #444; }
