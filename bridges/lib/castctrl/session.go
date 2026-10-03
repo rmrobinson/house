@@ -595,9 +595,10 @@ func (s *Session) SeekAbsolute(ctx context.Context, positionS float64) error {
 // sendQueueJump moves the active queue by delta items via QUEUE_UPDATE's
 // "jump" field - Cast has no dedicated skip-forward/skip-backward message;
 // this is the mechanism real senders (e.g. the YouTube/Spotify Cast apps)
-// use for "next track"/"previous track". Untested against real hardware -
-// unlike Play/Pause/Stop/Seek/Volume/Mute/LaunchApp above, no live device has
-// confirmed this round-trips correctly yet.
+// use for "next track"/"previous track". Confirmed live against a real
+// Google Home Mini running a Spotify Cast session: delta=1 and delta=-1 each
+// moved to a genuinely different track (not just a position seek within the
+// current one).
 func (s *Session) sendQueueJump(ctx context.Context, delta int) error {
 	transportID, mediaSessionID, err := s.mediaTarget()
 	if err != nil {

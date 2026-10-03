@@ -66,11 +66,10 @@ The table above applies equally to `Television`-kind devices (`Playback`/`SeekAb
 always rejected as unsupported).
 
 `SkipForward`/`SkipBackward` send a `QUEUE_UPDATE` with a relative `jump` (`1`/`-1`) — the
-mechanism real Cast sender apps use for "next track"/"previous track" navigation. This is
-**untested against real hardware**: unlike every other command in the table, no live device has
-confirmed a `QUEUE_UPDATE` jump actually advances the queue (see `castctrl.Session.sendQueueJump`).
-It should be exercised against a real queued session (e.g. a Spotify or YouTube Music playlist
-cast to a Chromecast Audio or Google Home Mini) before being relied on.
+mechanism real Cast sender apps use for "next track"/"previous track" navigation. Confirmed live
+against a real Google Home Mini running a Spotify Cast session: `delta=1` and `delta=-1` each
+moved to a genuinely different track (not just a position seek within the current one) — see
+`castctrl.Session.sendQueueJump`.
 
 Confirmed live against a real Google TV Streamer: `VolumeRelative` and `Mute` both round-trip
 successfully at the protocol level (the receiver acknowledges the new level/muted state, and
