@@ -13,8 +13,8 @@ import (
 
 func TestDevicesFilterFromRequest(t *testing.T) {
 	// A plain page load reads its own query string.
-	r := httptest.NewRequest("GET", "/devices?unlinked=1&connected=1", nil)
-	assert.Equal(t, devicesFilter{Unlinked: true, Connected: true}, devicesFilterFromRequest(r))
+	r := httptest.NewRequest("GET", "/devices?unlinked=1&connected=1&hide_network=1", nil)
+	assert.Equal(t, devicesFilter{Unlinked: true, Connected: true, HideNetwork: true}, devicesFilterFromRequest(r))
 
 	// A link/move POST has no query string of its own - the filter the page
 	// was showing comes from htmx's HX-Current-URL instead, so it survives.
@@ -29,11 +29,13 @@ func TestDevicesFilterToggles(t *testing.T) {
 	assert.Equal(t, "/devices", f.URL())
 	assert.Equal(t, "/devices?unlinked=1", f.ToggleUnlinked())
 	assert.Equal(t, "/devices?connected=1", f.ToggleConnected())
+	assert.Equal(t, "/devices?hide_network=1", f.ToggleHideNetwork())
 
-	f = devicesFilter{Unlinked: true, Connected: true}
-	assert.Equal(t, "/devices?connected=1&unlinked=1", f.URL())
-	assert.Equal(t, "/devices?connected=1", f.ToggleUnlinked())
-	assert.Equal(t, "/devices?unlinked=1", f.ToggleConnected())
+	f = devicesFilter{Unlinked: true, Connected: true, HideNetwork: true}
+	assert.Equal(t, "/devices?connected=1&hide_network=1&unlinked=1", f.URL())
+	assert.Equal(t, "/devices?connected=1&hide_network=1", f.ToggleUnlinked())
+	assert.Equal(t, "/devices?hide_network=1&unlinked=1", f.ToggleConnected())
+	assert.Equal(t, "/devices?connected=1&unlinked=1", f.ToggleHideNetwork())
 }
 
 func TestSortDevices(t *testing.T) {
@@ -68,6 +70,7 @@ func TestDevicesPageAndPickersRender(t *testing.T) {
 	assert.Contains(t, body, "L-100")
 	assert.Contains(t, body, `href="/devices?connected=1&amp;unlinked=1" class="filter-chip"`)
 	assert.Contains(t, body, `href="/devices" class="filter-chip filter-chip-on"`)
+	assert.Contains(t, body, `href="/devices?connected=1&amp;hide_network=1" class="filter-chip">Network Devices</a>`)
 
 	rec = httptest.NewRecorder()
 	s.renderFragment(rec, "room_picker", roomPickerData{DeviceID: "d1", DeviceName: "Lamp", Rooms: []roomOption{{ID: "r1", Label: "Home · Main · Kitchen"}}})

@@ -4,10 +4,12 @@
     Show only:
     <a href="{{.Filter.ToggleUnlinked}}" class="filter-chip{{if .Filter.Unlinked}} filter-chip-on{{end}}">Unlinked</a>
     <a href="{{.Filter.ToggleConnected}}" class="filter-chip{{if .Filter.Connected}} filter-chip-on{{end}}">Connected</a>
+    &nbsp;Hide:
+    <a href="{{.Filter.ToggleHideNetwork}}" class="filter-chip{{if .Filter.HideNetwork}} filter-chip-on{{end}}">Network Devices</a>
     <span class="hint">{{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
   </p>
 
-  <table>
+  <table class="device-table">
     <thead><tr><th>Device</th><th>Manufacturer</th><th>Location</th><th></th></tr></thead>
     <tbody>
     {{range .Devices}}
@@ -15,7 +17,7 @@
         {{template "device_info" .}}
         <td>{{.Manufacturer}}{{if .Model}}<br><span class="hint">{{.Model}}</span>{{end}}</td>
         <td>{{.RoomName}}</td>
-        <td>
+        <td class="actions-col">
           <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">
             {{if .RoomID}}Move{{else}}Link{{end}}
           </button>
