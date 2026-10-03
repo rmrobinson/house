@@ -70,7 +70,7 @@ func Kind(d *apiDevice.Device) string {
 	case d.GetTelevision() != nil:
 		return "Television"
 	case d.GetConnectedDevice() != nil:
-		return "Connected Device"
+		return "Network Device"
 	case d.GetCamera() != nil:
 		return "Camera"
 	case d.GetFan() != nil:

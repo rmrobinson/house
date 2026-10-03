@@ -4,6 +4,8 @@
     Show only:
     <a href="{{.Filter.ToggleUnlinked}}" class="filter-chip{{if .Filter.Unlinked}} filter-chip-on{{end}}">Unlinked</a>
     <a href="{{.Filter.ToggleConnected}}" class="filter-chip{{if .Filter.Connected}} filter-chip-on{{end}}">Connected</a>
+    &nbsp;Hide:
+    <a href="{{.Filter.ToggleHideNetwork}}" class="filter-chip{{if .Filter.HideNetwork}} filter-chip-on{{end}}">Network Devices</a>
     <span class="hint">{{len .Devices}} device{{if ne (len .Devices) 1}}s{{end}}</span>
   </p>
 

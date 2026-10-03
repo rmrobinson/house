@@ -23,12 +23,16 @@ type devicesFilter struct {
 	Unlinked bool
 	// Connected shows only devices their bridge currently reports reachable.
 	Connected bool
+	// HideNetwork excludes Network Devices (api/device.ConnectedDevice, as
+	// exposed by the omada bridge) from the list.
+	HideNetwork bool
 }
 
 func parseDevicesFilter(q url.Values) devicesFilter {
 	return devicesFilter{
-		Unlinked:  q.Get("unlinked") == "1",
-		Connected: q.Get("connected") == "1",
+		Unlinked:    q.Get("unlinked") == "1",
+		Connected:   q.Get("connected") == "1",
+		HideNetwork: q.Get("hide_network") == "1",
 	}
 }
 
@@ -55,6 +59,9 @@ func (f devicesFilter) URL() string {
 	if f.Connected {
 		q.Set("connected", "1")
 	}
+	if f.HideNetwork {
+		q.Set("hide_network", "1")
+	}
 	if len(q) == 0 {
 		return "/devices"
 	}
@@ -70,6 +77,11 @@ func (f devicesFilter) ToggleUnlinked() string {
 
 func (f devicesFilter) ToggleConnected() string {
 	f.Connected = !f.Connected
+	return f.URL()
+}
+
+func (f devicesFilter) ToggleHideNetwork() string {
+	f.HideNetwork = !f.HideNetwork
 	return f.URL()
 }
 
@@ -105,6 +117,9 @@ func (s *Server) loadDevicesPageData(r *http.Request) (devicesPageData, error) {
 			continue
 		}
 		if filter.Connected && !d.GetAddress().GetIsReachable() {
+			continue
+		}
+		if filter.HideNetwork && d.GetConnectedDevice() != nil {
 			continue
 		}
 
