@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>Execution Log{{if .PolicyID}} — {{.PolicyID}}{{end}}</h1>
+{{if .PolicyID}}<p class="crumbs">Filtered by policy: <strong>{{.PolicyID}}</strong></p>{{end}}
 <table>
   <thead><tr><th>Policy</th><th>Started</th><th>Duration</th><th>Status</th><th>Error</th></tr></thead>
   {{/* Filtered by ?policy=<id>, this shares the exact tbody id convention
