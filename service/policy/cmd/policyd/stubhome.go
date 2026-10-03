@@ -112,8 +112,9 @@ func (h *stubHomeAPI) SetHouseState(key string, value any) error {
 }
 
 // GetLastKnown always returns "no entry": the stub has no real device
-// history to draw on, so e.g. sys.power-restore's script correctly finds
-// nothing to restore rather than fabricating a value.
+// history to draw on, so e.g. a power-restore policy built on
+// "sys.power-restored" correctly finds nothing to restore rather than
+// fabricating a value.
 func (h *stubHomeAPI) GetLastKnown(id string) (any, error) {
 	h.logger.Debug("stub home: GetLastKnown", zap.String("id", id))
 	return nil, nil

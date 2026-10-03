@@ -25,8 +25,9 @@
 // "occupied"/"mode" keys and SetHouseState's "mode" key (see
 // housestate.Adapter): the adapter subscribes to HouseService.
 // StreamHouseUpdates for live Building.State, which is what drives the
-// "sys.occupied" condition type and the "sys.occupancy" default policy built
-// on it. Left unconfigured (no --house-addr), both keys stay
+// "sys.occupied" condition type any user policy can build on (see
+// policy.RegisterSystemConditionTypes — the engine ships no default
+// policies of its own). Left unconfigured (no --house-addr), both keys stay
 // policy.ErrNotImplemented, same as any other HomeAPI method bridgehome/the
 // stub don't back.
 //
@@ -219,9 +220,6 @@ func main() {
 	policy.RegisterLocationConditionTypes(engine)
 	if err := policy.LoadPersistedPolicies(engine, store); err != nil {
 		logger.Fatal("unable to load persisted policies", zap.Error(err))
-	}
-	if err := policy.LoadDefaultSystemPolicies(engine); err != nil {
-		logger.Fatal("unable to load default system policies", zap.Error(err))
 	}
 
 	// Started only once persisted/default policies are already registered

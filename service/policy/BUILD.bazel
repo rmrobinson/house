@@ -19,8 +19,6 @@ go_library(
         "sun.go",
     ],
     embedsrcs = [
-        "scripts/sys_occupancy.lua",
-        "scripts/sys_power_restore.lua",
         "migrations/000001_setup.down.sql",
         "migrations/000001_setup.up.sql",
     ],
@@ -60,6 +58,8 @@ go_test(
     ],
     embedsrcs = [
         "scripts/battery_report.lua",
+        "scripts/sys_occupancy.lua",
+        "scripts/sys_power_restore.lua",
     ],
     embed = [":policy"],
     deps = [
