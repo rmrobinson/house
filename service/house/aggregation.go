@@ -442,6 +442,33 @@ func (a *aggregator) setBuildingMode(buildingID, mode string) {
 	a.publishBuilding(update)
 }
 
+// syncBuildingModeCache records buildingID's current mode as read back from
+// the db, publishing a BuildingUpdate only if it actually differs from what
+// was cached - unlike setBuildingMode, call this from Service.UpdateBuilding
+// after every update regardless of whether the caller touched mode at all
+// (db.UpdateBuilding can clear an invalidated mode as a side effect of
+// shrinking available_modes - see its doc comment), so publishing
+// unconditionally the way setBuildingMode does would broadcast a spurious
+// BuildingUpdate to every StreamHouseUpdates subscriber on an unrelated
+// name/tz/lat/lon-only edit.
+func (a *aggregator) syncBuildingModeCache(buildingID, mode string) {
+	a.mu.Lock()
+	if a.buildingMode[buildingID] == mode {
+		a.mu.Unlock()
+		return
+	}
+	a.buildingMode[buildingID] = mode
+	occupied := a.buildingOccupiedLocked(buildingID)
+	a.buildingOccupiedPublished[buildingID] = occupied
+	update := &api2.BuildingUpdate{
+		BuildingId: buildingID,
+		State:      &api2.Building_State{Occupied: occupied, Mode: mode},
+	}
+	a.mu.Unlock()
+
+	a.publishBuilding(update)
+}
+
 // aggregatingDeviceKind reports whether d has a Device.details kind set at
 // all - deliberately not "does extractDeviceTraits currently find a trait
 // on it", so a device whose kind can aggregate doesn't get silently

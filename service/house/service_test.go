@@ -524,6 +524,54 @@ func TestSetHouseMode(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code())
 }
 
+// TestUpdateBuilding_DoesNotPublishSpuriousBuildingUpdate guards against a
+// real bug caught in review: UpdateBuilding syncs the aggregator's cached
+// mode on every call (since shrinking available_modes can clear an
+// invalidated mode as a side effect - see db.UpdateBuilding), but a plain
+// name/tz/lat/lon-only edit that leaves mode untouched must not broadcast a
+// BuildingUpdate to every StreamHouseUpdates subscriber.
+func TestUpdateBuilding_DoesNotPublishSpuriousBuildingUpdate(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	b, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Home", AvailableModes: []string{"home", "away"}}})
+	require.NoError(t, err)
+	_, err = s.SetHouseMode(ctx, &api2.SetHouseModeRequest{BuildingId: b.Id, Mode: "home"})
+	require.NoError(t, err)
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	fake := &fakeStreamHouseUpdatesServer{ctx: streamCtx, sent: make(chan *api2.HouseUpdate, 10)}
+	done := make(chan error, 1)
+	go func() {
+		done <- s.StreamHouseUpdates(&api2.StreamHouseUpdatesRequest{BuildingId: b.Id}, fake)
+	}()
+
+	select {
+	case u := <-fake.sent:
+		require.NotNil(t, u.GetBuilding(), "first message must be the building-state snapshot")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the initial snapshot")
+	}
+
+	// A plain edit that leaves available_modes (and so mode) unchanged.
+	_, err = s.UpdateBuilding(ctx, &api2.UpdateBuildingRequest{
+		Id:      b.Id,
+		Version: b.Version,
+		Config:  &api2.Building_Config{Name: "Cottage", AvailableModes: []string{"home", "away"}},
+	})
+	require.NoError(t, err)
+
+	select {
+	case u := <-fake.sent:
+		t.Fatalf("unexpected BuildingUpdate for an edit that didn't touch mode: %+v", u)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	<-done
+}
+
 // TestGetBuilding_OccupiedReflectsRoomMotion covers the house.Service wiring
 // from a linked room's Presence motion to Building.State.occupied - the
 // decay/window behaviour itself is covered at the aggregator level by

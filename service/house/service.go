@@ -158,8 +158,12 @@ func (s *Service) UpdateBuilding(ctx context.Context, req *api2.UpdateBuildingRe
 	// Shrinking available_modes can leave db.UpdateBuilding clearing the
 	// building's mode as a side effect (see its doc comment) - keep the
 	// aggregator's cached mode, which only otherwise changes via
-	// SetHouseMode, from going stale against that.
-	s.agg.setBuildingMode(res.ID, res.Mode)
+	// SetHouseMode, from going stale against that. syncBuildingModeCache
+	// (not setBuildingMode) since this runs on every edit regardless of
+	// whether mode actually changed, and only publishing on a real change
+	// avoids spamming StreamHouseUpdates subscribers with a BuildingUpdate
+	// for every unrelated name/tz/lat/lon-only edit.
+	s.agg.syncBuildingModeCache(res.ID, res.Mode)
 
 	return s.buildingToAPI(*res), nil
 }
