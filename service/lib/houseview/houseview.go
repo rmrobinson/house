@@ -342,6 +342,21 @@ func mediaTrackSummary(state *apiTrait.Media_State) string {
 	}
 }
 
+// MediaSignature returns a stable comparison key for m's current playback -
+// its playback state plus track identity. Unlike MediaSummary (formatted for
+// display, and deliberately blind to the difference between STOPPED,
+// COMPLETED and UNSPECIFIED), this distinguishes every playback state, so a
+// caller can detect any meaningful change - including a stop or finish -
+// without false positives from an unrelated update (e.g. a volume change)
+// that happens to carry an unchanged Media trait alongside it.
+func MediaSignature(m *apiTrait.Media) string {
+	if m == nil {
+		return ""
+	}
+	state := m.GetState()
+	return fmt.Sprintf("%d|%s", state.GetPlaybackState(), mediaTrackSummary(state))
+}
+
 // ListBuildings/ListFloors/ListRoomsByFloor wrap HouseService's streaming
 // List* RPCs into a plain slice - every caller wants the whole list at once
 // (home-scale result sets, not worth consuming the stream incrementally).

@@ -11,6 +11,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/api/trait"
 )
 
 // These errors are ones that the API itself can return
@@ -139,7 +140,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 	} else if d.GetMediaPlayer() != nil {
 		if d.GetMediaPlayer().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
-		} else if d.GetMediaPlayer().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetSkipForward() != nil || req.GetSkipBackward() != nil) {
+		} else if media := d.GetMediaPlayer().GetMedia(); media != nil && mediaSupportsCommand(media, req) {
 			return true
 		} else if d.GetMediaPlayer().GetApp() != nil && req.GetAppLaunch() != nil {
 			return true
@@ -158,7 +159,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		} else if d.GetTelevision().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
-		} else if d.GetTelevision().GetMedia() != nil && (req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetSkipForward() != nil || req.GetSkipBackward() != nil) {
+		} else if media := d.GetTelevision().GetMedia(); media != nil && mediaSupportsCommand(media, req) {
 			return true
 		} else if d.GetTelevision().GetApp() != nil && (req.GetAppLaunch() != nil || req.GetAppClose() != nil) {
 			return true
@@ -167,6 +168,27 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 		}
 	}
 
+	return false
+}
+
+// mediaSupportsCommand reports whether req is a playback-family command
+// media actually supports. Playback/Seek are accepted unconditionally once a
+// Media trait is present, matching every other branch's granularity in
+// deviceSupportsCommand; SkipForward/SkipBackward are additionally gated on
+// their own can_skip_forward/can_skip_backward attribute, since - unlike
+// pause or seek - plenty of devices (anything without an active queue) don't
+// support track navigation at all, and the one bridge implementing it today
+// (bridges/cast's QUEUE_UPDATE jump) is explicitly unverified against real
+// hardware - see bridges/cast/README.md - so a request shouldn't reach it
+// for a device that never claimed to support it.
+func mediaSupportsCommand(media *trait.Media, req *command.Command) bool {
+	if req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil {
+		return true
+	} else if req.GetSkipForward() != nil {
+		return media.GetAttributes().GetCanSkipForward()
+	} else if req.GetSkipBackward() != nil {
+		return media.GetAttributes().GetCanSkipBackward()
+	}
 	return false
 }
 

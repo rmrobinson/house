@@ -82,7 +82,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if !s.writeFragments(w, "device_row_oob", deviceToView(du.GetDevice())) {
 				return
 			}
-			if houseview.Media(du.GetDevice()) != nil {
+			if m := houseview.Media(du.GetDevice()); m != nil && names.mediaChanged(du.GetDevice().GetId(), houseview.MediaSignature(m)) {
 				if !s.handleMediaUpdate(w, r, names, du.GetDevice()) {
 					return
 				}
@@ -95,11 +95,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // nameCache maps room ID -> name for the event log's labels, plus device ID
 // -> room ID so a BridgeService update (which carries a Device, with no room
 // reference of its own - only Room lists its Devices) can be routed to the
-// room whose "now playing" row and event-log line it should refresh.
+// room whose "now playing" row and event-log line it should refresh, plus
+// device ID -> last-seen houseview.MediaSignature so an update that doesn't
+// actually change playback (e.g. a volume tweak on a device that's mid-
+// session, which still carries its unchanged Media trait alongside the
+// Volume one) doesn't re-trigger the now-playing refresh or a duplicate
+// event-log line.
 type nameCache struct {
 	mu         sync.Mutex
 	m          map[string]string
 	deviceRoom map[string]string
+	mediaSig   map[string]string
 }
 
 func (c *nameCache) get(id string) string {
@@ -120,8 +126,22 @@ func (c *nameCache) roomFor(deviceID string) string {
 	return c.deviceRoom[deviceID]
 }
 
+// mediaChanged reports whether deviceID's playback signature differs from
+// the last one seen (seeded from the device's state as of connection time -
+// see roomNames), and records sig as the new baseline either way. A device
+// not carrying a Media trait has no entry and is never consulted here.
+func (c *nameCache) mediaChanged(deviceID, sig string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.mediaSig[deviceID] == sig {
+		return false
+	}
+	c.mediaSig[deviceID] = sig
+	return true
+}
+
 func (s *Server) roomNames(r *http.Request, buildingID string) *nameCache {
-	c := &nameCache{m: map[string]string{}, deviceRoom: map[string]string{}}
+	c := &nameCache{m: map[string]string{}, deviceRoom: map[string]string{}, mediaSig: map[string]string{}}
 	floors, err := houseview.ListFloors(r.Context(), s.house, buildingID)
 	if err != nil {
 		s.logger.Warn("event log: unable to list floors, rooms will be labelled by id", zap.Error(err))
@@ -136,6 +156,9 @@ func (s *Server) roomNames(r *http.Request, buildingID string) *nameCache {
 			c.m[room.GetId()] = room.GetConfig().GetName()
 			for _, d := range room.GetDevices() {
 				c.deviceRoom[d.GetId()] = room.GetId()
+				if m := houseview.Media(d); m != nil {
+					c.mediaSig[d.GetId()] = houseview.MediaSignature(m)
+				}
 			}
 		}
 	}
