@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -22,6 +23,7 @@ func main() {
 	viper.SetConfigType("yaml")
 	viper.SetDefault("amp.usb.baud_rate", 9600)
 	viper.SetDefault("bridge.listen_port", 17016)
+	viper.SetDefault("bridge.refresh_interval", 60)
 
 	configPath, err := configutil.FindConfigFile("monoprice-amp", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
 	if err != nil {
@@ -72,6 +74,11 @@ func main() {
 	defer ampBridge.Close()
 
 	svc.RegisterHandler(ampBridge, ampBridge.b)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ampBridge.Run(ctx, time.Second*time.Duration(viper.GetInt("bridge.refresh_interval")))
 
 	tlsCfg, err := bridge.TLSConfigFromViper()
 	if err != nil {

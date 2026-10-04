@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/spf13/viper"
@@ -30,14 +32,23 @@ const (
 	maxZoneID            = 6
 	maxChannelID         = 6
 	commandSpaceInterval = time.Millisecond * 100
-	maxVolumeLevel       = 100
+
+	// The amp's native ranges are exposed through the API as-is, with no scaling: volume is
+	// reported via Volume.Attributes.maximum_level, while treble/bass/balance (which have no
+	// range attributes on the AudioOutput trait) are always in these ranges, with the midpoint
+	// being 'flat'/'centred'.
+	maxVolumeLevel  = 38
+	maxToneLevel    = 14
+	maxBalanceLevel = 20
 )
 
 var (
 	// ErrSpeakerRefreshFailed is returned if the bridge wasn't able to refresh the speaker state
 	ErrSpeakerRefreshFailed = status.Error(codes.Internal, "speaker refresh failed")
-	// ErrSpeakerCommandFailed is returne if the bridge failed to execute the specified command
+	// ErrSpeakerCommandFailed is returned if the bridge failed to execute the specified command
 	ErrSpeakerCommandFailed = status.Error(codes.Internal, "speaker command failed")
+	// ErrZoneUnavailable is returned if the speaker is configured but the amplifier didn't report that zone.
+	ErrZoneUnavailable = status.Error(codes.Unavailable, "the amplifier did not report this zone")
 )
 
 type inputDetails struct {
@@ -53,7 +64,41 @@ type speakerDetails struct {
 	Description string `mapstructure:"description"`
 	Active      bool   `mapstructure:"active"`
 
-	lastSeen time.Time
+	lastSeen  time.Time
+	reachable bool
+}
+
+// zone is the subset of *monopamp.Zone the bridge uses; it exists so tests can fake the amp.
+type zone interface {
+	ID() string
+	Refresh() error
+	State() *monopamp.State
+	SetPower(on bool) error
+	SetMute(on bool) error
+	SetVolume(level int) error
+	SetTreble(level int) error
+	SetBass(level int) error
+	SetBalance(level int) error
+	SetSourceChannel(channelID int) error
+}
+
+// amplifier hands out the zones the amp reported. Zone returns nil if the amp didn't report id.
+type amplifier interface {
+	Zone(id int) zone
+}
+
+// serialAmp adapts the library's amplifier, taking care that a missing zone is a nil interface
+// rather than an interface holding a nil *monopamp.Zone.
+type serialAmp struct {
+	a *monopamp.SerialAmplifier
+}
+
+func (s serialAmp) Zone(id int) zone {
+	z := s.a.Zone(id)
+	if z == nil {
+		return nil
+	}
+	return z
 }
 
 // MonopriceAmpBridge is a bridge to the Monoprice amplifier.
@@ -67,14 +112,19 @@ type MonopriceAmpBridge struct {
 	usbPath     string
 	usbBaudRate int
 
-	inputs   []inputDetails
-	speakers map[int]speakerDetails
+	inputs []inputDetails
+
+	// mu guards speakers, bridgeReachable and every call into amp/zones (zone state is a
+	// cached struct the library mutates in place).
+	mu              sync.Mutex
+	speakers        map[int]speakerDetails
+	bridgeReachable bool
 
 	port *serial.Port
-	amp  *monopamp.SerialAmplifier
+	amp  amplifier
 }
 
-// NewMonopriceAmpBridge creates a new charger bridge
+// NewMonopriceAmpBridge creates a new bridge to a Monoprice amplifier.
 func NewMonopriceAmpBridge(logger *zap.Logger, svc *bridge.Service, configPath string, usbPath string, usbBaudRate int, inputs []inputDetails, speakers []speakerDetails) *MonopriceAmpBridge {
 	bridgeID := viper.GetString("bridge.id")
 	b := &api2.Bridge{
@@ -101,125 +151,150 @@ func NewMonopriceAmpBridge(logger *zap.Logger, svc *bridge.Service, configPath s
 		speakersMap[speaker.ID] = speaker
 	}
 
-	mpb := &MonopriceAmpBridge{
-		logger:      logger,
-		svc:         svc,
-		b:           b,
-		configPath:  configPath,
-		bridgeID:    bridgeID,
-		usbPath:     usbPath,
-		usbBaudRate: usbBaudRate,
-		inputs:      inputs,
-		speakers:    speakersMap,
+	return &MonopriceAmpBridge{
+		logger:          logger,
+		svc:             svc,
+		b:               b,
+		configPath:      configPath,
+		bridgeID:        bridgeID,
+		usbPath:         usbPath,
+		usbBaudRate:     usbBaudRate,
+		inputs:          inputs,
+		speakers:        speakersMap,
+		bridgeReachable: true,
+	}
+}
+
+// lookupLocked resolves a device ID to a configured, active speaker and the zone the amp
+// reported for it. mu must be held.
+func (mpb *MonopriceAmpBridge) lookupLocked(deviceID string) (int, zone, error) {
+	if !mpb.isValidDeviceID(deviceID) {
+		mpb.logger.Info("received command for invalid device id", zap.String("device_id", deviceID))
+		return 0, nil, bridge.ErrDeviceNotFound
 	}
 
-	return mpb
+	speakerID, err := strconv.Atoi(strings.TrimPrefix(deviceID, mpb.bridgeID+":"))
+	if err != nil {
+		mpb.logger.Info("received command for malformed device id", zap.String("device_id", deviceID))
+		return 0, nil, bridge.ErrDeviceNotFound
+	}
+	if speaker, ok := mpb.speakers[speakerID]; !ok || !speaker.Active {
+		mpb.logger.Info("received command for unconfigured or inactive speaker", zap.String("device_id", deviceID))
+		return 0, nil, bridge.ErrDeviceNotFound
+	}
+
+	z := mpb.amp.Zone(speakerID)
+	if z == nil {
+		mpb.logger.Error("amplifier did not report configured zone", zap.Int("speaker_id", speakerID))
+		return 0, nil, ErrZoneUnavailable
+	}
+	return speakerID, z, nil
 }
 
 // ProcessCommand takes a given command request and attempts to execute it.
 // We only worry about processing valid commands for the given device traits.
 func (mpb *MonopriceAmpBridge) ProcessCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
-	if !mpb.isValidDeviceID(cmd.DeviceId) {
-		mpb.logger.Info("received command for invalid device id",
-			zap.String("device_id", cmd.DeviceId))
+	mpb.mu.Lock()
+	defer mpb.mu.Unlock()
 
-		return nil, bridge.ErrDeviceNotFound
+	speakerID, z, err := mpb.lookupLocked(cmd.DeviceId)
+	if err != nil {
+		return nil, err
 	}
 
-	speakerID := mpb.deviceIDToSpeakerID(cmd.DeviceId)
-	zone := mpb.amp.Zone(speakerID)
+	if err := mpb.applyLocked(cmd, z); err != nil {
+		return nil, err
+	}
 
-	// The amp supports the OnOff, Volume (absolute/relative/mute), Input and AudioOutput commands.
+	speaker := mpb.speakers[speakerID]
+	speaker.lastSeen = time.Now()
+	speaker.reachable = true
+	mpb.speakers[speakerID] = speaker
+
+	return mpb.speakerToDevice(speakerID, z.State()), nil
+}
+
+// applyLocked executes cmd against z. The amp supports the OnOff, Volume (absolute/relative/mute),
+// Input and AudioOutput commands. Values are validated against the amp's native ranges here since
+// the bridge API layer only checks that the device supports the command type.
+func (mpb *MonopriceAmpBridge) applyLocked(cmd *command.Command, z zone) error {
+	fail := func(what string, err error) error {
+		mpb.logger.Error("unable to "+what, zap.String("device_id", cmd.DeviceId), zap.Error(err))
+		return ErrSpeakerCommandFailed
+	}
+
 	if cmd.GetOnOff() != nil {
-		if err := zone.SetPower(cmd.GetOnOff().GetOn()); err != nil {
-			mpb.logger.Error("unable to set power",
-				zap.String("device_id", cmd.DeviceId),
-				zap.Error(err))
-			return nil, ErrSpeakerCommandFailed
+		if err := z.SetPower(cmd.GetOnOff().GetOn()); err != nil {
+			return fail("set power", err)
 		}
 	} else if cmd.GetVolumeAbsolute() != nil {
 		level := cmd.GetVolumeAbsolute().Level
 		if level < 0 || level > maxVolumeLevel {
-			return nil, bridge.ErrArgumentNotSupportedByDevice
+			return bridge.ErrArgumentNotSupportedByDevice
 		}
-		if err := zone.SetVolume(volumeFromAPI(level)); err != nil {
-			mpb.logger.Error("unable to set volume",
-				zap.String("device_id", cmd.DeviceId),
-				zap.Int32("volume", level),
-				zap.Error(err))
-			return nil, ErrSpeakerCommandFailed
+		if err := z.SetVolume(int(level)); err != nil {
+			return fail("set volume", err)
 		}
 	} else if cmd.GetVolumeRelative() != nil {
-		level := volumeToAPI(zone.State().Volume) + cmd.GetVolumeRelative().Delta
+		level := int32(z.State().Volume) + cmd.GetVolumeRelative().Delta
 		level = max(0, min(level, maxVolumeLevel))
-		if err := zone.SetVolume(volumeFromAPI(level)); err != nil {
-			mpb.logger.Error("unable to adjust volume",
-				zap.String("device_id", cmd.DeviceId),
-				zap.Int32("delta", cmd.GetVolumeRelative().Delta),
-				zap.Error(err))
-			return nil, ErrSpeakerCommandFailed
+		if err := z.SetVolume(int(level)); err != nil {
+			return fail("adjust volume", err)
 		}
 	} else if cmd.GetMute() != nil {
-		if err := zone.SetMute(cmd.GetMute().IsMuted); err != nil {
-			mpb.logger.Error("unable to set mute",
-				zap.String("device_id", cmd.DeviceId),
-				zap.Error(err))
-			return nil, ErrSpeakerCommandFailed
+		if err := z.SetMute(cmd.GetMute().IsMuted); err != nil {
+			return fail("set mute", err)
 		}
 	} else if cmd.GetInput() != nil {
 		if !mpb.hasInput(cmd.GetInput().InputId) {
-			return nil, bridge.ErrArgumentNotSupportedByDevice
+			return bridge.ErrArgumentNotSupportedByDevice
 		}
-		if err := zone.SetSourceChannel(inputIDFromAPI(cmd.GetInput().InputId)); err != nil {
-			mpb.logger.Error("unable to set input",
-				zap.String("input_id", cmd.GetInput().InputId),
-				zap.Error(err))
-			return nil, ErrSpeakerCommandFailed
+		if err := z.SetSourceChannel(inputIDFromAPI(cmd.GetInput().InputId)); err != nil {
+			return fail("set input", err)
 		}
-	} else if cmd.GetAudioOutput() != nil {
-		if cmd.GetAudioOutput().TrebleLevel != nil {
-			if err := zone.SetTreble(noteFromAPI(*cmd.GetAudioOutput().TrebleLevel)); err != nil {
-				mpb.logger.Error("unable to set treble",
-					zap.Int32("treble_level", *cmd.GetAudioOutput().TrebleLevel),
-					zap.Error(err))
-				return nil, ErrSpeakerCommandFailed
+	} else if ao := cmd.GetAudioOutput(); ao != nil {
+		// Validate everything before sending anything so a bad value doesn't leave the
+		// zone half-updated.
+		if (ao.TrebleLevel != nil && !inRange(*ao.TrebleLevel, maxToneLevel)) ||
+			(ao.BassLevel != nil && !inRange(*ao.BassLevel, maxToneLevel)) ||
+			(ao.Balance != nil && !inRange(*ao.Balance, maxBalanceLevel)) {
+			return bridge.ErrArgumentNotSupportedByDevice
+		}
+
+		if ao.TrebleLevel != nil {
+			if err := z.SetTreble(int(*ao.TrebleLevel)); err != nil {
+				return fail("set treble", err)
 			}
 			time.Sleep(commandSpaceInterval)
 		}
-		if cmd.GetAudioOutput().BassLevel != nil {
-			if err := zone.SetBass(noteFromAPI(*cmd.GetAudioOutput().BassLevel)); err != nil {
-				mpb.logger.Error("unable to set bass",
-					zap.Int32("bass_level", *cmd.GetAudioOutput().BassLevel),
-					zap.Error(err))
-				return nil, ErrSpeakerCommandFailed
+		if ao.BassLevel != nil {
+			if err := z.SetBass(int(*ao.BassLevel)); err != nil {
+				return fail("set bass", err)
 			}
 			time.Sleep(commandSpaceInterval)
 		}
-		if cmd.GetAudioOutput().Balance != nil {
-			if err := zone.SetBalance(balanceFromAPI(*cmd.GetAudioOutput().Balance)); err != nil {
-				mpb.logger.Error("unable to set balance",
-					zap.Int32("balance", *cmd.GetAudioOutput().Balance),
-					zap.Error(err))
-				return nil, ErrSpeakerCommandFailed
+		if ao.Balance != nil {
+			if err := z.SetBalance(int(*ao.Balance)); err != nil {
+				return fail("set balance", err)
 			}
 		}
 	} else {
 		mpb.logger.Error("received unsupported command - shouldn't happen")
-		return nil, bridge.ErrUnsupportedCommand
+		return bridge.ErrUnsupportedCommand
 	}
+	return nil
+}
 
-	if speaker, found := mpb.speakers[speakerID]; found {
-		speaker.lastSeen = time.Now()
-		mpb.speakers[speakerID] = speaker
-	}
-
-	return mpb.speakerToDevice(speakerID, zone), nil
+func inRange(v, upper int32) bool {
+	return v >= 0 && v <= upper
 }
 
 // SetBridgeConfig takes the supplied config params and saves them for future reference.
 func (mpb *MonopriceAmpBridge) SetBridgeConfig(ctx context.Context, config bridge.Config) error {
+	mpb.mu.Lock()
 	mpb.b.Config.Name = config.Name
 	mpb.b.Config.Description = config.Description
+	mpb.mu.Unlock()
 
 	viper.Set("bridge.name", config.Name)
 	viper.Set("bridge.description", config.Description)
@@ -234,24 +309,101 @@ func (mpb *MonopriceAmpBridge) ProcessCommandAsync(ctx context.Context, cmd *com
 	return bridge.ErrAsyncCommandsNotSupported
 }
 
-// Refresh is present to conform to the bridge.Handler interface. In this implementation the zones
-// are refreshed and the devices are updated.
+// Refresh re-reads every active zone from the amplifier and publishes the result. A zone that
+// fails doesn't stop the others from being refreshed; it is published as unreachable and the
+// failures are returned together.
 func (mpb *MonopriceAmpBridge) Refresh(ctx context.Context) error {
-	for _, speaker := range mpb.speakers {
+	devices, err := mpb.refresh()
+	for _, d := range devices {
+		mpb.svc.UpdateDevice(d)
+	}
+	return err
+}
+
+// refresh does the locked half of Refresh: it returns the devices to publish and any failures.
+func (mpb *MonopriceAmpBridge) refresh() ([]*device.Device, error) {
+	mpb.mu.Lock()
+	defer mpb.mu.Unlock()
+
+	var devices []*device.Device
+	var errs []error
+	anyReachable := false
+	for speakerID, speaker := range mpb.speakers {
 		if !speaker.Active {
 			continue
 		}
 
-		zone := mpb.amp.Zone(speaker.ID)
-		if err := zone.Refresh(); err != nil {
-			mpb.logger.Error("unable to refresh speaker zone",
-				zap.Error(err))
-			return ErrSpeakerRefreshFailed
+		var state *monopamp.State
+		var err error
+		if z := mpb.amp.Zone(speakerID); z == nil {
+			err = ErrZoneUnavailable
+		} else if err = z.Refresh(); err == nil {
+			state = z.State()
+		} else {
+			// Keep serving the last state we had, just flagged unreachable.
+			state = z.State()
 		}
 
-		mpb.svc.UpdateDevice(mpb.speakerToDevice(speaker.ID, zone))
+		if err != nil {
+			mpb.logger.Error("unable to refresh speaker zone", zap.Int("speaker_id", speakerID), zap.Error(err))
+			errs = append(errs, fmt.Errorf("speaker %d: %w", speakerID, err))
+			speaker.reachable = false
+		} else {
+			speaker.reachable = true
+			speaker.lastSeen = time.Now()
+			anyReachable = true
+		}
+		mpb.speakers[speakerID] = speaker
+		devices = append(devices, mpb.speakerToDevice(speakerID, state))
 	}
-	return nil
+
+	mpb.updateBridgeReachableLocked(anyReachable || len(devices) == 0)
+
+	if len(errs) > 0 {
+		return devices, errors.Join(append([]error{ErrSpeakerRefreshFailed}, errs...)...)
+	}
+	return devices, nil
+}
+
+// updateBridgeReachableLocked publishes a bridge update when reachability flips. The service
+// keeps the pointer it was registered with, so the update is sent as a clone and mpb.b is only
+// changed afterwards (changing it first would make the service's own change check see no diff).
+func (mpb *MonopriceAmpBridge) updateBridgeReachableLocked(reachable bool) {
+	if reachable == mpb.bridgeReachable {
+		return
+	}
+	mpb.bridgeReachable = reachable
+
+	updated := proto.Clone(mpb.b).(*api2.Bridge)
+	updated.IsReachable = reachable
+	mpb.svc.UpdateBridge(updated)
+	mpb.b.IsReachable = reachable
+}
+
+// Run refreshes the amplifier every interval until ctx is cancelled. Wall keypads can change the
+// amp's state without the bridge hearing about it, so this is how those changes are noticed.
+func (mpb *MonopriceAmpBridge) Run(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		mpb.logger.Info("periodic refresh disabled")
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	mpb.logger.Info("beginning refresh loop", zap.Duration("refresh_interval", interval))
+	for {
+		select {
+		case <-ticker.C:
+			if err := mpb.Refresh(ctx); err != nil {
+				mpb.logger.Error("unable to refresh amplifier state", zap.Error(err))
+				continue
+			}
+			mpb.logger.Debug("refreshed")
+		case <-ctx.Done():
+			mpb.logger.Info("run context cancelled")
+			return
+		}
+	}
 }
 
 // hasInput reports whether id matches one of the configured inputs.
@@ -310,9 +462,14 @@ func (mpb *MonopriceAmpBridge) Start(ctx context.Context) error {
 		)
 		return err
 	}
-	mpb.amp = amp
+	mpb.amp = serialAmp{a: amp}
 
-	return mpb.Refresh(ctx)
+	// Individual zones failing here isn't fatal: they're published as unreachable, and the
+	// refresh loop recovers them if they come back.
+	if err := mpb.Refresh(ctx); err != nil {
+		mpb.logger.Warn("initial refresh was incomplete", zap.Error(err))
+	}
+	return nil
 }
 
 // Close ensures the underlying serial port is closed
@@ -323,11 +480,21 @@ func (mpb *MonopriceAmpBridge) Close() error {
 	return mpb.port.Close()
 }
 
-func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zone) *device.Device {
+// speakerToDevice builds the device for a speaker. state may be nil (zone never reported), which
+// is rendered as an all-zero, unreachable device. mu must be held.
+func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, state *monopamp.State) *device.Device {
 	speaker := mpb.speakers[speakerID]
+	if state == nil {
+		state = &monopamp.State{}
+	}
 
 	desc := "Monoprice Amplifier Speaker Output"
-	balance := balanceToAPI(zone.State().Balance)
+	balance := int32(state.Balance)
+
+	name := speaker.Name
+	if name == "" {
+		name = fmt.Sprintf("Speaker %d", speakerID)
+	}
 
 	inputs := []*trait.Input_InputDetails{}
 	for _, input := range mpb.inputs {
@@ -337,18 +504,18 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zon
 		})
 	}
 
-	// TODO: convert volume and treble/bass levels to a normalized 1-100 value
-
 	return &device.Device{
 		Id:               mpb.speakerIDToDeviceID(speakerID),
 		ModelId:          "10761",
 		ModelDescription: &desc,
 		Manufacturer:     "Monoprice",
 		Config: &device.Device_Config{
-			Name: fmt.Sprintf("Speaker %d", zone.ID()),
+			Name:        name,
+			Description: speaker.Description,
 		},
 		Address: &device.Device_Address{
-			Address: zone.ID(),
+			Address:     fmt.Sprintf("%d%d", 1, speakerID),
+			IsReachable: speaker.reachable,
 		},
 		LastSeen: timestamppb.New(speaker.lastSeen),
 		Details: &device.Device_AvReceiver{
@@ -358,7 +525,7 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zon
 						CanControl: true,
 					},
 					State: &trait.OnOff_State{
-						IsOn: zone.State().IsOn,
+						IsOn: state.IsOn,
 					},
 				},
 				Volume: &trait.Volume{
@@ -368,8 +535,8 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zon
 						MaximumLevel: maxVolumeLevel,
 					},
 					State: &trait.Volume_State{
-						IsMuted: zone.State().IsMuteOn,
-						Level:   volumeToAPI(zone.State().Volume),
+						IsMuted: state.IsMuteOn,
+						Level:   int32(state.Volume),
 					},
 				},
 				Input: &trait.Input{
@@ -379,7 +546,7 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zon
 						IsOrdered:  true,
 					},
 					State: &trait.Input_State{
-						CurrentInputId: fmt.Sprintf("%d", zone.State().SourceChannelID),
+						CurrentInputId: inputIDToAPI(state.SourceChannelID),
 					},
 				},
 				AudioOutput: &trait.AudioOutput{
@@ -388,8 +555,8 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, zone *monopamp.Zon
 						IsStereo:   true,
 					},
 					State: &trait.AudioOutput_State{
-						TrebleLevel: noteToAPI(zone.State().Treble),
-						BassLevel:   noteToAPI(zone.State().Bass),
+						TrebleLevel: int32(state.Treble),
+						BassLevel:   int32(state.Bass),
 						Balance:     &balance,
 					},
 				},
@@ -406,12 +573,6 @@ func (mpb *MonopriceAmpBridge) speakerIDToDeviceID(speakerID int) string {
 	return fmt.Sprintf("%s:%d", mpb.bridgeID, speakerID)
 }
 
-func (mpb *MonopriceAmpBridge) deviceIDToSpeakerID(deviceID string) int {
-	speakerIDStr := strings.TrimPrefix(deviceID, fmt.Sprintf("%s:", mpb.bridgeID))
-	speakerID, _ := strconv.Atoi(speakerIDStr)
-	return speakerID
-}
-
 func inputIDToAPI(original int) string {
 	return fmt.Sprintf("%d", original)
 }
@@ -419,28 +580,4 @@ func inputIDToAPI(original int) string {
 func inputIDFromAPI(original string) int {
 	inputID, _ := strconv.Atoi(original)
 	return inputID
-}
-
-func volumeFromAPI(original int32) int {
-	return int((original * 38) / 100)
-}
-
-func volumeToAPI(original int) int32 {
-	return int32((original * 100) / 38)
-}
-
-func balanceFromAPI(original int32) int {
-	return int(original / 5)
-}
-
-func balanceToAPI(original int) int32 {
-	return int32((original * 5) / 20)
-}
-
-func noteFromAPI(original int32) int {
-	return int((original * 14) / 100)
-}
-
-func noteToAPI(original int) int32 {
-	return int32((original * 100) / 14)
 }

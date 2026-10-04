@@ -1,6 +1,8 @@
 bridge:
   id: "<bridge ID>"
   listen_port: 17016
+  # Seconds between re-reading the amp, to pick up changes made at a wall keypad. 0 disables.
+  refresh_interval: 60
   # Optional: mutual TLS for this bridge's gRPC server. Leave all three
   # blank (the default) to serve plaintext gRPC.
   tls:
