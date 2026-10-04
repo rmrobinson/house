@@ -55,11 +55,15 @@ go_test(
         "policy_test.go",
         "store_test.go",
         "sun_test.go",
+        "ups_water_policies_test.go",
     ],
     embedsrcs = [
         "scripts/battery_report.lua",
         "scripts/sys_occupancy.lua",
         "scripts/sys_power_restore.lua",
+        "scripts/ups_low_battery.lua",
+        "scripts/ups_on_battery.lua",
+        "scripts/water_detected.lua",
     ],
     embed = [":policy"],
     deps = [
