@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// AudioOutput commands a device with the AudioOutput trait to have the audio settings changed.
+message AudioOutput {
+  // If present, sets the treble to the specified value.
+  optional int32 treble_level = 1;
+  // If present, sets the bass to the specified value.
+  optional int32 bass_level = 2;
+
+  // If available, sets the left/right balance of the output.
+  // Check the state of the device to see if a balance value is present before setting this.
+  optional int32 balance = 3;
+}

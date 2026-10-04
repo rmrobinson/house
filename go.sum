@@ -117,6 +117,8 @@ github.com/richard87/esphome-apiclient v1.1.0 h1:hZzmCEuwiouNpFV9Hd/uBjwBzim3ciu
 github.com/richard87/esphome-apiclient v1.1.0/go.mod h1:eHweCJeF+jIMrDtQHH0RhVttiQbPFqf1RWrXPubtP20=
 github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35 h1:ar5XPa6F8+LqqR474akwMCQ2mRbs8F+N7YG3hM6Yyag=
 github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35/go.mod h1:MKyGjShcDasP4WMd6HANtOjG+btGrUHsvBc1R4NlOOQ=
+github.com/rmrobinson/monoprice-amp-go v0.0.0-20190217030552-ea909ba38552 h1:Btg2uBZ+QLTncTNJiJvhnGCkAu00iDuA9SH8cxGV8po=
+github.com/rmrobinson/monoprice-amp-go v0.0.0-20190217030552-ea909ba38552/go.mod h1:K7McGuKyl+aiEKsVRmMcmTC0ro6miPTU5zvZAqt7UNs=
 github.com/rmrobinson/nanoleaf-go v0.0.0-20260921023634-a20a85ded00c h1:I9et/i0gDarn+mG0fd98hKrU5WLNGTBk7UKMV/YmKPo=
 github.com/rmrobinson/nanoleaf-go v0.0.0-20260921023634-a20a85ded00c/go.mod h1:7Xy9sKG4BfHI7XlYkUPiylZm20K658M+2fXbDnm72l0=
 github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01 h1:N4FtgJRTnEHXvEVp0eTjNLmcznEH47wsFxwxtenlXgM=
@@ -169,6 +171,8 @@ github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
 github.com/tadglines/go-pkgs v0.0.0-20140924210655-1f86682992f1 h1:ms/IQpkxq+t7hWpgKqCE5KjAUQWC24mqBrnL566SWgE=
 github.com/tadglines/go-pkgs v0.0.0-20140924210655-1f86682992f1/go.mod h1:roo6cZ/uqpwKMuvPG0YmzI5+AmUiMWfjCBZpGXqbTxE=
+github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07 h1:UyzmZLoiDWMRywV4DUYb9Fbt8uiOSooupjTq10vpvnU=
+github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07/go.mod h1:kDXzergiv9cbyO7IOYJZWg1U88JhDg3PB6klq9Hg2pA=
 github.com/tinygo-org/cbgo v0.0.4 h1:3D76CRYbH03Rudi8sEgs/YO0x3JIMdyq8jlQtk/44fU=
 github.com/tinygo-org/cbgo v0.0.4/go.mod h1:7+HgWIHd4nbAz0ESjGlJ1/v9LDU1Ox8MGzP9mah/fLk=
 github.com/tinygo-org/pio v0.2.0 h1:vo3xa6xDZ2rVtxrks/KcTZHF3qq4lyWOntvEvl2pOhU=

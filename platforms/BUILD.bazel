@@ -17,3 +17,14 @@ platform(
     ],
     visibility = ["//visibility:public"],
 )
+
+# Raspberry Pi 1 (ARMv6, VFPv2). rules_go derives GOARM=6 from the arm:6 constraint.
+platform(
+    name = "linux_arm6",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:armv7",  # rules_go's GOARCH=arm; GOARM comes from arm:6
+        "@rules_go//go/constraints/arm:6",
+    ],
+    visibility = ["//visibility:public"],
+)

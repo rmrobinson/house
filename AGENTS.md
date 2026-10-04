@@ -104,10 +104,11 @@ Notes:
   (`target_compatible_with = ["@platforms//os:linux"]`, due to the tinygo
   BLE stack). Don't be surprised if it's skipped/fails on macOS — that's
   expected, not a regression.
-- `.bazelrc` has a `--config=rpi1` for cross-compiling to ARMv6 (Raspberry
-  Pi 1), but the `//:linux_arm6` platform it references isn't actually
-  defined anywhere in the tree yet. Treat that config as aspirational/WIP,
-  not a working path, unless you're specifically asked to finish it.
+- `bazel build --config=rpi1 //bridges/<name>` cross-compiles a pure-Go bridge for a
+  Raspberry Pi 1 (ARMv6, GOARM=6) via `//platforms:linux_arm6`. rules_go maps GOARCH=arm to
+  `@platforms//cpu:armv7`, so that platform must use `cpu:armv7` plus the `arm:6` constraint
+  (plain `cpu:arm` matches no Go toolchain). CGO bridges (airthings, housed) can't use it.
+  There's no OCI image for arm6 (distroless has no armv6 variant); ship the bare binary.
 
 ## Adding a new bridge
 

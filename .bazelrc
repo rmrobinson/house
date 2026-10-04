@@ -1,6 +1,6 @@
-# Raspberry Pi 1 / ARMv6 cross-compilation.
-# Use: bazel build --config=rpi1 //bridges/raspi-clock:raspi-clock
-# Note: --pure disables CGO; targets requiring CGO (housed, airthings) won't
-# cross-compile without a C arm-linux-gnueabi toolchain configured.
-build:rpi1 --platforms=//:linux_arm6
-build:rpi1 --@rules_go//go/config:pure=on
+# Raspberry Pi 1 / ARMv6 cross-compilation (GOARM=6, pure Go / no CGO).
+# Use: bazel build --config=rpi1 //bridges/monop-amp
+# Targets requiring CGO (housed, airthings) won't cross-compile without a C
+# arm-linux-gnueabi toolchain configured.
+build:rpi1 --platforms=//platforms:linux_arm6
+build:rpi1 --@rules_go//go/config:pure=true
