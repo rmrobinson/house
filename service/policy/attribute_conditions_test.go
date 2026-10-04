@@ -10,11 +10,11 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestRegisterBuiltinConditionTypesRegistersAllFour(t *testing.T) {
+func TestRegisterBuiltinConditionTypesRegistersAll(t *testing.T) {
 	e, r := newTestEngine(t, newFakeHomeAPI())
 	RegisterBuiltinConditionTypes(e)
 
-	assert.Equal(t, []string{"attribute.equals", "attribute.threshold", "event.idle-for", "schedule.daily"}, r.TypeNames())
+	assert.Equal(t, []string{"attribute.equals", "attribute.threshold", "devices.any-match", "event.idle-for", "schedule.daily"}, r.TypeNames())
 }
 
 func TestBuiltinConditionType_AttributeThreshold(t *testing.T) {

@@ -67,8 +67,8 @@ type EventIdleForParams struct {
 // RegisterBuiltinConditionTypes registers the generic, parameterized
 // condition types built on HomeAPI.GetState, the Bus, and the new
 // PredicateCondition/IdleCondition/ScheduleCondition primitives:
-// "attribute.threshold", "attribute.equals", "schedule.daily", and
-// "event.idle-for". Unlike RegisterSystemConditionTypes's three
+// "attribute.threshold", "attribute.equals", "schedule.daily",
+// "event.idle-for", and "devices.any-match" (see device_conditions.go). Unlike RegisterSystemConditionTypes's three
 // hand-derived sys.* types, any of these four addresses any
 // device/attribute/topic combination, present or future, without a Go code
 // change - a policy definition is enough.
@@ -171,6 +171,8 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 		}
 		return NewIdleCondition(e.bus, p.Topic, duration)
 	})
+
+	registerDeviceConditionTypes(e)
 }
 
 // toFloat64 coerces a HomeAPI.GetState result into a float64 for
