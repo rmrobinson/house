@@ -352,6 +352,39 @@ func (a *Adapter) GetState(id, key string) (any, error) {
 	return resolveState(d, key)
 }
 
+// GetDeviceName implements policy.HomeAPI, returning id's configured
+// display name (Device.Config.Name) - falling back to id itself if unset,
+// so a policy script building a human-readable message never shows a
+// blank. Unlike GetState's dotted path, which only walks Device.details'
+// populated oneof branch, Config lives outside that oneof entirely and is
+// otherwise unreachable from a script.
+func (a *Adapter) GetDeviceName(id string) (string, error) {
+	d, err := a.getDevice(id)
+	if err != nil {
+		return "", err
+	}
+	if name := d.GetConfig().GetName(); name != "" {
+		return name, nil
+	}
+	return id, nil
+}
+
+// HasState implements policy.HomeAPI, walking the same dot-path as GetState
+// (see resolveState) but reporting whether it's actually populated rather
+// than reading its value - resolveState's Get() calls return a zero-value
+// message for an *unset* optional field (proto3 explicit-presence
+// semantics), so e.g. GetState(id, "battery.state.capacity_remaining_pct")
+// on a device with no Battery trait silently returns 0, indistinguishable
+// from "battery actually at 0%". HasState(id, "battery") is what tells
+// those apart.
+func (a *Adapter) HasState(id, key string) (bool, error) {
+	d, err := a.getDevice(id)
+	if err != nil {
+		return false, err
+	}
+	return hasState(d, key)
+}
+
 // deviceKind returns the name of d's populated details oneof branch
 // ("light", "sensor", "ups", "camera", ...), or "" if none is set. Passed to
 // policy.Engine.UpdateDeviceState as the opaque "kind" tag policy scripts
@@ -402,6 +435,59 @@ func resolveState(d *device.Device, key string) (any, error) {
 		cur = cur.Get(fieldDesc).Message()
 	}
 	return nil, fmt.Errorf("bridgehome: state %q: empty path", key)
+}
+
+// hasState walks key's dot-separated segments the same way resolveState
+// does, but reports presence at each step via protoreflect.Message.Has
+// rather than reading a value, so it can tell "not populated" apart from
+// "populated with a zero value" - something resolveState's Get() alone
+// cannot (an unset optional message field and a present-but-empty one
+// return the same thing from Get()). A segment absent partway through the
+// path (e.g. "battery" itself unset, for key "battery.state.
+// capacity_remaining_pct") reports false, nil rather than continuing to
+// descend into it, since Get() would otherwise hand back a zero-value
+// message to keep walking - exactly the ambiguity this function exists to
+// avoid.
+func hasState(d *device.Device, key string) (bool, error) {
+	cur, _, ok := protoreflectutil.OneofMessage(d, "details")
+	if !ok {
+		return false, fmt.Errorf("bridgehome: state %q: device has no details set", key)
+	}
+
+	segments := strings.Split(key, ".")
+	for i, seg := range segments {
+		fields := cur.Descriptor().Fields()
+		fieldDesc := fields.ByName(protoreflect.Name(seg))
+		if fieldDesc == nil {
+			return false, fmt.Errorf("bridgehome: state %q: no field %q on %s", key, seg, cur.Descriptor().FullName())
+		}
+
+		last := i == len(segments)-1
+		// Path-shape validity is checked before presence, and so is
+		// deterministic regardless of the field's current value: otherwise
+		// a malformed path like "battery.state.discharging.extra" would
+		// only be caught as an error when discharging happened to be true,
+		// since Has() on a proto3 implicit-presence bool false-value field
+		// reports false exactly like an absent one - the field being
+		// checked here, not the field discharging actually is.
+		if !last {
+			if fieldDesc.Kind() != protoreflect.MessageKind && fieldDesc.Kind() != protoreflect.GroupKind {
+				return false, fmt.Errorf("bridgehome: state %q: %q is a scalar, but the path continues", key, seg)
+			}
+			if fieldDesc.IsList() || fieldDesc.IsMap() {
+				return false, fmt.Errorf("bridgehome: state %q: %q is a list/map, not supported", key, seg)
+			}
+		}
+
+		if !cur.Has(fieldDesc) {
+			return false, nil
+		}
+		if last {
+			return true, nil
+		}
+		cur = cur.Get(fieldDesc).Message()
+	}
+	return false, fmt.Errorf("bridgehome: state %q: empty path", key)
 }
 
 // scalarToGo converts a resolved leaf protoreflect.Value into a plain Go

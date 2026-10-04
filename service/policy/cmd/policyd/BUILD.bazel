@@ -15,6 +15,7 @@ go_library(
         "//service/policy",
         "//service/policy/bridgehome",
         "//service/policy/housestate",
+        "//service/policy/notifyclient",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",
     ],

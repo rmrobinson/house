@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "notificationd_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/rmrobinson/house/service/notification/cmd/notificationd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//api",
+        "//service/lib/configutil",
+        "//service/lib/grpcutil",
+        "//service/notification",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "notificationd",
+    embed = [":notificationd_lib"],
+    visibility = ["//visibility:public"],
+)

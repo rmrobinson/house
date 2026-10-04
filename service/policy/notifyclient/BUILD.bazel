@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "notifyclient",
+    srcs = ["notifyclient.go"],
+    importpath = "github.com/rmrobinson/house/service/policy/notifyclient",
+    visibility = ["//visibility:public"],
+    deps = ["//api"],
+)
+
+go_test(
+    name = "notifyclient_test",
+    srcs = ["notifyclient_test.go"],
+    embed = [":notifyclient"],
+    deps = [
+        "//api",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

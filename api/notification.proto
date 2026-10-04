@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+option go_package = "github.com/rmrobinson/house/api";
+
+// SendMessageRequest asks the notification service to deliver a message to
+// one or more recipients. recipient_ids name people (opaque IDs the
+// notification service resolves internally), never addresses or channel
+// types - the caller doesn't know or choose how a given recipient is
+// actually reached (email, push, ...); that mapping, and which channel
+// types exist at all, is entirely the notification service's own concern.
+// An unknown recipient_id is skipped rather than failing the whole request.
+message SendMessageRequest {
+  repeated string recipient_ids = 1;
+  string subject = 2;
+  string body = 3;
+  // MIME type of body, e.g. "text/plain" or "text/html". Empty means
+  // "text/plain".
+  string content_type = 4;
+}
+
+message SendMessageResponse {
+}
+
+service NotificationService {
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse) {}
+}

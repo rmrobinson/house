@@ -25,8 +25,9 @@
 // "occupied"/"mode" keys and SetHouseState's "mode" key (see
 // housestate.Adapter): the adapter subscribes to HouseService.
 // StreamHouseUpdates for live Building.State, which is what drives the
-// "sys.occupied" condition type and the "sys.occupancy" default policy built
-// on it. Left unconfigured (no --house-addr), both keys stay
+// "sys.occupied" condition type any user policy can build on (see
+// policy.RegisterSystemConditionTypes — the engine ships no default
+// policies of its own). Left unconfigured (no --house-addr), both keys stay
 // policy.ErrNotImplemented, same as any other HomeAPI method bridgehome/the
 // stub don't back.
 //
@@ -54,17 +55,19 @@ import (
 	"github.com/rmrobinson/house/service/policy"
 	"github.com/rmrobinson/house/service/policy/bridgehome"
 	"github.com/rmrobinson/house/service/policy/housestate"
+	"github.com/rmrobinson/house/service/policy/notifyclient"
 )
 
 var (
-	dbPath     = flag.String("db", "policy.db", "Path to the SQLite database to use")
-	addr       = flag.String("addr", "localhost:8080", "Address for the PolicyService gRPC API to listen on")
-	bridgeAddr = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
-	houseAddr  = flag.String("house-addr", "", "HouseService address to fetch --building-id's location (lat/lon/tz) from at startup, for the schedule.sun-event/schedule.daylight/schedule.date-range condition types; if empty, falls back to --lat/--lon/--location-tz")
-	buildingID = flag.String("building-id", "", "Building ID to fetch location from; required if --house-addr is set")
-	lat        = flag.Float64("lat", 0, "Building latitude in degrees, used if --house-addr is empty; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
-	lon        = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
-	locationTZ = flag.String("location-tz", "", "IANA timezone (e.g. America/Toronto), used if --house-addr is empty; defaults to the engine process's local zone")
+	dbPath           = flag.String("db", "policy.db", "Path to the SQLite database to use")
+	addr             = flag.String("addr", "localhost:8080", "Address for the PolicyService gRPC API to listen on")
+	bridgeAddr       = flag.String("bridge-addr", "", "BridgeService address to connect to (a single bridge, a bridgefacaded, or a housed with facade embedded); if empty, uses an in-memory stub with no real device/house integration")
+	houseAddr        = flag.String("house-addr", "", "HouseService address to fetch --building-id's location (lat/lon/tz) from at startup, for the schedule.sun-event/schedule.daylight/schedule.date-range condition types; if empty, falls back to --lat/--lon/--location-tz")
+	notificationAddr = flag.String("notification-addr", "", "NotificationService address (a running notificationd) to back the \"notify\" Lua global's notify.send; if empty, notify.send raises an ErrNotImplemented-flavoured binding error")
+	buildingID       = flag.String("building-id", "", "Building ID to fetch location from; required if --house-addr is set")
+	lat              = flag.Float64("lat", 0, "Building latitude in degrees, used if --house-addr is empty; leave both --lat and --lon at 0 to skip wrapping HomeAPI with a fixed location entirely")
+	lon              = flag.Float64("lon", 0, "Building longitude in degrees; see --lat")
+	locationTZ       = flag.String("location-tz", "", "IANA timezone (e.g. America/Toronto), used if --house-addr is empty; defaults to the engine process's local zone")
 
 	// Optional mutual TLS, one identity for every role this process plays -
 	// same three files serve as this process's client certificate when
@@ -198,7 +201,18 @@ func main() {
 		home = policy.NewLocationHomeAPI(home, loc.lat, loc.lon, loc.tz)
 	}
 
-	engine := policy.NewEngine(home, registry, logger, policy.WithStore(store))
+	var engineOpts []policy.EngineOption
+	engineOpts = append(engineOpts, policy.WithStore(store))
+	if *notificationAddr != "" {
+		notificationConn, err := grpcutil.Dial(*notificationAddr, tlsCfg)
+		if err != nil {
+			logger.Fatal("unable to dial notification service", zap.String("address", *notificationAddr), zap.Error(err))
+		}
+		defer notificationConn.Close()
+		engineOpts = append(engineOpts, policy.WithNotifyAPI(notifyclient.New(api2.NewNotificationServiceClient(notificationConn))))
+	}
+
+	engine := policy.NewEngine(home, registry, logger, engineOpts...)
 	defer engine.Close()
 
 	policy.RegisterSystemConditionTypes(engine)
@@ -206,9 +220,6 @@ func main() {
 	policy.RegisterLocationConditionTypes(engine)
 	if err := policy.LoadPersistedPolicies(engine, store); err != nil {
 		logger.Fatal("unable to load persisted policies", zap.Error(err))
-	}
-	if err := policy.LoadDefaultSystemPolicies(engine); err != nil {
-		logger.Fatal("unable to load default system policies", zap.Error(err))
 	}
 
 	// Started only once persisted/default policies are already registered

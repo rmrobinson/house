@@ -52,6 +52,14 @@ func WithStore(store Store) EngineOption {
 	return func(e *Engine) { e.store = store }
 }
 
+// WithNotifyAPI configures the Engine's "notify" Lua global (see
+// registerNotifyTable) to send through n. Without this option, e.notify
+// stays nil and notify.send raises an ErrNotImplemented-flavoured binding
+// error - the same "unconfigured" story HomeAPI's own unbacked methods use.
+func WithNotifyAPI(n NotifyAPI) EngineOption {
+	return func(e *Engine) { e.notify = n }
+}
+
 type cancelEntry struct {
 	id     uint64
 	cancel context.CancelFunc
@@ -78,6 +86,7 @@ type registeredPolicy struct {
 // hydrates it from the home's device/house streams (see UpdateDeviceState).
 type Engine struct {
 	home     HomeAPI
+	notify   NotifyAPI
 	registry *ConditionRegistry
 	logger   *zap.Logger
 	bus      *Bus
@@ -607,6 +616,7 @@ func (e *Engine) runScript(ctx context.Context, p *Policy) {
 	L.SetContext(ctx)
 
 	registerHomeTable(L, e.home, e.DevicesOfKind)
+	registerNotifyTable(L, e.notify)
 
 	err := L.DoString(p.Script)
 	log.EndedAt = time.Now()

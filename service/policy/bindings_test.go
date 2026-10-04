@@ -72,6 +72,26 @@ func TestBindingsGetLastKnown(t *testing.T) {
 	`))
 }
 
+func TestBindingsGetDeviceName(t *testing.T) {
+	home := newFakeHomeAPI()
+	home.setDeviceName("light.kitchen", "Kitchen Light")
+
+	require.NoError(t, runScriptForTest(t, home, `
+		assert(home.getDeviceName("light.kitchen") == "Kitchen Light")
+		assert(home.getDeviceName("light.unnamed") == "light.unnamed")
+	`))
+}
+
+func TestBindingsHasState(t *testing.T) {
+	home := newFakeHomeAPI()
+	require.NoError(t, home.SetState("sensor.hall", "battery", true))
+
+	require.NoError(t, runScriptForTest(t, home, `
+		assert(home.hasState("sensor.hall", "battery") == true)
+		assert(home.hasState("sensor.hall", "no_such_key") == false)
+	`))
+}
+
 func TestBindingsNotifyWithPayload(t *testing.T) {
 	home := newFakeHomeAPI()
 
