@@ -29,8 +29,11 @@ import (
 )
 
 const (
-	maxZoneID            = 6
-	maxChannelID         = 6
+	maxZoneID    = 6
+	maxChannelID = 6
+
+	// serialReadTimeout bounds a single serial read so a silent amp fails the call instead of hanging the bridge.
+	serialReadTimeout    = 2 * time.Second
 	commandSpaceInterval = time.Millisecond * 100
 
 	// The amp's native ranges are exposed through the API as-is, with no scaling: volume is
@@ -440,8 +443,9 @@ func (mpb *MonopriceAmpBridge) Start(ctx context.Context) error {
 	}
 
 	c := &serial.Config{
-		Name: mpb.usbPath,
-		Baud: mpb.usbBaudRate,
+		Name:        mpb.usbPath,
+		Baud:        mpb.usbBaudRate,
+		ReadTimeout: serialReadTimeout,
 	}
 	port, err := serial.OpenPort(c)
 	if err != nil {
