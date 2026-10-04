@@ -182,6 +182,9 @@ func (e *Engine) Bus() *Bus {
 func (e *Engine) UpdateDeviceState(entityID, kind string, value any) {
 	e.cache.set(entityID, kind, value)
 	e.bus.Publish(Event{Topic: "device.updated." + entityID, Payload: value})
+	if kind != "" {
+		e.bus.Publish(Event{Topic: deviceKindUpdatedTopicPrefix + kind, Payload: entityID})
+	}
 }
 
 // GetLastKnown returns entityID's last known state from the cache, and

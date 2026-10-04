@@ -2,7 +2,6 @@ package policy
 
 import (
 	_ "embed"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +10,8 @@ import (
 )
 
 // Test-only embeds, same rationale as battery_report_test.go: these are user
-// policies registered through adminui/SavePolicy with DEVICE_ID replaced per
-// device, never compiled into policyd itself.
+// policies registered through adminui/SavePolicy, never compiled into
+// policyd itself.
 //
 //go:embed scripts/ups_on_battery.lua
 var upsOnBatteryScript string
@@ -23,128 +22,186 @@ var upsLowBatteryScript string
 //go:embed scripts/water_detected.lua
 var waterDetectedScript string
 
-const testUPSID = "ups-1"
-
-func forDevice(script, id string) string {
-	return strings.ReplaceAll(script, "DEVICE_ID", id)
+func addUPS(home *fakeHomeAPI, e *Engine, id, name, room string, discharging bool, pct, mins int64) {
+	home.setDeviceName(id, name)
+	if room != "" {
+		home.setDeviceRoom(id, room)
+	}
+	setUPS(home, id, discharging, pct, mins)
+	e.UpdateDeviceState(id, "ups", nil)
 }
 
-func newUPSWaterHome() *fakeHomeAPI {
-	home := newFakeHomeAPI()
-	home.setDeviceName(testUPSID, "Office UPS")
-	home.setDeviceRoom(testUPSID, "Office")
-	_ = home.SetState(testUPSID, "battery.state.discharging", false)
-	_ = home.SetState(testUPSID, "battery.state.capacity_remaining_pct", int64(100))
-	_ = home.SetState(testUPSID, "battery.state.capacity_remaining_mins", int64(40))
-	home.setDeviceName("water-1", "Sump Pump Water Sensor")
-	_ = home.SetState("water-1", "water.is_active", false)
-	return home
+func setUPS(home *fakeHomeAPI, id string, discharging bool, pct, mins int64) {
+	_ = home.SetState(id, "battery", struct{}{})
+	_ = home.SetState(id, "battery.state.discharging", discharging)
+	_ = home.SetState(id, "battery.state.capacity_remaining_pct", pct)
+	_ = home.SetState(id, "battery.state.capacity_remaining_mins", mins)
 }
 
-func upsOnBatteryExpr(id string) ConditionExpr {
-	return Use("attribute.equals", AttributeEqualsParams{DeviceID: id, Key: "battery.state.discharging", Value: true})
+func addWaterSensor(home *fakeHomeAPI, e *Engine, id, name string, wet bool) {
+	home.setDeviceName(id, name)
+	_ = home.SetState(id, "water", struct{}{})
+	_ = home.SetState(id, "water.is_active", wet)
+	e.UpdateDeviceState(id, "sensor", nil)
 }
 
-func upsLowBatteryExpr(id string) ConditionExpr {
-	return ExprAnd(
-		upsOnBatteryExpr(id),
-		Use("attribute.threshold", AttributeThresholdParams{
-			DeviceID: id, Key: "battery.state.capacity_remaining_pct", High: 25, Low: 20, Falling: true,
-		}),
-	)
+func upsDischarging() DeviceClause {
+	return DeviceClause{Key: "battery.state.discharging", Op: "eq", Value: true}
 }
 
-func waterDetectedExpr(id string) ConditionExpr {
-	return Use("attribute.equals", AttributeEqualsParams{DeviceID: id, Key: "water.is_active", Value: true})
-}
-
-func registerUPSWaterPolicies(t *testing.T, e *Engine) {
+func registerAnyDevicePolicy(t *testing.T, e *Engine, id, script string, p AnyDeviceParams) {
 	t.Helper()
-	RegisterBuiltinConditionTypes(e)
-	require.NoError(t, e.Register(&Policy{ID: "ups-on-battery", ConditionExpr: upsOnBatteryExpr(testUPSID), Script: forDevice(upsOnBatteryScript, testUPSID)}))
-	require.NoError(t, e.Register(&Policy{ID: "ups-low-battery", ConditionExpr: upsLowBatteryExpr(testUPSID), Script: forDevice(upsLowBatteryScript, testUPSID)}))
-	require.NoError(t, e.Register(&Policy{ID: "water-detected", ConditionExpr: waterDetectedExpr("water-1"), Script: forDevice(waterDetectedScript, "water-1")}))
+	require.NoError(t, e.Register(&Policy{
+		ID:               id,
+		ConditionExpr:    Use("devices.any-match", p),
+		Script:           script,
+		OnConditionFalse: Complete,
+	}))
 }
 
-func TestUPSOnBatteryPolicyNotifies(t *testing.T) {
-	home := newUPSWaterHome()
+func TestUPSOnBatteryPolicyCoversAnyUPSAndNamesWhichOne(t *testing.T) {
+	home := newFakeHomeAPI()
 	notify := &fakeNotifyAPI{}
 	e, _ := newTestEngine(t, home, WithNotifyAPI(notify))
-	registerUPSWaterPolicies(t, e)
+	RegisterBuiltinConditionTypes(e)
 
-	require.NoError(t, home.SetState(testUPSID, "battery.state.discharging", true))
-	require.NoError(t, home.SetState(testUPSID, "battery.state.capacity_remaining_pct", int64(90)))
-	e.Bus().Publish(Event{Topic: "device.updated." + testUPSID})
+	addUPS(home, e, "ups-a", "Office UPS", "Office", false, 100, 40)
+	addUPS(home, e, "ups-b", "Rack UPS", "", false, 100, 30)
+	// A non-UPS device with the same keys must never match.
+	home.setDeviceName("other", "Not a UPS")
+	_ = home.SetState("other", "battery.state.discharging", true)
+	e.UpdateDeviceState("other", "generic", nil)
 
+	registerAnyDevicePolicy(t, e, "ups-on-battery", upsOnBatteryScript,
+		AnyDeviceParams{Kind: "ups", Clauses: []DeviceClause{upsDischarging()}})
+
+	// First UPS drops: one email naming only it, with room and runtime.
+	setUPS(home, "ups-a", true, 90, 35)
+	e.UpdateDeviceState("ups-a", "ups", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
+	c := notify.calls[0]
+	assert.Equal(t, []string{"r"}, c.recipientIDs)
+	assert.Equal(t, "text/html", c.content)
+	assert.Contains(t, c.subject, "[POWER]")
+	assert.Contains(t, c.body, "Office UPS (Office): 90%")
+	assert.Contains(t, c.body, "35 minutes")
+	assert.NotContains(t, c.body, "Rack UPS")
+	assert.NotContains(t, c.body, "Not a UPS")
 
-	call := notify.calls[0]
-	assert.Equal(t, []string{"r"}, call.recipientIDs)
-	assert.Equal(t, "[POWER] Office UPS (Office) lost grid power", call.subject)
-	assert.Equal(t, "text/html", call.content)
-	assert.Contains(t, call.body, "90%")
-	assert.Contains(t, call.body, "40 minutes")
-
-	// Stays on battery: another device update must not re-alert.
-	e.Bus().Publish(Event{Topic: "device.updated." + testUPSID})
+	// Same UPS updating again: no repeat alert.
+	e.UpdateDeviceState("ups-a", "ups", nil)
 	time.Sleep(100 * time.Millisecond)
 	assert.Len(t, notify.calls, 1)
+
+	// A second UPS joins while the first is still down: a new alert that
+	// lists both - a plain level condition would have swallowed this.
+	setUPS(home, "ups-b", true, 80, 20)
+	e.UpdateDeviceState("ups-b", "ups", nil)
+	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
+	assert.Contains(t, notify.calls[1].body, "Office UPS (Office)")
+	assert.Contains(t, notify.calls[1].body, "Rack UPS: 80%")
 }
 
-func TestUPSLowBatteryPolicyFiresOnlyWhileDischargingBelowThreshold(t *testing.T) {
-	home := newUPSWaterHome()
+func TestUPSLowBatteryPolicyOnlyListsUPSesAtOrBelowThreshold(t *testing.T) {
+	home := newFakeHomeAPI()
 	notify := &fakeNotifyAPI{}
 	e, _ := newTestEngine(t, home, WithNotifyAPI(notify))
-	registerUPSWaterPolicies(t, e)
+	RegisterBuiltinConditionTypes(e)
 
-	// Low charge but on mains (still charging): not an alert.
-	require.NoError(t, home.SetState(testUPSID, "battery.state.capacity_remaining_pct", int64(15)))
-	e.Bus().Publish(Event{Topic: "device.updated." + testUPSID})
+	addUPS(home, e, "ups-a", "Office UPS", "", false, 15, 5) // low, but on mains
+	addUPS(home, e, "ups-b", "Rack UPS", "", false, 100, 30)
+
+	registerAnyDevicePolicy(t, e, "ups-low-battery", upsLowBatteryScript, AnyDeviceParams{Kind: "ups", Clauses: []DeviceClause{
+		upsDischarging(),
+		{Key: "battery.state.capacity_remaining_pct", Op: "lte", Value: 20},
+	}})
+
+	// On battery but healthy: no alert.
+	setUPS(home, "ups-b", true, 60, 20)
+	e.UpdateDeviceState("ups-b", "ups", nil)
 	time.Sleep(100 * time.Millisecond)
-	for _, c := range notify.calls {
-		assert.NotContains(t, c.subject, "battery low")
-	}
+	assert.Empty(t, notify.calls)
 
-	// Goes on battery while already at 15%: now the low-battery alert fires.
-	require.NoError(t, home.SetState(testUPSID, "battery.state.discharging", true))
-	e.Bus().Publish(Event{Topic: "device.updated." + testUPSID})
-
-	require.Eventually(t, func() bool {
-		for _, c := range notify.calls {
-			if c.subject == "[POWER] Office UPS (Office) battery low" {
-				return true
-			}
-		}
-		return false
-	}, time.Second, 10*time.Millisecond)
+	// The low UPS goes on battery: alert names it and not the healthy one.
+	setUPS(home, "ups-a", true, 15, 5)
+	e.UpdateDeviceState("ups-a", "ups", nil)
+	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
+	assert.Contains(t, notify.calls[0].subject, "battery low")
+	assert.Contains(t, notify.calls[0].body, "Office UPS: 15%")
+	assert.NotContains(t, notify.calls[0].body, "Rack UPS")
 }
 
-func TestWaterDetectedPolicyNotifies(t *testing.T) {
-	home := newUPSWaterHome()
+func TestWaterDetectedPolicyCoversAnySensorAndSkipsNonWaterSensors(t *testing.T) {
+	home := newFakeHomeAPI()
 	notify := &fakeNotifyAPI{}
 	e, _ := newTestEngine(t, home, WithNotifyAPI(notify))
-	registerUPSWaterPolicies(t, e)
+	RegisterBuiltinConditionTypes(e)
 
-	require.NoError(t, home.SetState("water-1", "water.is_active", true))
-	e.Bus().Publish(Event{Topic: "device.updated.water-1"})
+	addWaterSensor(home, e, "w-1", "Sump Pump Water Sensor", false)
+	addWaterSensor(home, e, "w-2", "Under Sink Water Sensor", false)
+	home.setDeviceName("motion", "Hall Motion") // a sensor with no water trait
+	e.UpdateDeviceState("motion", "sensor", nil)
 
+	registerAnyDevicePolicy(t, e, "water-detected", waterDetectedScript, AnyDeviceParams{
+		Kind: "sensor", Clauses: []DeviceClause{{Key: "water.is_active", Op: "eq", Value: true}},
+	})
+
+	_ = home.SetState("w-1", "water.is_active", true)
+	e.UpdateDeviceState("w-1", "sensor", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"r"}, notify.calls[0].recipientIDs)
-	assert.Equal(t, "[WATER] Water detected: Sump Pump Water Sensor", notify.calls[0].subject)
+	assert.Contains(t, notify.calls[0].subject, "[WATER]")
+	assert.Contains(t, notify.calls[0].body, "Sump Pump Water Sensor")
+	assert.NotContains(t, notify.calls[0].body, "Under Sink")
+	assert.NotContains(t, notify.calls[0].body, "Hall Motion")
+
+	_ = home.SetState("w-2", "water.is_active", true)
+	e.UpdateDeviceState("w-2", "sensor", nil)
+	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
+	assert.Contains(t, notify.calls[1].body, "Sump Pump Water Sensor")
+	assert.Contains(t, notify.calls[1].body, "Under Sink Water Sensor")
 }
 
-// TestUPSWaterPoliciesSurviveGetDeviceRoomError: the room suffix is cosmetic
-// and must never abort an alert (see battery_report_test.go).
-func TestUPSWaterPoliciesSurviveGetDeviceRoomError(t *testing.T) {
-	home := newUPSWaterHome()
+// TestAnyDevicePoliciesSurviveGetDeviceRoomError: the room suffix is
+// cosmetic and must never abort an alert (see battery_report_test.go).
+func TestAnyDevicePoliciesSurviveGetDeviceRoomError(t *testing.T) {
+	home := newFakeHomeAPI()
 	home.setDeviceRoomErr(ErrNotImplemented)
 	notify := &fakeNotifyAPI{}
 	e, _ := newTestEngine(t, home, WithNotifyAPI(notify))
-	registerUPSWaterPolicies(t, e)
+	RegisterBuiltinConditionTypes(e)
 
-	require.NoError(t, home.SetState("water-1", "water.is_active", true))
-	e.Bus().Publish(Event{Topic: "device.updated.water-1"})
+	addWaterSensor(home, e, "w-1", "Sump Pump Water Sensor", false)
+	registerAnyDevicePolicy(t, e, "water-detected", waterDetectedScript, AnyDeviceParams{
+		Kind: "sensor", Clauses: []DeviceClause{{Key: "water.is_active", Op: "eq", Value: true}},
+	})
 
+	_ = home.SetState("w-1", "water.is_active", true)
+	e.UpdateDeviceState("w-1", "sensor", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "[WATER] Water detected: Sump Pump Water Sensor", notify.calls[0].subject)
+	assert.Contains(t, notify.calls[0].body, "Sump Pump Water Sensor")
+}
+
+func TestAnyDeviceConditionClearsWhenNoDeviceMatches(t *testing.T) {
+	home := newFakeHomeAPI()
+	e, _ := newTestEngine(t, home)
+	RegisterBuiltinConditionTypes(e)
+
+	addWaterSensor(home, e, "w-1", "Sensor", false)
+	registerAnyDevicePolicy(t, e, "p", `home.notify("wet", nil)`, AnyDeviceParams{
+		Kind: "sensor", Clauses: []DeviceClause{{Key: "water.is_active", Op: "eq", Value: true}},
+	})
+
+	_ = home.SetState("w-1", "water.is_active", true)
+	e.UpdateDeviceState("w-1", "sensor", nil)
+	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
+
+	// Dries out, then wets again: a fresh transition, so a second trigger.
+	_ = home.SetState("w-1", "water.is_active", false)
+	e.UpdateDeviceState("w-1", "sensor", nil)
+	// The condition re-reads state when it processes an event, so give it
+	// time to observe the dry state before wetting again.
+	time.Sleep(100 * time.Millisecond)
+	_ = home.SetState("w-1", "water.is_active", true)
+	e.UpdateDeviceState("w-1", "sensor", nil)
+	require.Eventually(t, func() bool { return home.notifyCount() == 2 }, time.Second, 10*time.Millisecond)
 }

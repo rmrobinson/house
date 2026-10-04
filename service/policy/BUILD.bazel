@@ -9,6 +9,7 @@ go_library(
         "cache.go",
         "condition.go",
         "defaults.go",
+        "device_conditions.go",
         "engine.go",
         "grpc.go",
         "location_conditions.go",
