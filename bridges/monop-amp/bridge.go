@@ -406,10 +406,10 @@ func (mpb *MonopriceAmpBridge) Run(ctx context.Context, interval time.Duration) 
 	}
 }
 
-// hasInput reports whether id matches one of the configured inputs.
+// hasInput reports whether id matches one of the configured, active inputs.
 func (mpb *MonopriceAmpBridge) hasInput(id string) bool {
 	for _, input := range mpb.inputs {
-		if fmt.Sprintf("%d", input.ID) == id {
+		if input.Active && fmt.Sprintf("%d", input.ID) == id {
 			return true
 		}
 	}
@@ -498,6 +498,9 @@ func (mpb *MonopriceAmpBridge) speakerToDevice(speakerID int, state *monopamp.St
 
 	inputs := []*trait.Input_InputDetails{}
 	for _, input := range mpb.inputs {
+		if !input.Active {
+			continue
+		}
 		inputs = append(inputs, &trait.Input_InputDetails{
 			Id:   inputIDToAPI(input.ID),
 			Name: input.Name,

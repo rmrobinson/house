@@ -85,14 +85,14 @@ func (a fakeAmp) Zone(id int) zone {
 
 const testBridgeID = "amp"
 
-// newTestBridge has speakers 1 (active), 2 (active) and 3 (inactive), and inputs 1 and 2.
+// newTestBridge has speakers 1 (active), 2 (active) and 3 (inactive), and inputs 1 and 2 (active) and 3 (inactive).
 // zones controls which of them the fake amp reports.
 func newTestBridge(t *testing.T, zones fakeAmp) *MonopriceAmpBridge {
 	t.Helper()
 	viper.Set("bridge.id", testBridgeID)
 	logger := zaptest.NewLogger(t)
 	b := NewMonopriceAmpBridge(logger, bridge.NewService(logger), "unused.yaml", "/dev/null", 9600,
-		[]inputDetails{{ID: 1, Name: "One", Active: true}, {ID: 2, Name: "Two", Active: true}},
+		[]inputDetails{{ID: 1, Name: "One", Active: true}, {ID: 2, Name: "Two", Active: true}, {ID: 3, Name: "Off", Active: false}},
 		[]speakerDetails{
 			{ID: 1, Name: "Kitchen", Description: "Kitchen ceiling", Active: true},
 			{ID: 2, Active: true},
@@ -239,6 +239,13 @@ func TestDeviceDescribesSpeaker(t *testing.T) {
 	assert.Equal(t, "Kitchen", d.GetConfig().GetName())
 	assert.Equal(t, "Kitchen ceiling", d.GetConfig().GetDescription())
 	assert.True(t, d.GetAddress().GetIsReachable())
+
+	// Inactive input 3 isn't advertised.
+	var inputIDs []string
+	for _, in := range d.GetAvReceiver().GetInput().GetAttributes().GetInputs() {
+		inputIDs = append(inputIDs, in.Id)
+	}
+	assert.Equal(t, []string{"1", "2"}, inputIDs)
 
 	// No configured name falls back to something sensible.
 	d, err = b.ProcessCommand(context.Background(), cmdFor("2", &command.Command{Details: &command.Command_OnOff{OnOff: &command.OnOff{On: true}}}))
