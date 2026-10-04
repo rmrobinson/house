@@ -121,3 +121,8 @@ bridge_image(
     name = "viewerui",
     binary = "//service/viewerui",
 )
+
+bridge_image(
+    name = "notificationd",
+    binary = "//service/notification/cmd/notificationd",
+)
