@@ -6,11 +6,29 @@
 -- this house's actual device inventory, registered through adminui's
 -- policy editor against a "schedule.daily" condition (07:00, house
 -- timezone).
+--
+-- Each entry is suffixed with its linked room, when it has one - several
+-- battery device names are otherwise ambiguous (e.g. more than one generic
+-- "Motion Sensor") with no way to tell them apart in the email alone.
 local function section(title, items)
     if #items == 0 then
         return ""
     end
     return "<h3>" .. title .. "</h3><ul>" .. table.concat(items) .. "</ul>"
+end
+
+-- roomSuffix is pcall-guarded: home.getDeviceRoom raises a Lua error (not
+-- just a "" result) on a HomeAPI with no HouseService connection
+-- (bridgehome.Adapter's unconditional ErrNotImplemented) - letting that
+-- propagate would abort this whole report over a purely cosmetic
+-- disambiguation feature, so any error here is treated the same as "no
+-- room", not a reason to stop.
+local function roomSuffix(id)
+    local ok, room = pcall(home.getDeviceRoom, id)
+    if ok and room ~= "" then
+        return " (" .. room .. ")"
+    end
+    return ""
 end
 
 local action, info = {}, {}
@@ -19,7 +37,8 @@ for _, kind in ipairs({"sensor", "generic"}) do
     for _, id in ipairs(home.findDevices(kind)) do
         if home.hasState(id, "battery") then
             local pct = home.getState(id, "battery.state.capacity_remaining_pct")
-            local entry = "<li>" .. home.getDeviceName(id) .. ": " .. pct .. "%</li>"
+            local label = home.getDeviceName(id) .. roomSuffix(id)
+            local entry = "<li>" .. label .. ": " .. pct .. "%</li>"
             if pct < 10 then
                 table.insert(action, entry)
             else

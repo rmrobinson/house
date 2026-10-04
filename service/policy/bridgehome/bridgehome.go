@@ -369,6 +369,16 @@ func (a *Adapter) GetDeviceName(id string) (string, error) {
 	return id, nil
 }
 
+// GetDeviceRoom implements policy.HomeAPI. Room linking is HouseService
+// data (api/house.proto's DeviceRoomLink), entirely separate from
+// BridgeService's own Device this Adapter wraps - unconditionally
+// ErrNotImplemented, staying strictly scoped to bridge.proto's contract,
+// the same convention GetHouseState/SetHouseState already follow. See
+// service/policy/housestate.Adapter for the HouseService-backed answer.
+func (a *Adapter) GetDeviceRoom(id string) (string, error) {
+	return "", policy.ErrNotImplemented
+}
+
 // HasState implements policy.HomeAPI, walking the same dot-path as GetState
 // (see resolveState) but reporting whether it's actually populated rather
 // than reading its value - resolveState's Get() calls return a zero-value

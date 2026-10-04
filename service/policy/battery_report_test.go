@@ -50,8 +50,9 @@ func TestBatteryReportPolicyRegistersWithScheduleDaily(t *testing.T) {
 // condition_test.go/attribute_conditions_test.go, so this test is about the
 // script's behaviour, not the clock.
 //
-// Fixture: a sensor at 5% (action item), a generic device at 42%
-// (informational), a UPS at 3% (must be excluded - UPS is never in the
+// Fixture: a sensor at 5% (action item, with a linked room - the name
+// alone is ambiguous without it), a generic device at 42% (informational,
+// no linked room), a UPS at 3% (must be excluded - UPS is never in the
 // {"sensor","generic"} kind loop), and a sensor with no battery trait at
 // all (must be skipped via home.hasState).
 func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
@@ -64,6 +65,7 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	require.NoError(t, home.SetState("sensor.low", "battery", struct{}{}))
 	require.NoError(t, home.SetState("sensor.low", "battery.state.capacity_remaining_pct", int64(5)))
 	home.setDeviceName("sensor.low", "Hallway Smoke Detector")
+	home.setDeviceRoom("sensor.low", "Upstairs Hallway")
 
 	e.UpdateDeviceState("generic.ok", "generic", nil)
 	require.NoError(t, home.SetState("generic.ok", "battery", struct{}{}))
@@ -99,8 +101,49 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	assert.Equal(t, []string{"r"}, call.recipientIDs)
 	assert.Equal(t, "Battery report", call.subject)
 	assert.Equal(t, "text/html", call.content)
-	assert.Contains(t, call.body, "Hallway Smoke Detector: 5%")
-	assert.Contains(t, call.body, "Garage Remote: 42%")
+	assert.Contains(t, call.body, "Hallway Smoke Detector (Upstairs Hallway): 5%", "a device with a linked room must show it, to disambiguate otherwise-identical names")
+	assert.Contains(t, call.body, "Garage Remote: 42%", "a device with no linked room must show no room suffix at all")
 	assert.NotContains(t, call.body, "Office UPS", "UPS devices are excluded from the battery report")
 	assert.NotContains(t, call.body, "Front Door Contact", "a device with no battery trait must be skipped")
+}
+
+// TestBatteryReportPolicySurvivesGetDeviceRoomError guards a real regression
+// caught in review: home.getDeviceRoom raises a Lua error on a HomeAPI with
+// no room data (e.g. bridgehome.Adapter's unconditional ErrNotImplemented,
+// a real configuration whenever policyd runs with --bridge-addr but no
+// --house-addr) - roomSuffix's pcall in battery_report.lua must swallow
+// that rather than letting it abort the whole report, which would
+// otherwise regress every device (not just the unlinked one) the moment
+// this feature shipped to a deployment with no HouseService connection.
+func TestBatteryReportPolicySurvivesGetDeviceRoomError(t *testing.T) {
+	home := newFakeHomeAPI()
+	home.setDeviceRoomErr(ErrNotImplemented)
+	notify := &fakeNotifyAPI{}
+	e, r := newTestEngine(t, home, WithNotifyAPI(notify))
+	trigger := registerManualTrigger(t, r, "trigger")
+
+	e.UpdateDeviceState("sensor.low", "sensor", nil)
+	require.NoError(t, home.SetState("sensor.low", "battery", struct{}{}))
+	require.NoError(t, home.SetState("sensor.low", "battery.state.capacity_remaining_pct", int64(5)))
+	home.setDeviceName("sensor.low", "Hallway Smoke Detector")
+
+	require.NoError(t, e.Register(&Policy{
+		ID:            batteryReportPolicyID,
+		ConditionExpr: Use("trigger", struct{}{}),
+		Script:        batteryReportScript,
+	}))
+
+	trigger.set(true)
+
+	require.Eventually(t, func() bool {
+		return len(notify.calls) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	logs := e.LogsForPolicy(batteryReportPolicyID)
+	require.Len(t, logs, 1)
+	assert.Equal(t, StatusSuccess, logs[0].Status, "a getDeviceRoom error must not fail the whole report")
+	assert.Empty(t, logs[0].Error)
+
+	call := notify.calls[0]
+	assert.Contains(t, call.body, "Hallway Smoke Detector: 5%", "no room suffix, but the device must still be reported")
 }

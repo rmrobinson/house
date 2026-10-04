@@ -82,6 +82,16 @@ func TestBindingsGetDeviceName(t *testing.T) {
 	`))
 }
 
+func TestBindingsGetDeviceRoom(t *testing.T) {
+	home := newFakeHomeAPI()
+	home.setDeviceRoom("light.kitchen", "Kitchen")
+
+	require.NoError(t, runScriptForTest(t, home, `
+		assert(home.getDeviceRoom("light.kitchen") == "Kitchen")
+		assert(home.getDeviceRoom("light.unlinked") == "")
+	`))
+}
+
 func TestBindingsHasState(t *testing.T) {
 	home := newFakeHomeAPI()
 	require.NoError(t, home.SetState("sensor.hall", "battery", true))

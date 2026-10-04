@@ -19,6 +19,7 @@ go_test(
     embed = [":housestate"],
     deps = [
         "//api",
+        "//api/device",
         "//service/lib/bridgeconn",
         "//service/lib/grpcutil",
         "//service/policy",

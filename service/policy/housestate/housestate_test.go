@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
@@ -23,8 +24,10 @@ import (
 const testBuildingID = "b1"
 
 // fakeHouseServer is a real (network-served) HouseService standing in for
-// service/house, implementing just the two RPCs Adapter calls:
-// StreamHouseUpdates and SetHouseMode.
+// service/house, implementing the RPCs Adapter calls: StreamHouseUpdates,
+// SetHouseMode, and - for GetDeviceRoom - ListRooms (whose Room.devices
+// service/house.Service.ListRooms already resolves server-side, so there's
+// no separate device-link RPC to fake here).
 type fakeHouseServer struct {
 	api2.UnimplementedHouseServiceServer
 
@@ -32,6 +35,8 @@ type fakeHouseServer struct {
 	building  *api2.Building
 	setErr    error
 	streamErr error // if set, the next StreamHouseUpdates call fails immediately with this, simulating a reconnect that can't re-establish
+
+	rooms []*api2.Room
 
 	drop chan struct{} // sent to by a test to end the current StreamHouseUpdates call, simulating a dropped connection
 }
@@ -48,6 +53,39 @@ func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseMo
 	}
 	s.building.State.Mode = req.GetMode()
 	return s.building, nil
+}
+
+// linkDevice records deviceID as linked to a room named roomName, creating
+// the room (if roomName hasn't been seen yet) with Room.devices already
+// populated - the same shape ListRooms returns in production.
+func (s *fakeHouseServer) linkDevice(deviceID, roomName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, r := range s.rooms {
+		if r.GetConfig().GetName() == roomName {
+			r.Devices = append(r.Devices, &device.Device{Id: deviceID})
+			return
+		}
+	}
+	s.rooms = append(s.rooms, &api2.Room{
+		Id:      roomName,
+		Config:  &api2.Room_Config{Name: roomName},
+		Devices: []*device.Device{{Id: deviceID}},
+	})
+}
+
+func (s *fakeHouseServer) ListRooms(req *api2.ListRoomsRequest, stream api2.HouseService_ListRoomsServer) error {
+	s.mu.Lock()
+	rooms := append([]*api2.Room(nil), s.rooms...)
+	s.mu.Unlock()
+
+	for _, r := range rooms {
+		if err := stream.Send(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // StreamHouseUpdates sends one BuildingUpdate for the current building
@@ -339,4 +377,53 @@ func TestAdapterHoldsLastKnownStateWhenReconnectFails(t *testing.T) {
 	occupied, err := a.GetHouseState("occupied")
 	require.NoError(t, err)
 	assert.Equal(t, true, occupied)
+}
+
+func TestAdapterGetDeviceRoomReturnsLinkedRoomName(t *testing.T) {
+	srv := newFakeHouseServer()
+	srv.setBuilding(occupiedBuilding(false, ""))
+	srv.linkDevice("light-0", "Living Room") // a second room, to prove the right one is picked
+	srv.linkDevice("light-1", "Kitchen")
+	addr := startFakeHouseServer(t, srv)
+
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, newFakeHomeAPI())
+	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.Start(ctx, engine)
+
+	room, err := a.GetDeviceRoom("light-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Kitchen", room)
+}
+
+func TestAdapterGetDeviceRoomReturnsEmptyWhenUnlinked(t *testing.T) {
+	srv := newFakeHouseServer()
+	srv.setBuilding(occupiedBuilding(false, ""))
+	addr := startFakeHouseServer(t, srv)
+
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, newFakeHomeAPI())
+	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.Start(ctx, engine)
+
+	room, err := a.GetDeviceRoom("light-1")
+	require.NoError(t, err, "an unlinked device is a normal state, not a failure")
+	assert.Equal(t, "", room)
+}
+
+func TestAdapterGetDeviceRoomBeforeStartReturnsErrNotReady(t *testing.T) {
+	srv := newFakeHouseServer()
+	srv.setBuilding(occupiedBuilding(false, ""))
+	addr := startFakeHouseServer(t, srv)
+
+	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, newFakeHomeAPI())
+
+	_, err := a.GetDeviceRoom("light-1")
+	assert.ErrorIs(t, err, ErrNotReady)
 }

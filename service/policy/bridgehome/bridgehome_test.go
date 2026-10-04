@@ -249,6 +249,14 @@ func TestAdapter_GetDeviceName(t *testing.T) {
 	assert.Equal(t, "light-2", name, "falls back to the device ID when Config.Name is unset")
 }
 
+func TestAdapter_GetDeviceRoomIsNotImplemented(t *testing.T) {
+	srv := &fakeBridgeServer{updates: initialAsBulk("b1", []*device.Device{lightDevice("light-1", true)})}
+	a, _ := newStartedAdapter(t, srv)
+
+	_, err := a.GetDeviceRoom("light-1")
+	assert.ErrorIs(t, err, policy.ErrNotImplemented, "room linking is HouseService data, out of scope for a BridgeService-backed Adapter")
+}
+
 // TestAdapter_StreamedUpdatesDriveCacheAndSystemEvents runs the same
 // assertions against two differently-shaped upstreams - one sending a bulk
 // InitialUpdate (what a raw individual bridge sends) and one sending

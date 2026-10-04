@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -208,6 +209,48 @@ func (a *Adapter) SetHouseState(key string, value any) error {
 
 	a.applyState(b.GetState())
 	return nil
+}
+
+// GetDeviceRoom implements policy.HomeAPI, resolving id's linked room's
+// display name via HouseService.ListRooms(buildingID) - which already
+// resolves every room's device links in one pass server-side (see
+// service/house.Service.ListRooms), so scanning each Room.devices list
+// directly is one RPC, not a ListDeviceLinks+GetRoom pair. The only
+// HomeAPI method this Adapter answers with a fresh RPC rather than cached
+// stream state, since there's no DeviceRoomLink-change equivalent of
+// StreamHouseUpdates to cache from. Unlinked is "", nil - a device
+// standing alone is a normal, common state, not a failure, the same
+// "absent" convention GetDeviceName's id-fallback uses.
+func (a *Adapter) GetDeviceRoom(id string) (string, error) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", ErrNotReady
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+
+	stream, err := a.client.ListRooms(rpcCtx, &api2.ListRoomsRequest{BuildingId: &a.buildingID})
+	if err != nil {
+		return "", fmt.Errorf("housestate: listRooms: %w", err)
+	}
+
+	for {
+		room, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("housestate: listRooms: %w", err)
+		}
+		for _, d := range room.GetDevices() {
+			if d.GetId() == id {
+				return room.GetConfig().GetName(), nil
+			}
+		}
+	}
 }
 
 var _ policy.HomeAPI = (*Adapter)(nil)

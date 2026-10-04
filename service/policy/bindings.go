@@ -51,6 +51,14 @@ type HomeAPI interface {
 	// returns 0, indistinguishable from "battery actually at 0%".
 	// HasState(id, "battery") is what tells those apart.
 	HasState(id, key string) (bool, error)
+	// GetDeviceRoom returns id's linked room's display name, or "" (no
+	// error) if id isn't linked to any room - a device standing alone is a
+	// normal, common state, not a failure. Room linking is HouseService
+	// data (api/house.proto's DeviceRoomLink), entirely separate from
+	// BridgeService's own Device - a HomeAPI implementation with no
+	// HouseService connection should return ErrNotImplemented, the same
+	// "unconfigured" story GetHouseState/SetHouseState use.
+	GetDeviceRoom(id string) (string, error)
 
 	// House state
 	GetHouseState(key string) (any, error)
@@ -225,6 +233,16 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 				return 0
 			}
 			L.Push(lua.LBool(has))
+			return 1
+		},
+		"getDeviceRoom": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			room, err := api.GetDeviceRoom(id)
+			if err != nil {
+				fail(L, err, "home.getDeviceRoom(%q)", id)
+				return 0
+			}
+			L.Push(lua.LString(room))
 			return 1
 		},
 		"getHouseState": func(L *lua.LState) int {
