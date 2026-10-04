@@ -196,6 +196,59 @@ func TestResolveState(t *testing.T) {
 	}
 }
 
+func TestHasState(t *testing.T) {
+	withBattery := sensorDevice("sensor-1", true, true)
+	withoutBattery := &device.Device{
+		Id:      "sensor-2",
+		Details: &device.Device_Sensor{Sensor: &device.Sensor{}},
+	}
+	light := colourLightDevice("light-1", 200)
+
+	for _, tc := range []struct {
+		name    string
+		device  *device.Device
+		key     string
+		want    bool
+		wantErr bool
+	}{
+		{"populated message-typed trait", withBattery, "battery", true, false},
+		{"populated scalar leaf", withBattery, "battery.state.discharging", true, false},
+		{"unpopulated message-typed trait", withoutBattery, "battery", false, false},
+		{"leaf under an unpopulated parent - stops at the parent, no error", withoutBattery, "battery.state.discharging", false, false},
+		{"unpopulated scalar leaf (proto3 zero value) reports false", withBattery, "battery.state.capacity_remaining_pct", false, false},
+		{"unknown top-level segment", light, "no_such_trait", false, true},
+		{"unknown leaf segment", withBattery, "battery.state.no_such_field", false, true},
+		{"path continues past a scalar", withBattery, "battery.state.discharging.extra", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := hasState(tc.device, tc.key)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestAdapter_GetDeviceName(t *testing.T) {
+	named := lightDevice("light-1", true)
+	named.Config = &device.Device_Config{Name: "Kitchen Light"}
+	unnamed := lightDevice("light-2", true)
+
+	srv := &fakeBridgeServer{updates: initialAsBulk("b1", []*device.Device{named, unnamed})}
+	a, _ := newStartedAdapter(t, srv)
+
+	name, err := a.GetDeviceName("light-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Kitchen Light", name)
+
+	name, err = a.GetDeviceName("light-2")
+	require.NoError(t, err)
+	assert.Equal(t, "light-2", name, "falls back to the device ID when Config.Name is unset")
+}
+
 // TestAdapter_StreamedUpdatesDriveCacheAndSystemEvents runs the same
 // assertions against two differently-shaped upstreams - one sending a bulk
 // InitialUpdate (what a raw individual bridge sends) and one sending

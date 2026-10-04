@@ -68,14 +68,14 @@ type EventIdleForParams struct {
 // condition types built on HomeAPI.GetState, the Bus, and the new
 // PredicateCondition/IdleCondition/ScheduleCondition primitives:
 // "attribute.threshold", "attribute.equals", "schedule.daily", and
-// "event.idle-for". Unlike RegisterSystemConditionTypes's two hand-derived
-// sys.* types, any of these four addresses any device/attribute/topic
-// combination, present or future, without a Go code change - a policy
-// definition is enough.
+// "event.idle-for". Unlike RegisterSystemConditionTypes's three
+// hand-derived sys.* types, any of these four addresses any
+// device/attribute/topic combination, present or future, without a Go code
+// change - a policy definition is enough.
 //
-// Callers follow the same ordering rule as RegisterSystemConditionTypes: see
-// LoadSystemPolicies (the no-persistence case) and LoadPersistedPolicies's
-// doc comment (the persistence case) for when to call this.
+// Callers follow the same ordering rule as RegisterSystemConditionTypes:
+// see LoadPersistedPolicies's doc comment for when to call this relative to
+// loading persisted policies.
 func RegisterBuiltinConditionTypes(e *Engine) {
 	RegisterConditionType(e.registry, "attribute.threshold", func(p AttributeThresholdParams) Condition {
 		high, low := p.High, p.Low

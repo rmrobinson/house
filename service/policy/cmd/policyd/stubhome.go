@@ -80,6 +80,21 @@ func (h *stubHomeAPI) SetState(id, key string, value any) error {
 	return nil
 }
 
+// GetDeviceName always returns id itself: the stub has no real device
+// config to draw a display name from.
+func (h *stubHomeAPI) GetDeviceName(id string) (string, error) {
+	h.logger.Debug("stub home: GetDeviceName", zap.String("id", id))
+	return id, nil
+}
+
+func (h *stubHomeAPI) HasState(id, key string) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.attributes[id][key]
+	h.logger.Debug("stub home: HasState", zap.String("id", id), zap.String("key", key), zap.Bool("has", ok))
+	return ok, nil
+}
+
 func (h *stubHomeAPI) GetHouseState(key string) (any, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -97,8 +112,9 @@ func (h *stubHomeAPI) SetHouseState(key string, value any) error {
 }
 
 // GetLastKnown always returns "no entry": the stub has no real device
-// history to draw on, so e.g. sys.power-restore's script correctly finds
-// nothing to restore rather than fabricating a value.
+// history to draw on, so e.g. a power-restore policy built on
+// "sys.power-restored" correctly finds nothing to restore rather than
+// fabricating a value.
 func (h *stubHomeAPI) GetLastKnown(id string) (any, error) {
 	h.logger.Debug("stub home: GetLastKnown", zap.String("id", id))
 	return nil, nil

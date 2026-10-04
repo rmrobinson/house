@@ -34,6 +34,8 @@ func (noopHomeAPI) GetHouseState(key string) (any, error)             { return n
 func (noopHomeAPI) SetHouseState(key string, value any) error         { return nil }
 func (noopHomeAPI) GetLastKnown(id string) (any, error)               { return nil, nil }
 func (noopHomeAPI) Notify(event string, payload map[string]any) error { return nil }
+func (noopHomeAPI) GetDeviceName(id string) (string, error)           { return id, nil }
+func (noopHomeAPI) HasState(id, key string) (bool, error)             { return false, nil }
 
 // testTrigger is a manually-flippable condition, registered under
 // "test.trigger" - the adminui-side equivalent of service/policy's own

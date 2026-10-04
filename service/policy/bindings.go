@@ -38,6 +38,19 @@ type HomeAPI interface {
 	GetSensor(id string) (float64, error)
 	GetState(id, key string) (any, error)
 	SetState(id, key string, value any) error
+	// GetDeviceName returns id's configured display name, falling back to
+	// id itself if unset - distinct from GetState's dotted path, which only
+	// walks Device.details' populated oneof branch and can't reach
+	// Device.Config.Name (it lives outside that oneof entirely).
+	GetDeviceName(id string) (string, error)
+	// HasState reports whether key's dot-path (the same path GetState
+	// takes) is actually populated, rather than returning its value -
+	// GetState's underlying Get() returns a zero-value message for an
+	// *unset* optional message field, so e.g. GetState(id, "battery.state.
+	// capacity_remaining_pct") on a device with no Battery trait silently
+	// returns 0, indistinguishable from "battery actually at 0%".
+	// HasState(id, "battery") is what tells those apart.
+	HasState(id, key string) (bool, error)
 
 	// House state
 	GetHouseState(key string) (any, error)
@@ -192,6 +205,27 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 				fail(L, err, "home.setState(%q, %q)", id, key)
 			}
 			return 0
+		},
+		"getDeviceName": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			name, err := api.GetDeviceName(id)
+			if err != nil {
+				fail(L, err, "home.getDeviceName(%q)", id)
+				return 0
+			}
+			L.Push(lua.LString(name))
+			return 1
+		},
+		"hasState": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			key := L.CheckString(2)
+			has, err := api.HasState(id, key)
+			if err != nil {
+				fail(L, err, "home.hasState(%q, %q)", id, key)
+				return 0
+			}
+			L.Push(lua.LBool(has))
+			return 1
 		},
 		"getHouseState": func(L *lua.LState) int {
 			key := L.CheckString(1)

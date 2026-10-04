@@ -163,26 +163,25 @@ func TestEngineWithStorePersistsRegisterAndUnregister(t *testing.T) {
 	assert.Empty(t, loaded)
 }
 
-func TestLoadPersistedPoliciesOverridesSystemDefault(t *testing.T) {
+// TestLoadPersistedPoliciesSurvivesRestart proves a policy persisted on one
+// Engine/Store (including one built on a RegisterSystemConditionTypes
+// condition type, same as sys.occupancy used to be) comes back correctly
+// on a fresh Engine/registry after RegisterSystemConditionTypes +
+// LoadPersistedPolicies, simulating a process restart.
+func TestLoadPersistedPoliciesSurvivesRestart(t *testing.T) {
 	r := NewConditionRegistry()
 	store := newTestSQLiteStore(t, r)
 
-	// First "run": load defaults, then a user overrides sys.occupancy, both
-	// persisted.
 	home1 := newFakeHomeAPI()
 	e1 := NewEngine(home1, r, zaptest.NewLogger(t), WithStore(store))
-	require.NoError(t, LoadSystemPolicies(e1))
+	RegisterSystemConditionTypes(e1)
 	require.NoError(t, e1.Register(&Policy{
-		ID:            "sys.occupancy",
+		ID:            "user.occupancy",
 		ConditionExpr: Use("sys.any-motion-detected", struct{}{}),
-		Script:        `home.setHouseState("occupancy", "override")`,
+		Script:        `home.setHouseState("occupancy", "motion-seen")`,
 	}))
 	e1.Close()
 
-	// Second "run" on a fresh Engine/registry, simulating a restart: types
-	// first, then persisted policies (which brings back the override),
-	// then defaults — which must skip sys.occupancy since it's already
-	// registered, rather than clobbering the override.
 	r2 := NewConditionRegistry()
 	home2 := newFakeHomeAPI()
 	store2, err := NewSQLiteStore(zaptest.NewLogger(t), store.db, r2)
@@ -192,11 +191,10 @@ func TestLoadPersistedPoliciesOverridesSystemDefault(t *testing.T) {
 	t.Cleanup(e2.Close)
 	RegisterSystemConditionTypes(e2)
 	require.NoError(t, LoadPersistedPolicies(e2, store2))
-	require.NoError(t, LoadDefaultSystemPolicies(e2))
 
 	e2.Bus().Publish(Event{Topic: "motion.detected"})
 
 	require.Eventually(t, func() bool {
-		return home2.getHouseState("occupancy") == "override"
+		return home2.getHouseState("occupancy") == "motion-seen"
 	}, time.Second, 10*time.Millisecond)
 }

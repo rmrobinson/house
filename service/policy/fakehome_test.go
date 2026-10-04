@@ -16,6 +16,7 @@ type fakeHomeAPI struct {
 	lights     map[string]bool
 	sensors    map[string]float64
 	attributes map[string]map[string]any
+	names      map[string]string
 	houseState map[string]any
 	lastKnown  map[string]any
 
@@ -29,6 +30,7 @@ func newFakeHomeAPI() *fakeHomeAPI {
 		lights:     make(map[string]bool),
 		sensors:    make(map[string]float64),
 		attributes: make(map[string]map[string]any),
+		names:      make(map[string]string),
 		houseState: make(map[string]any),
 		lastKnown:  make(map[string]any),
 	}
@@ -72,6 +74,28 @@ func (f *fakeHomeAPI) SetState(id, key string, value any) error {
 	}
 	attrs[key] = value
 	return nil
+}
+
+func (f *fakeHomeAPI) GetDeviceName(id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if name, ok := f.names[id]; ok && name != "" {
+		return name, nil
+	}
+	return id, nil
+}
+
+func (f *fakeHomeAPI) setDeviceName(id, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names[id] = name
+}
+
+func (f *fakeHomeAPI) HasState(id, key string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.attributes[id][key]
+	return ok, nil
 }
 
 func (f *fakeHomeAPI) GetHouseState(key string) (any, error) {
