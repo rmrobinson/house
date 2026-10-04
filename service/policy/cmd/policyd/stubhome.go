@@ -95,6 +95,13 @@ func (h *stubHomeAPI) HasState(id, key string) (bool, error) {
 	return ok, nil
 }
 
+// GetDeviceRoom always returns "": the stub has no real room-linking data
+// to draw on.
+func (h *stubHomeAPI) GetDeviceRoom(id string) (string, error) {
+	h.logger.Debug("stub home: GetDeviceRoom", zap.String("id", id))
+	return "", nil
+}
+
 func (h *stubHomeAPI) GetHouseState(key string) (any, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

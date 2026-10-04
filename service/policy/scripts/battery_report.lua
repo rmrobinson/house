@@ -6,6 +6,10 @@
 -- this house's actual device inventory, registered through adminui's
 -- policy editor against a "schedule.daily" condition (07:00, house
 -- timezone).
+--
+-- Each entry is suffixed with its linked room, when it has one - several
+-- battery device names are otherwise ambiguous (e.g. more than one generic
+-- "Motion Sensor") with no way to tell them apart in the email alone.
 local function section(title, items)
     if #items == 0 then
         return ""
@@ -19,7 +23,12 @@ for _, kind in ipairs({"sensor", "generic"}) do
     for _, id in ipairs(home.findDevices(kind)) do
         if home.hasState(id, "battery") then
             local pct = home.getState(id, "battery.state.capacity_remaining_pct")
-            local entry = "<li>" .. home.getDeviceName(id) .. ": " .. pct .. "%</li>"
+            local label = home.getDeviceName(id)
+            local room = home.getDeviceRoom(id)
+            if room ~= "" then
+                label = label .. " (" .. room .. ")"
+            end
+            local entry = "<li>" .. label .. ": " .. pct .. "%</li>"
             if pct < 10 then
                 table.insert(action, entry)
             else

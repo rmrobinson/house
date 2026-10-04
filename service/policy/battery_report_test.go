@@ -50,8 +50,9 @@ func TestBatteryReportPolicyRegistersWithScheduleDaily(t *testing.T) {
 // condition_test.go/attribute_conditions_test.go, so this test is about the
 // script's behaviour, not the clock.
 //
-// Fixture: a sensor at 5% (action item), a generic device at 42%
-// (informational), a UPS at 3% (must be excluded - UPS is never in the
+// Fixture: a sensor at 5% (action item, with a linked room - the name
+// alone is ambiguous without it), a generic device at 42% (informational,
+// no linked room), a UPS at 3% (must be excluded - UPS is never in the
 // {"sensor","generic"} kind loop), and a sensor with no battery trait at
 // all (must be skipped via home.hasState).
 func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
@@ -64,6 +65,7 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	require.NoError(t, home.SetState("sensor.low", "battery", struct{}{}))
 	require.NoError(t, home.SetState("sensor.low", "battery.state.capacity_remaining_pct", int64(5)))
 	home.setDeviceName("sensor.low", "Hallway Smoke Detector")
+	home.setDeviceRoom("sensor.low", "Upstairs Hallway")
 
 	e.UpdateDeviceState("generic.ok", "generic", nil)
 	require.NoError(t, home.SetState("generic.ok", "battery", struct{}{}))
@@ -99,8 +101,8 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	assert.Equal(t, []string{"r"}, call.recipientIDs)
 	assert.Equal(t, "Battery report", call.subject)
 	assert.Equal(t, "text/html", call.content)
-	assert.Contains(t, call.body, "Hallway Smoke Detector: 5%")
-	assert.Contains(t, call.body, "Garage Remote: 42%")
+	assert.Contains(t, call.body, "Hallway Smoke Detector (Upstairs Hallway): 5%", "a device with a linked room must show it, to disambiguate otherwise-identical names")
+	assert.Contains(t, call.body, "Garage Remote: 42%", "a device with no linked room must show no room suffix at all")
 	assert.NotContains(t, call.body, "Office UPS", "UPS devices are excluded from the battery report")
 	assert.NotContains(t, call.body, "Front Door Contact", "a device with no battery trait must be skipped")
 }

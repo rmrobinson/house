@@ -12,10 +12,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
@@ -208,6 +211,55 @@ func (a *Adapter) SetHouseState(key string, value any) error {
 
 	a.applyState(b.GetState())
 	return nil
+}
+
+// GetDeviceRoom implements policy.HomeAPI, resolving id's linked room's
+// display name via HouseService.ListDeviceLinks + GetRoom - the only
+// HomeAPI method this Adapter answers with a fresh RPC pair rather than
+// cached stream state, since there's no DeviceRoomLink-change equivalent of
+// StreamHouseUpdates to cache from. Unlinked (no error, "" to mean "not
+// labelled with a room" the same way GetDeviceName falls back to id rather
+// than erroring) and a since-deleted room are both treated the same way;
+// any other RPC failure is returned as an error.
+func (a *Adapter) GetDeviceRoom(id string) (string, error) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", ErrNotReady
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
+
+	stream, err := a.client.ListDeviceLinks(rpcCtx, &api2.ListDeviceLinksRequest{DeviceId: &id})
+	if err != nil {
+		return "", fmt.Errorf("housestate: listDeviceLinks(%q): %w", id, err)
+	}
+
+	var roomID string
+	for {
+		link, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("housestate: listDeviceLinks(%q): %w", id, err)
+		}
+		roomID = link.GetRoomId()
+	}
+	if roomID == "" {
+		return "", nil
+	}
+
+	room, err := a.client.GetRoom(rpcCtx, &api2.GetRoomRequest{Id: roomID})
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			return "", nil
+		}
+		return "", fmt.Errorf("housestate: getRoom(%q): %w", roomID, err)
+	}
+	return room.GetConfig().GetName(), nil
 }
 
 var _ policy.HomeAPI = (*Adapter)(nil)
