@@ -9,6 +9,8 @@ import (
 var (
 	// ErrUnsupportedCommand is returned if the device can't process the supplied command.
 	ErrUnsupportedCommand = status.Error(codes.FailedPrecondition, "device does not support specified command")
+	// ErrArgumentNotSupportedByDevice is returned when a command has values outside the set the device's attributes allow.
+	ErrArgumentNotSupportedByDevice = status.Error(codes.InvalidArgument, "the supplied arguments aren't supported by the device attributes")
 	// ErrInvalidTimezone is returned if a specified timezone string isn't valid on the device.
 	ErrInvalidTimezone = status.Error(codes.InvalidArgument, "invalid timezone specified")
 	// ErrAsyncCommandsNotSupported is returned by Handler.ProcessCommandAsync implementations

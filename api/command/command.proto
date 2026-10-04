@@ -5,9 +5,11 @@ package faltung.house.api.command;
 option go_package = "github.com/rmrobinson/house/api/command";
 
 import "api/command/app.proto";
+import "api/command/audio_output.proto";
 import "api/command/brightness.proto";
 import "api/command/channel.proto";
 import "api/command/colour.proto";
+import "api/command/input.proto";
 import "api/command/media.proto";
 import "api/command/mode.proto";
 import "api/command/movement.proto";
@@ -69,5 +71,7 @@ message Command {
     faltung.house.api.command.Colour colour = 126;
     faltung.house.api.command.SkipForward skip_forward = 127;
     faltung.house.api.command.SkipBackward skip_backward = 128;
+    faltung.house.api.command.Input input = 129;
+    faltung.house.api.command.AudioOutput audio_output = 130;
   }
 }

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// Inputs commands a device with the Input trait to have the active input changed.
+message Input {
+  // Sets the active input to the specified input ID.
+  // The value must map to the ID of one of the available inputs in the device attribute input list.
+  string input_id = 1;
+}

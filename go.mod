@@ -19,10 +19,12 @@ require (
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/richard87/esphome-apiclient v1.1.0
 	github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35
+	github.com/rmrobinson/monoprice-amp-go v0.0.0-20261004150838-86d556a9d037
 	github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.11.1
+	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
 	github.com/yuin/gopher-lua v1.1.2
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.57.0

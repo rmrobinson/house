@@ -8,10 +8,12 @@ proto_library(
     name = "command_proto",
     srcs = [
         "app.proto",
+        "audio_output.proto",
         "brightness.proto",
         "channel.proto",
         "colour.proto",
         "command.proto",
+        "input.proto",
         "media.proto",
         "mode.proto",
         "movement.proto",

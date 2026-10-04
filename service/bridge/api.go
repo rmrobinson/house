@@ -99,7 +99,16 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		}
 	} else if d.GetAvReceiver() != nil {
-		return req.GetOnOff() != nil
+		avr := d.GetAvReceiver()
+		if req.GetOnOff() != nil {
+			return true
+		} else if avr.GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
+			return true
+		} else if avr.GetInput() != nil && req.GetInput() != nil {
+			return true
+		} else if avr.GetAudioOutput() != nil && req.GetAudioOutput() != nil {
+			return true
+		}
 	} else if d.GetClock() != nil {
 		if req.GetOnOff() != nil {
 			return true
