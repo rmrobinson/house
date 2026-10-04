@@ -581,6 +581,13 @@ func (e *Engine) appendLog(l ExecutionLog) {
 func (e *Engine) trigger(rp *registeredPolicy) {
 	execID := e.nextExecID.Add(1)
 
+	// Read synchronously, on the condition's own onChange goroutine, so a
+	// second transition can't overwrite the context before this run uses it.
+	var triggerDevices []string
+	if tp, ok := rp.condition.(TriggerContextProvider); ok {
+		triggerDevices = tp.TriggerDeviceIDs()
+	}
+
 	// Deliberately not derived from e.rootCtx: Close() must be able to
 	// force-cancel Interrupt-mode runs without also force-cancelling
 	// Complete-mode ones just because the whole engine is shutting down.
@@ -603,11 +610,11 @@ func (e *Engine) trigger(rp *registeredPolicy) {
 			rp.mu.Unlock()
 		}()
 
-		e.runScript(execCtx, rp.policy)
+		e.runScript(execCtx, rp.policy, triggerDevices)
 	}()
 }
 
-func (e *Engine) runScript(ctx context.Context, p *Policy) {
+func (e *Engine) runScript(ctx context.Context, p *Policy, triggerDevices []string) {
 	log := ExecutionLog{
 		PolicyID:  p.ID,
 		StartedAt: time.Now(),
@@ -620,6 +627,7 @@ func (e *Engine) runScript(ctx context.Context, p *Policy) {
 
 	registerHomeTable(L, e.home, e.DevicesOfKind)
 	registerNotifyTable(L, e.notify)
+	registerTriggerTable(L, triggerDevices)
 
 	err := L.DoString(p.Script)
 	log.EndedAt = time.Now()

@@ -20,6 +20,18 @@ type Condition interface {
 	Evaluate() bool
 }
 
+// TriggerContextProvider is optionally implemented by a Condition that knows
+// *why* it just became true. The engine calls TriggerContext synchronously
+// when onChange(true) fires, before starting the script, and exposes the
+// result to the script as the global "trigger" table (see
+// registerTriggerTable). Only a policy's top-level condition is consulted -
+// composites (And/Or/Not/held-for) do not forward their children's context.
+type TriggerContextProvider interface {
+	// TriggerDeviceIDs returns the ids of the device(s) that caused the
+	// most recent false-to-true transition.
+	TriggerDeviceIDs() []string
+}
+
 // PollingCondition wraps a func() bool that is evaluated on a fixed
 // interval. onChange fires only when a tick's result differs from the
 // previous one. It evaluates once immediately on Start to establish a

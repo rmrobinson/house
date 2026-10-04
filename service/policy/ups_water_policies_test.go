@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	lua "github.com/yuin/gopher-lua"
 )
 
 // Test-only embeds, same rationale as battery_report_test.go: these are user
@@ -82,8 +83,8 @@ func TestUPSOnBatteryPolicyCoversAnyUPSAndNamesWhichOne(t *testing.T) {
 	c := notify.calls[0]
 	assert.Equal(t, []string{"r"}, c.recipientIDs)
 	assert.Equal(t, "text/html", c.content)
-	assert.Contains(t, c.subject, "[POWER]")
-	assert.Contains(t, c.body, "Office UPS (Office): 90%")
+	assert.Equal(t, "[POWER] Office UPS (Office) lost grid power", c.subject)
+	assert.Contains(t, c.body, "90%")
 	assert.Contains(t, c.body, "35 minutes")
 	assert.NotContains(t, c.body, "Rack UPS")
 	assert.NotContains(t, c.body, "Not a UPS")
@@ -93,13 +94,14 @@ func TestUPSOnBatteryPolicyCoversAnyUPSAndNamesWhichOne(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	assert.Len(t, notify.calls, 1)
 
-	// A second UPS joins while the first is still down: a new alert that
-	// lists both - a plain level condition would have swallowed this.
+	// A second UPS joins while the first is still down: a new alert naming
+	// only the new one - a plain level condition would have swallowed this.
 	setUPS(home, "ups-b", true, 80, 20)
 	e.UpdateDeviceState("ups-b", "ups", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
-	assert.Contains(t, notify.calls[1].body, "Office UPS (Office)")
-	assert.Contains(t, notify.calls[1].body, "Rack UPS: 80%")
+	assert.Equal(t, "[POWER] Rack UPS lost grid power", notify.calls[1].subject)
+	assert.Contains(t, notify.calls[1].body, "80%")
+	assert.NotContains(t, notify.calls[1].body, "Office UPS")
 }
 
 func TestUPSLowBatteryPolicyOnlyListsUPSesAtOrBelowThreshold(t *testing.T) {
@@ -126,8 +128,8 @@ func TestUPSLowBatteryPolicyOnlyListsUPSesAtOrBelowThreshold(t *testing.T) {
 	setUPS(home, "ups-a", true, 15, 5)
 	e.UpdateDeviceState("ups-a", "ups", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Contains(t, notify.calls[0].subject, "battery low")
-	assert.Contains(t, notify.calls[0].body, "Office UPS: 15%")
+	assert.Equal(t, "[POWER] Office UPS battery low", notify.calls[0].subject)
+	assert.Contains(t, notify.calls[0].body, "15%")
 	assert.NotContains(t, notify.calls[0].body, "Rack UPS")
 }
 
@@ -149,16 +151,14 @@ func TestWaterDetectedPolicyCoversAnySensorAndSkipsNonWaterSensors(t *testing.T)
 	_ = home.SetState("w-1", "water.is_active", true)
 	e.UpdateDeviceState("w-1", "sensor", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Contains(t, notify.calls[0].subject, "[WATER]")
-	assert.Contains(t, notify.calls[0].body, "Sump Pump Water Sensor")
+	assert.Equal(t, "[WATER] Water detected: Sump Pump Water Sensor", notify.calls[0].subject)
 	assert.NotContains(t, notify.calls[0].body, "Under Sink")
 	assert.NotContains(t, notify.calls[0].body, "Hall Motion")
 
 	_ = home.SetState("w-2", "water.is_active", true)
 	e.UpdateDeviceState("w-2", "sensor", nil)
 	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
-	assert.Contains(t, notify.calls[1].body, "Sump Pump Water Sensor")
-	assert.Contains(t, notify.calls[1].body, "Under Sink Water Sensor")
+	assert.Equal(t, "[WATER] Water detected: Under Sink Water Sensor", notify.calls[1].subject)
 }
 
 // TestAnyDevicePoliciesSurviveGetDeviceRoomError: the room suffix is
@@ -204,4 +204,45 @@ func TestAnyDeviceConditionClearsWhenNoDeviceMatches(t *testing.T) {
 	_ = home.SetState("w-1", "water.is_active", true)
 	e.UpdateDeviceState("w-1", "sensor", nil)
 	require.Eventually(t, func() bool { return home.notifyCount() == 2 }, time.Second, 10*time.Millisecond)
+}
+
+func TestTriggerTableEmptyWithoutContext(t *testing.T) {
+	require.NoError(t, runScriptForTestWithTrigger(t, nil, `
+		assert(#trigger.device_ids == 0)
+		assert(trigger.device_id == nil)
+	`))
+	require.NoError(t, runScriptForTestWithTrigger(t, []string{"a", "b"}, `
+		assert(#trigger.device_ids == 2)
+		assert(trigger.device_id == "a")
+	`))
+}
+
+func runScriptForTestWithTrigger(t *testing.T, ids []string, script string) error {
+	t.Helper()
+	L := lua.NewState()
+	defer L.Close()
+	registerTriggerTable(L, ids)
+	return L.DoString(script)
+}
+
+// TestAnyDeviceConditionReportsSimultaneousJoiners: two devices matching in
+// the same re-evaluation produce one trigger carrying both ids.
+func TestAnyDeviceConditionReportsSimultaneousJoiners(t *testing.T) {
+	home := newFakeHomeAPI()
+	e, _ := newTestEngine(t, home)
+	RegisterBuiltinConditionTypes(e)
+
+	addWaterSensor(home, e, "w-1", "One", false)
+	addWaterSensor(home, e, "w-2", "Two", false)
+	registerAnyDevicePolicy(t, e, "p", `
+		assert(#trigger.device_ids == 2 and trigger.device_ids[1] == "w-1" and trigger.device_ids[2] == "w-2")
+		home.notify("both", nil)`, AnyDeviceParams{
+		Kind: "sensor", Clauses: []DeviceClause{{Key: "water.is_active", Op: "eq", Value: true}},
+	})
+
+	_ = home.SetState("w-1", "water.is_active", true)
+	_ = home.SetState("w-2", "water.is_active", true)
+	e.UpdateDeviceState("w-1", "sensor", nil)
+
+	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
 }

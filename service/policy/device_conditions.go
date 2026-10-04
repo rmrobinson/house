@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"go.uber.org/zap"
@@ -72,15 +73,28 @@ func (c DeviceClause) matches(home HomeAPI, id string) (bool, error) {
 // device's alarm) while a first device is still matching, it re-fires -
 // false then true - every time a device *newly* joins the matching set. A
 // policy built on it must therefore use OnConditionFalse=Complete, so that
-// pulse doesn't interrupt an alert script already running. Whatever script
-// runs is expected to re-query which devices currently match (home.
-// findDevices + home.getState), since a script gets no trigger context.
+// pulse doesn't interrupt an alert script already running. The script learns
+// which device(s) newly matched from the "trigger" global (see
+// TriggerContextProvider); this condition must be the policy's top-level
+// condition for that, and for the re-fire, to work.
 type anyDeviceCondition struct {
 	e      *Engine
 	params AnyDeviceParams
 
 	mu       sync.Mutex
 	matching map[string]struct{}
+	// joined is the ids that newly entered the matching set on the most
+	// recent transition to true, sorted. It is stored before onChange(true)
+	// is called, from the same goroutine the engine's synchronous
+	// TriggerDeviceIDs read happens on, so it can't be overwritten between.
+	joined []string
+}
+
+// TriggerDeviceIDs implements TriggerContextProvider.
+func (c *anyDeviceCondition) TriggerDeviceIDs() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.joined...)
 }
 
 func (c *anyDeviceCondition) snapshot() map[string]struct{} {
@@ -140,21 +154,23 @@ func (c *anyDeviceCondition) Start(ctx context.Context, onChange func(bool)) {
 				c.mu.Lock()
 				prev := c.matching
 				c.matching = next
-				c.mu.Unlock()
-
-				joined := false
+				var joined []string
 				for id := range next {
 					if _, was := prev[id]; !was {
-						joined = true
-						break
+						joined = append(joined, id)
 					}
 				}
+				sort.Strings(joined)
+				if len(joined) > 0 {
+					c.joined = joined
+				}
+				c.mu.Unlock()
 
 				switch {
-				case joined && len(prev) > 0:
+				case len(joined) > 0 && len(prev) > 0:
 					onChange(false)
 					onChange(true)
-				case joined:
+				case len(joined) > 0:
 					onChange(true)
 				case len(next) == 0 && len(prev) > 0:
 					onChange(false)

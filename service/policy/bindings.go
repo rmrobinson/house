@@ -401,3 +401,21 @@ func luaTableToGo(t *lua.LTable) any {
 	})
 	return m
 }
+
+// registerTriggerTable installs the "trigger" global describing what caused
+// this script run: trigger.device_ids is a (possibly empty) list of the
+// device ids that newly satisfied the policy's condition, and
+// trigger.device_id is the first of them (nil if none). Both are empty for a
+// condition that doesn't implement TriggerContextProvider, e.g. a schedule.
+func registerTriggerTable(L *lua.LState, deviceIDs []string) {
+	t := L.NewTable()
+	ids := L.NewTable()
+	for _, id := range deviceIDs {
+		ids.Append(lua.LString(id))
+	}
+	t.RawSetString("device_ids", ids)
+	if len(deviceIDs) > 0 {
+		t.RawSetString("device_id", lua.LString(deviceIDs[0]))
+	}
+	L.SetGlobal("trigger", t)
+}
