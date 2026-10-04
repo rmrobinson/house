@@ -22,6 +22,7 @@ type fakeHomeAPI struct {
 	lastKnown  map[string]any
 
 	sensorErr error
+	roomErr   error
 
 	notifications []notification
 }
@@ -103,6 +104,9 @@ func (f *fakeHomeAPI) HasState(id, key string) (bool, error) {
 func (f *fakeHomeAPI) GetDeviceRoom(id string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.roomErr != nil {
+		return "", f.roomErr
+	}
 	return f.rooms[id], nil
 }
 
@@ -110,6 +114,12 @@ func (f *fakeHomeAPI) setDeviceRoom(id, room string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rooms[id] = room
+}
+
+func (f *fakeHomeAPI) setDeviceRoomErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.roomErr = err
 }
 
 func (f *fakeHomeAPI) GetHouseState(key string) (any, error) {

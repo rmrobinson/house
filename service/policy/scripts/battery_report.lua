@@ -17,17 +17,27 @@ local function section(title, items)
     return "<h3>" .. title .. "</h3><ul>" .. table.concat(items) .. "</ul>"
 end
 
+-- roomSuffix is pcall-guarded: home.getDeviceRoom raises a Lua error (not
+-- just a "" result) on a HomeAPI with no HouseService connection
+-- (bridgehome.Adapter's unconditional ErrNotImplemented) - letting that
+-- propagate would abort this whole report over a purely cosmetic
+-- disambiguation feature, so any error here is treated the same as "no
+-- room", not a reason to stop.
+local function roomSuffix(id)
+    local ok, room = pcall(home.getDeviceRoom, id)
+    if ok and room ~= "" then
+        return " (" .. room .. ")"
+    end
+    return ""
+end
+
 local action, info = {}, {}
 
 for _, kind in ipairs({"sensor", "generic"}) do
     for _, id in ipairs(home.findDevices(kind)) do
         if home.hasState(id, "battery") then
             local pct = home.getState(id, "battery.state.capacity_remaining_pct")
-            local label = home.getDeviceName(id)
-            local room = home.getDeviceRoom(id)
-            if room ~= "" then
-                label = label .. " (" .. room .. ")"
-            end
+            local label = home.getDeviceName(id) .. roomSuffix(id)
             local entry = "<li>" .. label .. ": " .. pct .. "%</li>"
             if pct < 10 then
                 table.insert(action, entry)
