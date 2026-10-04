@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/policy"
@@ -24,7 +25,9 @@ const testBuildingID = "b1"
 
 // fakeHouseServer is a real (network-served) HouseService standing in for
 // service/house, implementing the RPCs Adapter calls: StreamHouseUpdates,
-// SetHouseMode, and - for GetDeviceRoom - ListDeviceLinks/GetRoom.
+// SetHouseMode, and - for GetDeviceRoom - ListRooms (whose Room.devices
+// service/house.Service.ListRooms already resolves server-side, so there's
+// no separate device-link RPC to fake here).
 type fakeHouseServer struct {
 	api2.UnimplementedHouseServiceServer
 
@@ -33,18 +36,13 @@ type fakeHouseServer struct {
 	setErr    error
 	streamErr error // if set, the next StreamHouseUpdates call fails immediately with this, simulating a reconnect that can't re-establish
 
-	links map[string]string // device_id -> room_id
-	rooms map[string]string // room_id -> room name
+	rooms []*api2.Room
 
 	drop chan struct{} // sent to by a test to end the current StreamHouseUpdates call, simulating a dropped connection
 }
 
 func newFakeHouseServer() *fakeHouseServer {
-	return &fakeHouseServer{
-		drop:  make(chan struct{}, 1),
-		links: make(map[string]string),
-		rooms: make(map[string]string),
-	}
+	return &fakeHouseServer{drop: make(chan struct{}, 1)}
 }
 
 func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseModeRequest) (*api2.Building, error) {
@@ -57,36 +55,37 @@ func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseMo
 	return s.building, nil
 }
 
-// linkDevice records deviceID as linked to a room named roomName, minting a
-// roomID for it if this is the first time roomName's been seen.
-func (s *fakeHouseServer) linkDevice(deviceID, roomID, roomName string) {
+// linkDevice records deviceID as linked to a room named roomName, creating
+// the room (if roomName hasn't been seen yet) with Room.devices already
+// populated - the same shape ListRooms returns in production.
+func (s *fakeHouseServer) linkDevice(deviceID, roomName string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.links[deviceID] = roomID
-	s.rooms[roomID] = roomName
+
+	for _, r := range s.rooms {
+		if r.GetConfig().GetName() == roomName {
+			r.Devices = append(r.Devices, &device.Device{Id: deviceID})
+			return
+		}
+	}
+	s.rooms = append(s.rooms, &api2.Room{
+		Id:      roomName,
+		Config:  &api2.Room_Config{Name: roomName},
+		Devices: []*device.Device{{Id: deviceID}},
+	})
 }
 
-func (s *fakeHouseServer) ListDeviceLinks(req *api2.ListDeviceLinksRequest, stream api2.HouseService_ListDeviceLinksServer) error {
+func (s *fakeHouseServer) ListRooms(req *api2.ListRoomsRequest, stream api2.HouseService_ListRoomsServer) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	rooms := append([]*api2.Room(nil), s.rooms...)
+	s.mu.Unlock()
 
-	id := req.GetDeviceId()
-	roomID, ok := s.links[id]
-	if !ok {
-		return nil
+	for _, r := range rooms {
+		if err := stream.Send(r); err != nil {
+			return err
+		}
 	}
-	return stream.Send(&api2.DeviceRoomLink{DeviceId: id, RoomId: roomID})
-}
-
-func (s *fakeHouseServer) GetRoom(ctx context.Context, req *api2.GetRoomRequest) (*api2.Room, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	name, ok := s.rooms[req.GetId()]
-	if !ok {
-		return nil, status.Error(codes.NotFound, "room not found")
-	}
-	return &api2.Room{Id: req.GetId(), Config: &api2.Room_Config{Name: name}}, nil
+	return nil
 }
 
 // StreamHouseUpdates sends one BuildingUpdate for the current building
@@ -383,7 +382,8 @@ func TestAdapterHoldsLastKnownStateWhenReconnectFails(t *testing.T) {
 func TestAdapterGetDeviceRoomReturnsLinkedRoomName(t *testing.T) {
 	srv := newFakeHouseServer()
 	srv.setBuilding(occupiedBuilding(false, ""))
-	srv.linkDevice("light-1", "room-1", "Kitchen")
+	srv.linkDevice("light-0", "Living Room") // a second room, to prove the right one is picked
+	srv.linkDevice("light-1", "Kitchen")
 	addr := startFakeHouseServer(t, srv)
 
 	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, newFakeHomeAPI())
@@ -414,31 +414,6 @@ func TestAdapterGetDeviceRoomReturnsEmptyWhenUnlinked(t *testing.T) {
 
 	room, err := a.GetDeviceRoom("light-1")
 	require.NoError(t, err, "an unlinked device is a normal state, not a failure")
-	assert.Equal(t, "", room)
-}
-
-// TestAdapterGetDeviceRoomReturnsEmptyWhenRoomDeleted guards a device whose
-// link survives after its room itself is deleted - GetRoom's NotFound must
-// be treated the same as "unlinked", not surfaced as an error.
-func TestAdapterGetDeviceRoomReturnsEmptyWhenRoomDeleted(t *testing.T) {
-	srv := newFakeHouseServer()
-	srv.setBuilding(occupiedBuilding(false, ""))
-	srv.linkDevice("light-1", "room-1", "Kitchen")
-	srv.mu.Lock()
-	delete(srv.rooms, "room-1")
-	srv.mu.Unlock()
-	addr := startFakeHouseServer(t, srv)
-
-	a := New(zaptest.NewLogger(t), dialHouseClient(t, addr), testBuildingID, newFakeHomeAPI())
-	engine := policy.NewEngine(a, policy.NewConditionRegistry(), zaptest.NewLogger(t))
-	defer engine.Close()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	a.Start(ctx, engine)
-
-	room, err := a.GetDeviceRoom("light-1")
-	require.NoError(t, err)
 	assert.Equal(t, "", room)
 }
 

@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
@@ -214,13 +212,15 @@ func (a *Adapter) SetHouseState(key string, value any) error {
 }
 
 // GetDeviceRoom implements policy.HomeAPI, resolving id's linked room's
-// display name via HouseService.ListDeviceLinks + GetRoom - the only
-// HomeAPI method this Adapter answers with a fresh RPC pair rather than
-// cached stream state, since there's no DeviceRoomLink-change equivalent of
-// StreamHouseUpdates to cache from. Unlinked (no error, "" to mean "not
-// labelled with a room" the same way GetDeviceName falls back to id rather
-// than erroring) and a since-deleted room are both treated the same way;
-// any other RPC failure is returned as an error.
+// display name via HouseService.ListRooms(buildingID) - which already
+// resolves every room's device links in one pass server-side (see
+// service/house.Service.ListRooms), so scanning each Room.devices list
+// directly is one RPC, not a ListDeviceLinks+GetRoom pair. The only
+// HomeAPI method this Adapter answers with a fresh RPC rather than cached
+// stream state, since there's no DeviceRoomLink-change equivalent of
+// StreamHouseUpdates to cache from. Unlinked is "", nil - a device
+// standing alone is a normal, common state, not a failure, the same
+// "absent" convention GetDeviceName's id-fallback uses.
 func (a *Adapter) GetDeviceRoom(id string) (string, error) {
 	a.mu.Lock()
 	ctx := a.ctx
@@ -232,34 +232,25 @@ func (a *Adapter) GetDeviceRoom(id string) (string, error) {
 	rpcCtx, cancel := context.WithTimeout(ctx, rpcTimeout)
 	defer cancel()
 
-	stream, err := a.client.ListDeviceLinks(rpcCtx, &api2.ListDeviceLinksRequest{DeviceId: &id})
+	stream, err := a.client.ListRooms(rpcCtx, &api2.ListRoomsRequest{BuildingId: &a.buildingID})
 	if err != nil {
-		return "", fmt.Errorf("housestate: listDeviceLinks(%q): %w", id, err)
+		return "", fmt.Errorf("housestate: listRooms: %w", err)
 	}
 
-	var roomID string
 	for {
-		link, err := stream.Recv()
+		room, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("housestate: listDeviceLinks(%q): %w", id, err)
-		}
-		roomID = link.GetRoomId()
-	}
-	if roomID == "" {
-		return "", nil
-	}
-
-	room, err := a.client.GetRoom(rpcCtx, &api2.GetRoomRequest{Id: roomID})
-	if err != nil {
-		if status.Code(err) == codes.NotFound {
 			return "", nil
 		}
-		return "", fmt.Errorf("housestate: getRoom(%q): %w", roomID, err)
+		if err != nil {
+			return "", fmt.Errorf("housestate: listRooms: %w", err)
+		}
+		for _, d := range room.GetDevices() {
+			if d.GetId() == id {
+				return room.GetConfig().GetName(), nil
+			}
+		}
 	}
-	return room.GetConfig().GetName(), nil
 }
 
 var _ policy.HomeAPI = (*Adapter)(nil)

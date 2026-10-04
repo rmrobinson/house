@@ -9,8 +9,6 @@ go_library(
         "//api",
         "//service/lib/bridgeconn",
         "//service/policy",
-        "@org_golang_google_grpc//codes",
-        "@org_golang_google_grpc//status",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -21,6 +19,7 @@ go_test(
     embed = [":housestate"],
     deps = [
         "//api",
+        "//api/device",
         "//service/lib/bridgeconn",
         "//service/lib/grpcutil",
         "//service/policy",
