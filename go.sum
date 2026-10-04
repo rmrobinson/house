@@ -117,8 +117,8 @@ github.com/richard87/esphome-apiclient v1.1.0 h1:hZzmCEuwiouNpFV9Hd/uBjwBzim3ciu
 github.com/richard87/esphome-apiclient v1.1.0/go.mod h1:eHweCJeF+jIMrDtQHH0RhVttiQbPFqf1RWrXPubtP20=
 github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35 h1:ar5XPa6F8+LqqR474akwMCQ2mRbs8F+N7YG3hM6Yyag=
 github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35/go.mod h1:MKyGjShcDasP4WMd6HANtOjG+btGrUHsvBc1R4NlOOQ=
-github.com/rmrobinson/monoprice-amp-go v0.0.0-20190217030552-ea909ba38552 h1:Btg2uBZ+QLTncTNJiJvhnGCkAu00iDuA9SH8cxGV8po=
-github.com/rmrobinson/monoprice-amp-go v0.0.0-20190217030552-ea909ba38552/go.mod h1:K7McGuKyl+aiEKsVRmMcmTC0ro6miPTU5zvZAqt7UNs=
+github.com/rmrobinson/monoprice-amp-go v0.0.0-20261004150838-86d556a9d037 h1:qmVpwzVOFvtSVzCkfunA/RtzIzwBCHkHT4mrZRyNPs8=
+github.com/rmrobinson/monoprice-amp-go v0.0.0-20261004150838-86d556a9d037/go.mod h1:Vuy571pcJQEgZMa+AZrLnFWoIBdvbXrEw34ZW/fyLdI=
 github.com/rmrobinson/nanoleaf-go v0.0.0-20260921023634-a20a85ded00c h1:I9et/i0gDarn+mG0fd98hKrU5WLNGTBk7UKMV/YmKPo=
 github.com/rmrobinson/nanoleaf-go v0.0.0-20260921023634-a20a85ded00c/go.mod h1:7Xy9sKG4BfHI7XlYkUPiylZm20K658M+2fXbDnm72l0=
 github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01 h1:N4FtgJRTnEHXvEVp0eTjNLmcznEH47wsFxwxtenlXgM=
