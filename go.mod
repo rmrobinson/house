@@ -18,7 +18,7 @@ require (
 	github.com/picatz/roku v0.0.0-20230221144619-ec649293f9b5
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/richard87/esphome-apiclient v1.1.0
-	github.com/rmrobinson/airthings-btle v0.0.0-20260131170640-14b3db9bfd35
+	github.com/rmrobinson/airthings-btle v0.0.0-20260302021210-f027573822c3
 	github.com/rmrobinson/monoprice-amp-go v0.0.0-20261004150838-86d556a9d037
 	github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01
 	github.com/spf13/cobra v1.10.1
