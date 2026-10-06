@@ -147,3 +147,56 @@ func TestBatteryReportPolicySurvivesGetDeviceRoomError(t *testing.T) {
 	call := notify.calls[0]
 	assert.Contains(t, call.body, "Hallway Smoke Detector: 5%", "no room suffix, but the device must still be reported")
 }
+
+// TestBatteryReportPolicyListsUnreachableAndStaleDevices covers the
+// connectivity sections: an unreachable device (also stale - must appear
+// only under Unreachable), a reachable device last seen 30h ago (stale), a
+// reachable device seen 1h ago (neither), and a reachable device whose
+// bridge reports no last_seen at all (unknown - must not be listed as
+// stale). None has a battery trait, so these exercise the new sections
+// independently of the battery ones.
+func TestBatteryReportPolicyListsUnreachableAndStaleDevices(t *testing.T) {
+	home := newFakeHomeAPI()
+	notify := &fakeNotifyAPI{}
+	e, r := newTestEngine(t, home, WithNotifyAPI(notify))
+	trigger := registerManualTrigger(t, r, "trigger")
+
+	e.UpdateDeviceState("sensor.dead", "sensor", nil)
+	home.setDeviceName("sensor.dead", "Guest Motion Sensor")
+	home.setDeviceRoom("sensor.dead", "Guest Bedroom")
+	home.setUnreachable("sensor.dead")
+	home.setLastSeen("sensor.dead", time.Now().Add(-72*time.Hour))
+
+	e.UpdateDeviceState("light.quiet", "light", nil)
+	home.setDeviceName("light.quiet", "Porch Light")
+	home.setLastSeen("light.quiet", time.Now().Add(-30*time.Hour))
+
+	e.UpdateDeviceState("light.fresh", "light", nil)
+	home.setDeviceName("light.fresh", "Foyer Light")
+	home.setLastSeen("light.fresh", time.Now().Add(-1*time.Hour))
+
+	e.UpdateDeviceState("generic.unknown", "generic", nil)
+	home.setDeviceName("generic.unknown", "Mystery Plug")
+
+	require.NoError(t, e.Register(&Policy{
+		ID:            batteryReportPolicyID,
+		ConditionExpr: Use("trigger", struct{}{}),
+		Script:        batteryReportScript,
+	}))
+	trigger.set(true)
+
+	require.Eventually(t, func() bool {
+		return len(notify.calls) == 1
+	}, time.Second, 10*time.Millisecond)
+
+	logs := e.LogsForPolicy(batteryReportPolicyID)
+	require.Len(t, logs, 1)
+	assert.Equal(t, StatusSuccess, logs[0].Status)
+	assert.Empty(t, logs[0].Error)
+
+	body := notify.calls[0].body
+	assert.Contains(t, body, "<h3>Unreachable</h3><ul><li>Guest Motion Sensor (Guest Bedroom) (last seen 3d ago)</li></ul>")
+	assert.Contains(t, body, "<h3>No activity in 24h</h3><ul><li>Porch Light (last seen 30h ago)</li></ul>")
+	assert.NotContains(t, body, "Foyer Light")
+	assert.NotContains(t, body, "Mystery Plug", "unknown last_seen must not be reported as stale")
+}

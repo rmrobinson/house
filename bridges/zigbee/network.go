@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
@@ -209,7 +211,18 @@ func (nc *networkConn) onMessage(topic string, payload []byte) {
 
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
+	before := proto.Clone(bd.device)
 	bd.builder.applyState(bd.device, state)
+	if t, ok := parseLastSeen(state["last_seen"]); ok {
+		// Every z2m report carries a fresh last_seen, which would defeat Service.UpdateDevice's
+		// proto.Equal dedupe and broadcast an update per report even when nothing else changed.
+		// So it's only written along with a real state change, or once it has moved on by
+		// lastSeenRefresh - far finer than the 24h staleness the consumer cares about.
+		if !proto.Equal(before, bd.device) || bd.device.LastSeen == nil ||
+			t.Sub(bd.device.LastSeen.AsTime()) >= lastSeenRefresh {
+			bd.device.LastSeen = timestamppb.New(t)
+		}
+	}
 	bd.device.Version = computeVersion(bd.device)
 	nc.svc.UpdateDevice(bd.device)
 }
@@ -459,4 +472,28 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	}
 	bd.device.Version = computeVersion(bd.device)
 	return proto.Clone(bd.device).(*device.Device), nil
+}
+
+// lastSeenRefresh is the minimum advance in a device's reported last_seen before it is written
+// through when nothing else about the device changed.
+const lastSeenRefresh = 5 * time.Minute
+
+// parseLastSeen decodes zigbee2mqtt's per-device "last_seen" payload field, which is only present
+// when z2m's advanced.last_seen setting is enabled. Handles ISO_8601 / ISO_8601_local (a string,
+// e.g. "2026-10-05T12:39:28.068Z" - confirmed against a real broker) and epoch (a JSON number,
+// milliseconds). ok is false for an absent/unparseable value, in which case the caller must leave
+// Device.LastSeen untouched: stamping "now" instead would mask exactly the silent devices a
+// last-seen check is meant to find.
+func parseLastSeen(v any) (time.Time, bool) {
+	switch t := v.(type) {
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, t); err == nil {
+			return parsed, true
+		}
+	case float64:
+		if t > 0 {
+			return time.UnixMilli(int64(t)), true
+		}
+	}
+	return time.Time{}, false
 }

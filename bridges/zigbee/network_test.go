@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -270,4 +272,48 @@ func TestApplyCommand_UnknownDevice(t *testing.T) {
 	nc, _ := newTestNetworkConn(t, zigbeeConfig{})
 	_, err := nc.applyCommand(context.Background(), &command.Command{DeviceId: "does-not-exist"})
 	assert.ErrorIs(t, err, bridge.ErrDeviceNotFound)
+}
+
+// TestOnMessage_SetsLastSeen covers z2m's last_seen field in both the ISO_8601 form confirmed on
+// the real broker and the epoch-ms form, and that a report without it leaves a previously-set
+// value alone (rather than stamping "now" and hiding a silent device).
+func TestOnMessage_SetsLastSeen(t *testing.T) {
+	nc, fc := newTestNetworkConn(t, zigbeeConfig{})
+	nc.buildDevice(switchDevice(false))
+
+	nc.mu.Lock()
+	bd := nc.devices[nc.ieeeToDeviceID["0xabc"]]
+	nc.mu.Unlock()
+	lastSeen := func() *time.Time {
+		bd.mu.Lock()
+		defer bd.mu.Unlock()
+		if bd.device.LastSeen == nil {
+			return nil
+		}
+		tm := bd.device.LastSeen.AsTime()
+		return &tm
+	}
+
+	assert.Nil(t, lastSeen(), "no last_seen reported yet")
+
+	fc.deliver("zigbee2mqtt/plug1", []byte(`{"state":"ON","last_seen":"2026-10-05T12:39:28.068Z"}`))
+	require.NotNil(t, lastSeen())
+	assert.True(t, lastSeen().Equal(time.Date(2026, 10, 5, 12, 39, 28, 68_000_000, time.UTC)))
+
+	fc.deliver("zigbee2mqtt/plug1", []byte(`{"state":"OFF"}`))
+	assert.True(t, lastSeen().Equal(time.Date(2026, 10, 5, 12, 39, 28, 68_000_000, time.UTC)), "a report with no last_seen must not touch it")
+
+	// Epoch-ms form, with a real state change (OFF -> ON), so it's written through.
+	base := time.Date(2026, 10, 5, 12, 39, 28, 68_000_000, time.UTC)
+	fc.deliver("zigbee2mqtt/plug1", []byte(fmt.Sprintf(`{"state":"ON","last_seen":%d}`, base.Add(time.Minute).UnixMilli())))
+	assert.True(t, lastSeen().Equal(base.Add(time.Minute)))
+
+	// No state change and under lastSeenRefresh: must not be written (it would defeat
+	// UpdateDevice's dedupe and broadcast on every report).
+	fc.deliver("zigbee2mqtt/plug1", []byte(fmt.Sprintf(`{"state":"ON","last_seen":%d}`, base.Add(2*time.Minute).UnixMilli())))
+	assert.True(t, lastSeen().Equal(base.Add(time.Minute)))
+
+	// Past lastSeenRefresh: written even with no state change.
+	fc.deliver("zigbee2mqtt/plug1", []byte(fmt.Sprintf(`{"state":"ON","last_seen":%d}`, base.Add(10*time.Minute).UnixMilli())))
+	assert.True(t, lastSeen().Equal(base.Add(10*time.Minute)))
 }

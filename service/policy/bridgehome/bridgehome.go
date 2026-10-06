@@ -379,6 +379,32 @@ func (a *Adapter) GetDeviceRoom(id string) (string, error) {
 	return "", policy.ErrNotImplemented
 }
 
+// GetLastSeen implements policy.HomeAPI, returning Device.last_seen or the
+// zero time if the owning bridge never sets one.
+func (a *Adapter) GetLastSeen(id string) (time.Time, error) {
+	d, err := a.getDevice(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if d.GetLastSeen() == nil {
+		return time.Time{}, nil
+	}
+	return d.GetLastSeen().AsTime(), nil
+}
+
+// IsReachable implements policy.HomeAPI. A device with no Address at all is
+// reported reachable - see the interface doc.
+func (a *Adapter) IsReachable(id string) (bool, error) {
+	d, err := a.getDevice(id)
+	if err != nil {
+		return false, err
+	}
+	if d.GetAddress() == nil {
+		return true, nil
+	}
+	return d.GetAddress().GetIsReachable(), nil
+}
+
 // HasState implements policy.HomeAPI, walking the same dot-path as GetState
 // (see resolveState) but reporting whether it's actually populated rather
 // than reading its value - resolveState's Get() calls return a zero-value

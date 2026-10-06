@@ -1,6 +1,9 @@
 package policy
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type notification struct {
 	event   string
@@ -13,13 +16,15 @@ type notification struct {
 type fakeHomeAPI struct {
 	mu sync.Mutex
 
-	lights     map[string]bool
-	sensors    map[string]float64
-	attributes map[string]map[string]any
-	names      map[string]string
-	rooms      map[string]string
-	houseState map[string]any
-	lastKnown  map[string]any
+	lights      map[string]bool
+	sensors     map[string]float64
+	attributes  map[string]map[string]any
+	names       map[string]string
+	rooms       map[string]string
+	houseState  map[string]any
+	lastKnown   map[string]any
+	lastSeen    map[string]time.Time
+	unreachable map[string]bool
 
 	sensorErr error
 	roomErr   error
@@ -36,6 +41,9 @@ func newFakeHomeAPI() *fakeHomeAPI {
 		rooms:      make(map[string]string),
 		houseState: make(map[string]any),
 		lastKnown:  make(map[string]any),
+
+		lastSeen:    make(map[string]time.Time),
+		unreachable: make(map[string]bool),
 	}
 }
 
@@ -86,6 +94,30 @@ func (f *fakeHomeAPI) GetDeviceName(id string) (string, error) {
 		return name, nil
 	}
 	return id, nil
+}
+
+func (f *fakeHomeAPI) GetLastSeen(id string) (time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastSeen[id], nil
+}
+
+func (f *fakeHomeAPI) setLastSeen(id string, t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSeen[id] = t
+}
+
+func (f *fakeHomeAPI) IsReachable(id string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.unreachable[id], nil
+}
+
+func (f *fakeHomeAPI) setUnreachable(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.unreachable[id] = true
 }
 
 func (f *fakeHomeAPI) setDeviceName(id, name string) {

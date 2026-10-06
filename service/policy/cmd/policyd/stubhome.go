@@ -2,6 +2,7 @@ package main
 
 import (
 	"sync"
+	"time"
 
 	"github.com/rmrobinson/house/service/policy"
 	"go.uber.org/zap"
@@ -85,6 +86,17 @@ func (h *stubHomeAPI) SetState(id, key string, value any) error {
 func (h *stubHomeAPI) GetDeviceName(id string) (string, error) {
 	h.logger.Debug("stub home: GetDeviceName", zap.String("id", id))
 	return id, nil
+}
+
+// GetLastSeen always returns the zero time ("unknown"): the stub has no real
+// device data.
+func (h *stubHomeAPI) GetLastSeen(id string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
+// IsReachable always returns true: the stub has no real device data.
+func (h *stubHomeAPI) IsReachable(id string) (bool, error) {
+	return true, nil
 }
 
 func (h *stubHomeAPI) HasState(id, key string) (bool, error) {

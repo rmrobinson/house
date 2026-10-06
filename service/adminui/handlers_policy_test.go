@@ -36,6 +36,8 @@ func (noopHomeAPI) GetLastKnown(id string) (any, error)               { return n
 func (noopHomeAPI) Notify(event string, payload map[string]any) error { return nil }
 func (noopHomeAPI) GetDeviceName(id string) (string, error)           { return id, nil }
 func (noopHomeAPI) HasState(id, key string) (bool, error)             { return false, nil }
+func (noopHomeAPI) GetLastSeen(id string) (time.Time, error)          { return time.Time{}, nil }
+func (noopHomeAPI) IsReachable(id string) (bool, error)               { return true, nil }
 func (noopHomeAPI) GetDeviceRoom(id string) (string, error)           { return "", nil }
 
 // testTrigger is a manually-flippable condition, registered under
