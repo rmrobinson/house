@@ -306,9 +306,16 @@ func (sensorBuilder) build(n nodeInfo, _ deviceOverride) (*device.Device, map[st
 	sensor.Presence = &trait.Presence{Attributes: &trait.Presence_Attributes{}, State: &trait.Presence_State{MotionDetected: motion}}
 
 	if nv, ok := findValue(n, ccMultilevelSensor, 0, "Air temperature", ""); ok {
-		roles["air_temperature"] = nv.id(n)
+		// A node reports in whatever unit it's configured for (zwave-js-ui carries it as the value's
+		// "unit" metadata); the live-update path has no access to that metadata, so the unit is
+		// encoded in the role name instead.
+		role := roleAirTemperature
+		if isFahrenheit(nv.Unit) {
+			role = roleAirTemperatureF
+		}
+		roles[role] = nv.id(n)
 		ensureAirProperties(sensor)
-		sensor.AirProperties.State.TemperatureC = decodeFloat32(nv.Value)
+		sensor.AirProperties.State.TemperatureC = decodeTemperatureC(nv.Value, role)
 	}
 	if nv, ok := findValue(n, ccMultilevelSensor, 0, "Humidity", ""); ok {
 		roles["air_humidity"] = nv.id(n)
@@ -361,8 +368,8 @@ func (sensorBuilder) applyState(d *device.Device, role string, raw json.RawMessa
 	switch role {
 	case "presence":
 		s.Presence.State.MotionDetected = decodeMotionDetected(raw)
-	case "air_temperature":
-		s.AirProperties.State.TemperatureC = decodeFloat32(raw)
+	case roleAirTemperature, roleAirTemperatureF:
+		s.AirProperties.State.TemperatureC = decodeTemperatureC(raw, role)
 	case "air_humidity":
 		s.AirProperties.State.HumidityPercentage = decodeFloat32(raw)
 	case "light_illuminance":
@@ -470,6 +477,31 @@ func decodeMotionDetected(raw json.RawMessage) bool {
 		return v != 0
 	}
 	return false
+}
+
+const (
+	roleAirTemperature  = "air_temperature"
+	roleAirTemperatureF = "air_temperature_f"
+)
+
+// isFahrenheit reports whether a zwave-js value unit string (e.g. "°F") denotes Fahrenheit.
+func isFahrenheit(unit string) bool {
+	switch strings.ToUpper(strings.TrimSpace(unit)) {
+	case "°F", "F", "DEGF":
+		return true
+	}
+	return false
+}
+
+// decodeTemperatureC decodes a temperature value, converting from Fahrenheit when role says the
+// node reports in it.
+func decodeTemperatureC(raw json.RawMessage, role string) float32 {
+	var t float64
+	_ = json.Unmarshal(raw, &t)
+	if role == roleAirTemperatureF {
+		t = (t - 32) * 5 / 9
+	}
+	return float32(t)
 }
 
 func decodeFloat32(raw json.RawMessage) float32 {
