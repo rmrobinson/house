@@ -21,13 +21,14 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
-func sensorToDevice(s *airthings.Sensor) *device.Device {
+func sensorToDevice(s airthings.Sensor) *device.Device {
 	modelName := "Wave Plus"
-	vocLevel := int32(s.VOCLevel)
-	co2Level := int32(s.CO2Level)
-	radonLTAvg := int32(s.RadonLongTermAvg)
+	m := s.CurrentMeasurement()
+	vocLevel := int32(m.VOCLevel)
+	co2Level := int32(m.CO2Level)
+	radonLTAvg := int32(m.RadonLongTermAvg)
 	return &device.Device{
-		Id:           fmt.Sprintf("%d", s.SerialNumber),
+		Id:           fmt.Sprintf("%d", s.SerialNumber()),
 		ModelId:      "Wave Plus",
 		Manufacturer: "Airthings",
 		ModelName:    &modelName,
@@ -38,6 +39,9 @@ func sensorToDevice(s *airthings.Sensor) *device.Device {
 		},
 		Details: &device.Device_Sensor{
 			Sensor: &device.Sensor{
+				Metadata: &device.Sensor_Metadata{
+					OnBattery: true,
+				},
 				AirQuality: &trait.AirQuality{
 					State: &trait.AirQuality_State{
 						VolatileOrganicCompoundsPpb: &vocLevel,
@@ -47,9 +51,15 @@ func sensorToDevice(s *airthings.Sensor) *device.Device {
 				},
 				AirProperties: &trait.AirProperties{
 					State: &trait.AirProperties_State{
-						TemperatureC:       s.Temperature,
-						PressureHpa:        s.RelativeAtmosphericPressure,
-						HumidityPercentage: s.Humidity,
+						TemperatureC:       m.Temperature,
+						PressureHpa:        m.RelativeAtmosphericPressure,
+						HumidityPercentage: m.Humidity,
+					},
+				},
+				Battery: &trait.Battery{
+					Attributes: &trait.Battery_Attributes{},
+					State: &trait.Battery_State{
+						CapacityRemainingPct: int32(s.BatteryLevel()),
 					},
 				},
 			},
@@ -144,7 +154,7 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 				zap.Error(err))
 			continue
 		}
-		if err = sensor.Refresh(); err != nil {
+		if err = sensor.Refresh(ctx); err != nil {
 			ab.logger.Error("unable to refresh sensor",
 				zap.Error(err))
 			continue

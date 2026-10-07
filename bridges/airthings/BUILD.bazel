@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "airthings_lib",
@@ -29,4 +29,15 @@ go_binary(
     name = "airthings",
     embed = [":airthings_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "airthings_test",
+    srcs = ["bridge_test.go"],
+    embed = [":airthings_lib"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "@com_github_rmrobinson_airthings_btle//:airthings-btle",
+        "@com_github_stretchr_testify//assert",
+    ],
 )
