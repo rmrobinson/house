@@ -10,7 +10,7 @@ a completed execution is never revised in place (exactly one ExecutionLog
 per execution, appended only once its status is already final). */}}
 {{define "log_row_oob"}}<tr hx-swap-oob="afterbegin:{{.Target}}">{{template "log_row_cells" .Log}}</tr>{{end}}
 
-{{define "log_row_cells"}}<td><a href="/policies/{{.PolicyID}}">{{.PolicyID}}</a></td>
+{{define "log_row_cells"}}<td><a href="{{url "/policies/" .PolicyID}}">{{.PolicyID}}</a></td>
 <td>{{formatTime .StartedAt}}</td>
 <td>{{duration .}}</td>
 <td><span class="status status-{{.Status}}">{{.Status}}</span></td>

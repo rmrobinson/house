@@ -81,7 +81,7 @@ func newServer(ctx context.Context, logger *zap.Logger, house api2.HouseServiceC
 }
 
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/buildings", http.StatusSeeOther)
+	http.Redirect(w, r, basePath+"/buildings", http.StatusSeeOther)
 }
 
 // renderPage renders page's full document (layout+content) - top-level
@@ -128,11 +128,14 @@ func (s *Server) clearPicker(w http.ResponseWriter) {
 	fmt.Fprint(w, `<div id="picker" hx-swap-oob="true"></div>`)
 }
 
-// redirectAfterDelete tells htmx to navigate the whole browser to target -
-// used after a Building/Floor/Room delete succeeds, since the page the
-// request came from no longer has anything to re-render.
+// redirectAfterDelete tells htmx to navigate the whole browser to
+// basePath+target - used after a Building/Floor/Room delete succeeds,
+// since the page the request came from no longer has anything to
+// re-render. Every call site passes a bare, unprefixed path (e.g.
+// "/buildings") - basePath is applied here, once, rather than at each call
+// site.
 func redirectAfterDelete(w http.ResponseWriter, target string) {
-	w.Header().Set("HX-Redirect", target)
+	w.Header().Set("HX-Redirect", basePath+target)
 }
 
 // httpError renders a plain error page/fragment - used only for failures

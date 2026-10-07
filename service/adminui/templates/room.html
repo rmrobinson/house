@@ -2,9 +2,9 @@
 <div id="page-content">
   <div class="entity-header">
     <p class="crumbs">
-      <a href="/buildings">Buildings</a> /
-      {{if .Building.ID}}<a href="/buildings/{{.Building.ID}}">{{.Building.Name}}</a>{{else}}{{.Building.Name}}{{end}} /
-      {{if .Floor.ID}}<a href="/floors/{{.Floor.ID}}">{{.Floor.Name}}</a>{{else}}{{.Floor.Name}}{{end}} /
+      <a href="{{url "/buildings"}}">Buildings</a> /
+      {{if .Building.ID}}<a href="{{url "/buildings/" .Building.ID}}">{{.Building.Name}}</a>{{else}}{{.Building.Name}}{{end}} /
+      {{if .Floor.ID}}<a href="{{url "/floors/" .Floor.ID}}">{{.Floor.Name}}</a>{{else}}{{.Floor.Name}}{{end}} /
       <strong>{{.Room.Name}}</strong>
     </p>
     <button type="button" class="icon-btn" title="Edit room" onclick="document.getElementById('edit-room-dialog').showModal()">⚙</button>
@@ -12,7 +12,7 @@
 
   <dialog id="edit-room-dialog">
     <h3>Edit room</h3>
-    <form hx-post="/rooms/{{.Room.ID}}" hx-target="#page-content" hx-swap="outerHTML">
+    <form hx-post="{{url "/rooms/" .Room.ID}}" hx-target="#page-content" hx-swap="outerHTML">
       <input type="hidden" name="version" value="{{.Room.Version}}">
       <input type="hidden" name="type" value="{{.Room.Type}}">
       <label>Name <input type="text" name="name" value="{{.Room.Name}}" required></label>
@@ -80,7 +80,7 @@
       </div>
     </form>
     <div class="panel-danger">
-      <form hx-post="/rooms/{{.Room.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this room?">
+      <form hx-post="{{url "/rooms/" .Room.ID "/delete"}}" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Delete this room?">
         <input type="hidden" name="version" value="{{.Room.Version}}">
         <button type="submit" class="danger">Delete room</button>
       </form>
@@ -110,8 +110,8 @@
       <tr>
         {{template "device_info" .}}
         <td>
-          <button hx-get="/rooms/{{$roomID}}/devices/{{.ID}}/rename" hx-target="#picker" hx-swap="innerHTML">Rename</button>
-          <form class="inline" hx-post="/rooms/{{$roomID}}/unlink" hx-target="#page-content" hx-swap="outerHTML">
+          <button hx-get="{{url "/rooms/" $roomID "/devices/" .ID "/rename"}}" hx-target="#picker" hx-swap="innerHTML">Rename</button>
+          <form class="inline" hx-post="{{url "/rooms/" $roomID "/unlink"}}" hx-target="#page-content" hx-swap="outerHTML">
             <input type="hidden" name="device_id" value="{{.ID}}">
             <button type="submit">Unlink</button>
           </form>
@@ -123,6 +123,6 @@
     </tbody>
   </table>
 
-  <button hx-get="/rooms/{{.Room.ID}}/device-picker" hx-target="#picker" hx-swap="innerHTML">Add device</button>
+  <button hx-get="{{url "/rooms/" .Room.ID "/device-picker"}}" hx-target="#picker" hx-swap="innerHTML">Add device</button>
 </div>
 {{end}}

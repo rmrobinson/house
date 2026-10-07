@@ -18,10 +18,10 @@
         <td>{{.Manufacturer}}{{if .Model}}<br><span class="hint">{{.Model}}</span>{{end}}</td>
         <td>{{.RoomName}}</td>
         <td class="actions-col">
-          <button hx-get="/devices/{{.ID}}/room-picker" hx-target="#picker" hx-swap="innerHTML">
+          <button hx-get="{{url "/devices/" .ID "/room-picker"}}" hx-target="#picker" hx-swap="innerHTML">
             {{if .RoomID}}Move{{else}}Link{{end}}
           </button>
-          <button hx-get="/devices/{{.ID}}/rename" hx-target="#picker" hx-swap="innerHTML">Rename</button>
+          <button hx-get="{{url "/devices/" .ID "/rename"}}" hx-target="#picker" hx-swap="innerHTML">Rename</button>
         </td>
       </tr>
     {{else}}

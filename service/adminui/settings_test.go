@@ -31,7 +31,7 @@ func writeTestConfig(t *testing.T, houseAddr string) string {
 func newTestApp(t *testing.T) (*app, string) {
 	t.Helper()
 	configPath := writeTestConfig(t, "127.0.0.1:1")
-	a, err := newApp(context.Background(), zaptest.NewLogger(t), configPath, nil, endpoints{HouseAddr: "127.0.0.1:1"})
+	a, err := newApp(context.Background(), zaptest.NewLogger(t), configPath, nil, endpoints{HouseAddr: "127.0.0.1:1"}, "")
 	require.NoError(t, err)
 	return a, configPath
 }

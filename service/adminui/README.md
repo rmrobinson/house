@@ -40,6 +40,26 @@ Pointing `adminui.bridge_facade_addr` at a standalone `bridgefacaded`
 bypasses housed - and that overlay - entirely, so Rename fails against the
 raw facade in that topology.
 
+## Running behind a path prefix
+
+`adminui.base_path` (e.g. `/admin`) runs every route under that prefix instead of
+the site root - for a reverse proxy in front of this process (Caddy, nginx, ...)
+that forwards a prefix here *without* stripping it first. Every route
+registered (`app.go`), every Go-side redirect (`server.go`'s
+`handleRoot`/`redirectAfterDelete`, `handlers_device.go`'s `devicesFilter.URL`),
+and every template-rendered link/htmx/SSE URL (`templates.go`'s `url`/`basePath`
+funcs) carries this same prefix, so a link this process renders round-trips
+back to it through the proxy rather than falling through to whatever else the
+proxy routes its own site root to. See `house-config`'s
+`docker-compose/h031/config/Caddyfile` for a worked example (adminui behind
+`/admin`, unstripped, alongside `viewerui` at the root).
+
+A reverse proxy that instead *strips* the prefix before forwarding won't work
+here - adminui has no notion of "the prefix was already consumed upstream,"
+so a stripped request looks identical to one at the site root, and every link
+this process then renders omits the prefix the browser still has in its
+address bar.
+
 ## Pages
 
 | Route | Purpose |

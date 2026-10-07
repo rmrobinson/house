@@ -7,7 +7,7 @@
       State: {{template "policy_status_cell" .Info}}
       &nbsp; On condition false: <strong>{{onConditionFalseStr .Info.OnConditionFalse}}</strong>
     </p>
-    <div id="simulate" hx-get="/policies/{{.Info.ID}}/simulate" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
+    <div id="simulate" hx-get="{{url "/policies/" .Info.ID "/simulate"}}" hx-trigger="load, every 2s" hx-swap="innerHTML"></div>
   </div>
 
   <div class="card">
@@ -21,8 +21,8 @@
   </div>
 
   <div class="actions">
-    <a class="btn" href="/policies/{{.Info.ID}}/edit">Edit</a>
-    <form hx-post="/policies/{{.Info.ID}}/delete" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Unregister {{.Info.ID}}?" style="display:inline">
+    <a class="btn" href="{{url "/policies/" .Info.ID "/edit"}}">Edit</a>
+    <form hx-post="{{url "/policies/" .Info.ID "/delete"}}" hx-target="#page-content" hx-swap="outerHTML" hx-confirm="Unregister {{.Info.ID}}?" style="display:inline">
       <button class="btn btn-danger" type="submit">Unregister</button>
     </form>
   </div>

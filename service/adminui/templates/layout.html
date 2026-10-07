@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>House Admin</title>
-<script src="/static/htmx.min.js"></script>
-<script src="/static/htmx-sse.js"></script>
-<link rel="stylesheet" href="/static/codemirror.min.css">
-<script src="/static/codemirror.min.js"></script>
-<script src="/static/lua.min.js"></script>
+<script src="{{url "/static/htmx.min.js"}}"></script>
+<script src="{{url "/static/htmx-sse.js"}}"></script>
+<link rel="stylesheet" href="{{url "/static/codemirror.min.css"}}">
+<script src="{{url "/static/codemirror.min.js"}}"></script>
+<script src="{{url "/static/lua.min.js"}}"></script>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f7f7f8; color: #1a1a1a; }
@@ -140,13 +140,13 @@
   .type-list li { padding: 0.1rem 0; }
 </style>
 </head>
-<body hx-ext="sse" sse-connect="/events">
+<body hx-ext="sse" sse-connect="{{url "/events"}}">
 <nav>
-  <a href="/buildings">Buildings</a>
-  <a href="/devices">Devices</a>
-  <a href="/policies" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Policies{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
-  <a href="/logs" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Execution Log{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
-  <a href="/settings">Settings</a>
+  <a href="{{url "/buildings"}}">Buildings</a>
+  <a href="{{url "/devices"}}">Devices</a>
+  <a href="{{url "/policies"}}" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Policies{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
+  <a href="{{url "/logs"}}" class="{{if not (policyAvailable)}}nav-disabled{{end}}">Execution Log{{if not (policyAvailable)}} <span class="nav-badge">setup</span>{{end}}</a>
+  <a href="{{url "/settings"}}">Settings</a>
 </nav>
 <div id="flash"></div>
 <div id="picker"></div>
@@ -185,13 +185,17 @@ document.addEventListener('close', function (e) {
 // all reached through /buildings, so that link is the one to mark active
 // for any of the three. There's no server-side "current section" concept
 // to hook this into (see server.go's renderPage), so it's done client-side
-// off the URL instead.
+// off the URL instead. bp is this app's own base path (templates.go's
+// basePath func - "" unless adminui.base_path is set), prepended to every
+// pattern/link below so this still matches when the whole app is running
+// under a reverse-proxied prefix (see main.go's adminui.base_path).
 (function () {
-  var section = /^\/(buildings|floors|rooms)(\/|$)/.test(location.pathname) ? '/buildings'
-    : /^\/devices(\/|$)/.test(location.pathname) ? '/devices'
-    : /^\/policies(\/|$)/.test(location.pathname) ? '/policies'
-    : /^\/logs(\/|$)/.test(location.pathname) ? '/logs'
-    : /^\/settings(\/|$)/.test(location.pathname) ? '/settings'
+  var bp = "{{basePath}}";
+  var section = new RegExp('^' + bp + '/(buildings|floors|rooms)(/|$)').test(location.pathname) ? bp + '/buildings'
+    : new RegExp('^' + bp + '/devices(/|$)').test(location.pathname) ? bp + '/devices'
+    : new RegExp('^' + bp + '/policies(/|$)').test(location.pathname) ? bp + '/policies'
+    : new RegExp('^' + bp + '/logs(/|$)').test(location.pathname) ? bp + '/logs'
+    : new RegExp('^' + bp + '/settings(/|$)').test(location.pathname) ? bp + '/settings'
     : null;
   if (section) {
     var link = document.querySelector('nav a[href="' + section + '"]');

@@ -12,7 +12,7 @@ out-of-band clear of #picker. */}}
         <tr>
           <td>{{.Label}}</td>
           <td>
-            <form class="inline" hx-post="/devices/{{$.DeviceID}}/link" hx-target="#page-content" hx-swap="outerHTML">
+            <form class="inline" hx-post="{{url "/devices/" $.DeviceID "/link"}}" hx-target="#page-content" hx-swap="outerHTML">
               <input type="hidden" name="room_id" value="{{.ID}}">
               <input type="hidden" name="version" value="{{$.Version}}">
               <button type="submit">Select</button>

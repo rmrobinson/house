@@ -1,16 +1,16 @@
 {{define "content"}}
 <div class="toolbar">
-  <a class="btn" href="/policies/new">+ New Policy</a>
+  <a class="btn" href="{{url "/policies/new"}}">+ New Policy</a>
 </div>
 <table>
   <thead><tr><th>ID</th><th>Condition</th><th>State</th><th></th></tr></thead>
   <tbody>
   {{range .Rows}}
     <tr>
-      <td><a href="/policies/{{.ID}}">{{.ID}}</a></td>
+      <td><a href="{{url "/policies/" .ID}}">{{.ID}}</a></td>
       <td><code>{{.ConditionExprJSON}}</code></td>
       <td>{{template "policy_status_cell" .}}</td>
-      <td><a href="/policies/{{.ID}}/edit">edit</a></td>
+      <td><a href="{{url "/policies/" .ID "/edit"}}">edit</a></td>
     </tr>
   {{else}}
     <tr><td colspan="4" class="hint">No policies registered yet.</td></tr>
