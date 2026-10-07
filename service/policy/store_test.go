@@ -2,7 +2,9 @@ package policy
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -136,6 +138,201 @@ func TestSQLiteStoreAppendAndGetLogs(t *testing.T) {
 	assert.True(t, runningLogs[0].EndedAt.IsZero())
 }
 
+// TestSQLiteStoreAppendLogConcurrentNoLostRows confirms concurrent AppendLog
+// calls queue rather than one losing its row to SQLITE_BUSY - the race that
+// sqlitestore-busy-timeout-gap flagged (two concurrent Engine.trigger runs
+// both writing an execution log). db.SetMaxOpenConns(1) in NewSQLiteStore is
+// what makes database/sql itself serialize these instead of opening a
+// second connection that collides on SQLite's single-writer lock.
+func TestSQLiteStoreAppendLogConcurrentNoLostRows(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0 // isolate this test from the retention prune
+
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err := store.AppendLog(ExecutionLog{
+				PolicyID:  "concurrent",
+				StartedAt: time.Now().UTC(),
+				Status:    StatusSuccess,
+			})
+			assert.NoError(t, err)
+		}(i)
+	}
+	wg.Wait()
+
+	logs, err := store.GetLogs("concurrent", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, n)
+}
+
+// TestSQLiteStoreAppendLogPrunesOldRows confirms AppendLog prunes rows older
+// than its configured retention (policy-execution-log-retention-todo) so
+// execution_logs doesn't grow unbounded forever.
+func TestSQLiteStoreAppendLogPrunesOldRows(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = time.Hour
+
+	now := time.Now().UTC()
+	// A brand-new store's lastPruneAt is the zero value, far enough in the
+	// past that shouldPrune always fires on the very first AppendLog - so
+	// a row already older than the retention window at insert time (e.g. a
+	// backfill, or a long-delayed write) is pruned immediately rather than
+	// surviving until some later call.
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "old",
+		StartedAt: now.Add(-2 * time.Hour),
+		Status:    StatusSuccess,
+	}))
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Empty(t, logs)
+
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: now,
+		Status:    StatusSuccess,
+	}))
+
+	logs, err = store.GetLogs("", 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "new", logs[0].PolicyID)
+}
+
+// TestSQLiteStoreAppendLogThrottlesPrune confirms shouldPrune's throttle
+// actually suppresses the prune on a call that follows too soon after the
+// last one - without it, AppendLog would pay a second write transaction on
+// every single insert (see pruneInterval's comment).
+func TestSQLiteStoreAppendLogThrottlesPrune(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = time.Hour
+	store.lastPruneAt = time.Now() // pretend a prune just ran
+
+	now := time.Now().UTC()
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "old",
+		StartedAt: now.Add(-2 * time.Hour),
+		Status:    StatusSuccess,
+	}))
+
+	// Throttled: this call's prune didn't run, so the old row - past the
+	// retention cutoff - is still there.
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, 1)
+
+	// Expire the throttle and append again: now it prunes.
+	store.lastPruneAt = time.Time{}
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: now,
+		Status:    StatusSuccess,
+	}))
+
+	logs, err = store.GetLogs("", 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "new", logs[0].PolicyID)
+}
+
+// TestSQLiteStoreLogRetentionDisabled confirms a zero WithLogRetention keeps
+// every row forever instead of pruning.
+func TestSQLiteStoreLogRetentionDisabled(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0
+
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "ancient",
+		StartedAt: time.Now().UTC().AddDate(-1, 0, 0),
+		Status:    StatusSuccess,
+	}))
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: time.Now().UTC(),
+		Status:    StatusSuccess,
+	}))
+
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, 2)
+}
+
+// TestSQLiteStoreLastLogs confirms LastLogs returns each policy's single
+// newest row (by insertion order, not just WHERE-filtered like GetLogs).
+func TestSQLiteStoreLastLogs(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0
+
+	base := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "a", StartedAt: base, Status: StatusSuccess}))
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "b", StartedAt: base.Add(time.Second), Status: StatusRunning}))
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "a", StartedAt: base.Add(2 * time.Second), Status: StatusFailure, Error: "boom"}))
+
+	last, err := store.LastLogs()
+	require.NoError(t, err)
+	require.Len(t, last, 2)
+	assert.Equal(t, StatusFailure, last["a"].Status)
+	assert.Equal(t, "boom", last["a"].Error)
+	assert.Equal(t, StatusRunning, last["b"].Status)
+
+	// A policy with no rows at all simply isn't in the map.
+	_, ok := last["never-ran"]
+	assert.False(t, ok)
+}
+
+// TestEngineLastLogAndLastLogsSurviveRestart confirms a policy's last-run
+// status (as surfaced by the gRPC ListPolicies/GetPolicy calls, via
+// Engine.LastLogs/LastLog) is still there on a brand-new Engine backed by
+// the same store, simulating a policyd restart - LastLog/LastLogs must not
+// depend on e.logs, an in-memory tail that starts empty on every restart.
+func TestEngineLastLogAndLastLogsSurviveRestart(t *testing.T) {
+	r := NewConditionRegistry()
+	trigger := registerManualTrigger(t, r, "trigger")
+	store := newTestSQLiteStore(t, r)
+
+	e := NewEngine(newFakeHomeAPI(), r, zaptest.NewLogger(t), WithStore(store))
+	require.NoError(t, e.Register(&Policy{
+		ID:            "test.restart",
+		ConditionExpr: Use("trigger", struct{}{}),
+		Script:        "x=1",
+	}))
+	trigger.set(true)
+	require.Eventually(t, func() bool {
+		_, ok := e.LastLog("test.restart")
+		return ok
+	}, time.Second, 10*time.Millisecond)
+	e.Close()
+
+	// A fresh Engine/registry/Store on the same underlying db, exactly as
+	// policyd's main does on process restart - e2.logs starts empty.
+	r2 := NewConditionRegistry()
+	registerManualTrigger(t, r2, "trigger")
+	store2, err := NewSQLiteStore(zaptest.NewLogger(t), store.db, r2)
+	require.NoError(t, err)
+
+	e2 := NewEngine(newFakeHomeAPI(), r2, zaptest.NewLogger(t), WithStore(store2))
+	t.Cleanup(e2.Close)
+	require.NoError(t, LoadPersistedPolicies(e2, store2))
+
+	last, ok := e2.LastLog("test.restart")
+	require.True(t, ok)
+	assert.Equal(t, "test.restart", last.PolicyID)
+	assert.Equal(t, StatusSuccess, last.Status)
+
+	lastLogs := e2.LastLogs()
+	require.Contains(t, lastLogs, "test.restart")
+	assert.Equal(t, StatusSuccess, lastLogs["test.restart"].Status)
+}
+
 func TestEngineWithStorePersistsRegisterAndUnregister(t *testing.T) {
 	r := NewConditionRegistry()
 	trigger := registerManualTrigger(t, r, "trigger")
@@ -197,4 +394,53 @@ func TestLoadPersistedPoliciesSurvivesRestart(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return home2.getHouseState("occupancy") == "motion-seen"
 	}, time.Second, 10*time.Millisecond)
+}
+
+// flakyAppendStore wraps a Store so a test can make exactly one AppendLog
+// call fail, simulating the transient store write failure appendLog
+// already tolerates (logged as a warning, not surfaced as an error - see
+// its comment) without needing a real SQLite fault.
+type flakyAppendStore struct {
+	Store
+	failNextAppend bool
+}
+
+func (f *flakyAppendStore) AppendLog(l ExecutionLog) error {
+	if f.failNextAppend {
+		f.failNextAppend = false
+		return errors.New("simulated append failure")
+	}
+	return f.Store.AppendLog(l)
+}
+
+// TestEngineLastLogPrefersFresherMemoryOverStaleStore confirms LastLog/
+// LastLogs don't just trust a successful-but-stale store read: when a
+// policy's latest run only made it into e.logs because its own
+// Store.AppendLog failed, both methods must still surface that run rather
+// than the older one the store actually has.
+func TestEngineLastLogPrefersFresherMemoryOverStaleStore(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	flaky := &flakyAppendStore{Store: store}
+
+	e := NewEngine(newFakeHomeAPI(), r, zaptest.NewLogger(t), WithStore(flaky))
+	t.Cleanup(e.Close)
+
+	base := time.Now().UTC()
+	e.appendLog(ExecutionLog{PolicyID: "p", StartedAt: base, Status: StatusSuccess})
+
+	flaky.failNextAppend = true
+	e.appendLog(ExecutionLog{PolicyID: "p", StartedAt: base.Add(time.Minute), Status: StatusFailure, Error: "boom"})
+
+	// The store only has the first run; e.logs has both. LastLog/LastLogs
+	// must return the second (newer, in-memory-only) one.
+	last, ok := e.LastLog("p")
+	require.True(t, ok)
+	assert.Equal(t, StatusFailure, last.Status)
+	assert.Equal(t, "boom", last.Error)
+
+	lastLogs := e.LastLogs()
+	require.Contains(t, lastLogs, "p")
+	assert.Equal(t, StatusFailure, lastLogs["p"].Status)
+	assert.Equal(t, "boom", lastLogs["p"].Error)
 }

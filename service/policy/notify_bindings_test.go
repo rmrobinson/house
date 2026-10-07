@@ -2,6 +2,7 @@ package policy
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,8 +10,16 @@ import (
 	lua "github.com/yuin/gopher-lua"
 )
 
-// fakeNotifyAPI records every Send call it receives.
+// fakeNotifyAPI records every Send call it receives. Several tests
+// (ups_water_policies_test.go, battery_report_test.go) trigger a policy
+// asynchronously - Engine.trigger runs the script in its own goroutine -
+// then poll calls/allCalls from the test goroutine via require.Eventually,
+// which itself runs its condition function in a separate goroutine from
+// the test body. mu guards against that genuine data race between Send's
+// writer and those readers; err is set once before any goroutine starts
+// in every test that uses it, so it doesn't need the same protection.
 type fakeNotifyAPI struct {
+	mu    sync.Mutex
 	calls []notifySendCall
 	err   error
 }
@@ -21,8 +30,33 @@ type notifySendCall struct {
 }
 
 func (f *fakeNotifyAPI) Send(recipientIDs []string, subject, body, contentType string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, notifySendCall{recipientIDs, subject, body, contentType})
 	return f.err
+}
+
+// allCalls returns a snapshot of every Send call recorded so far. Every
+// test must read through this (or call/callCount below) rather than the
+// calls field directly - see the type's comment for why.
+func (f *fakeNotifyAPI) allCalls() []notifySendCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]notifySendCall, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
+func (f *fakeNotifyAPI) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func (f *fakeNotifyAPI) call(i int) notifySendCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[i]
 }
 
 func runScriptForTestWithNotify(t *testing.T, n NotifyAPI, script string) error {
@@ -44,8 +78,8 @@ func TestNotifySendRoundTrip(t *testing.T) {
 		notify.send({ to = {"r"}, subject = "Battery report", body = "<p>ok</p>", content_type = "text/html" })
 	`))
 
-	require.Len(t, n.calls, 1)
-	got := n.calls[0]
+	require.Equal(t, 1, n.callCount())
+	got := n.call(0)
 	assert.Equal(t, []string{"r"}, got.recipientIDs)
 	assert.Equal(t, "Battery report", got.subject)
 	assert.Equal(t, "<p>ok</p>", got.body)
@@ -59,9 +93,9 @@ func TestNotifySendMultipleRecipients(t *testing.T) {
 		notify.send({ to = {"r", "other"}, subject = "s", body = "b" })
 	`))
 
-	require.Len(t, n.calls, 1)
-	assert.Equal(t, []string{"r", "other"}, n.calls[0].recipientIDs)
-	assert.Equal(t, "", n.calls[0].content, `content_type defaults to "" at the Lua binding - NotifyAPI implementations default it themselves`)
+	require.Equal(t, 1, n.callCount())
+	assert.Equal(t, []string{"r", "other"}, n.call(0).recipientIDs)
+	assert.Equal(t, "", n.call(0).content, `content_type defaults to "" at the Lua binding - NotifyAPI implementations default it themselves`)
 }
 
 func TestNotifySendMissingToIsScriptCatchableError(t *testing.T) {
@@ -72,7 +106,7 @@ func TestNotifySendMissingToIsScriptCatchableError(t *testing.T) {
 		assert(ok == false)
 	`)
 	assert.NoError(t, err, "script pcalls the failing binding, so DoString itself should succeed")
-	assert.Empty(t, n.calls)
+	assert.Zero(t, n.callCount())
 }
 
 func TestNotifySendPropagatesNotifyAPIError(t *testing.T) {

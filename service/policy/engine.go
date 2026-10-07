@@ -490,17 +490,44 @@ func (e *Engine) LogsForPolicy(policyID string) []ExecutionLog {
 }
 
 // LastLog returns policyID's most recent ExecutionLog, or ok=false if it has
-// none.
+// none. Like RecentLogs, it consults Store.GetLogs when a store is
+// configured, so a policy's last run survives an engine restart instead of
+// reading as "never run" until it next fires and repopulates e.logs - a
+// store query error falls back to the in-memory tail entirely, since
+// LastLog has no error return of its own.
+//
+// Unlike RecentLogs, it doesn't return the store's answer unconditionally:
+// appendLog treats a failed Store.AppendLog as a warning, not an error (see
+// its comment), so the store can legitimately be one run behind e.logs. A
+// successful store query is compared against the in-memory tail and the
+// newer of the two (by StartedAt) wins, so a run that only made it into
+// memory isn't hidden behind a stale, but error-free, store read.
 func (e *Engine) LastLog(policyID string) (l ExecutionLog, ok bool) {
 	e.logsMu.Lock()
-	defer e.logsMu.Unlock()
-
 	for _, entry := range e.logs {
 		if entry.PolicyID == policyID {
 			l, ok = entry, true
 		}
 	}
-	return l, ok
+	e.logsMu.Unlock()
+
+	if e.store == nil {
+		return l, ok
+	}
+
+	logs, err := e.store.GetLogs(policyID, 1)
+	if err != nil {
+		e.logger.Warn("unable to query last log from store; falling back to in-memory tail",
+			zap.String("policy_id", policyID), zap.Error(err))
+		return l, ok
+	}
+	if len(logs) == 0 {
+		return l, ok
+	}
+	if ok && l.StartedAt.After(logs[0].StartedAt) {
+		return l, true
+	}
+	return logs[0], true
 }
 
 // RecentLogs returns up to limit ExecutionLogs matching policyID (every
@@ -532,27 +559,51 @@ func (e *Engine) RecentLogs(policyID string, limit int) ([]ExecutionLog, error) 
 }
 
 // LastLogs returns the most recent ExecutionLog for every policy that has
-// at least one, keyed by policy ID, in a single pass over the log history -
-// for a caller (e.g. the policies list page) that wants every policy's last
-// log at once, which would otherwise cost one LogsForPolicy scan of the
-// entire history per policy rendered.
+// at least one, keyed by policy ID - for a caller (e.g. the policies list
+// page) that wants every policy's last log at once, which would otherwise
+// cost one LogsForPolicy scan of the entire history per policy rendered.
+// Like LastLog, it consults Store.LastLogs when a store is configured, so
+// the policies list still shows last-run status after an engine restart; a
+// store query error falls back to the in-memory tail entirely. See
+// LastLog's comment for why a successful store result is still reconciled
+// against the in-memory tail rather than returned as-is - the same
+// "Store.AppendLog warned instead of erroring" gap applies here per-policy.
 func (e *Engine) LastLogs() map[string]ExecutionLog {
 	e.logsMu.Lock()
-	defer e.logsMu.Unlock()
-
-	out := make(map[string]ExecutionLog)
+	mem := make(map[string]ExecutionLog)
 	for _, l := range e.logs {
-		out[l.PolicyID] = l
+		mem[l.PolicyID] = l
+	}
+	e.logsMu.Unlock()
+
+	if e.store == nil {
+		return mem
+	}
+
+	out, err := e.store.LastLogs()
+	if err != nil {
+		e.logger.Warn("unable to query last logs from store; falling back to in-memory tail", zap.Error(err))
+		return mem
+	}
+
+	for id, memLast := range mem {
+		if storeLast, ok := out[id]; !ok || memLast.StartedAt.After(storeLast.StartedAt) {
+			out[id] = memLast
+		}
 	}
 	return out
 }
 
 // maxInMemoryLogs bounds e.logs: without a cap, a long-running engine with
 // frequently-firing policies accumulates one ExecutionLog per trigger
-// forever, growing memory (and the cost of every Logs/LogsForPolicy/LastLogs
-// scan) without bound. Full history remains available through Store, when
-// one is configured (see WithStore); e.logs is only the in-memory tail used
-// to serve those three methods without a store round-trip.
+// forever, growing memory (and the cost of every Logs/LogsForPolicy scan)
+// without bound. Full history remains available through Store, when one is
+// configured (see WithStore); e.logs is only the in-memory tail used to
+// serve Logs/LogsForPolicy without a store round-trip, and as LastLog/
+// LastLogs' reconciliation source (a store-less Engine's only source, a
+// failed store query's fallback, or - when the store query succeeds but is
+// stale because a prior Store.AppendLog itself failed - the fresher of the
+// two) so a policy's last run survives an engine restart.
 const maxInMemoryLogs = 1000
 
 func (e *Engine) appendLog(l ExecutionLog) {
