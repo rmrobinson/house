@@ -326,3 +326,18 @@ func TestNewMQTTConn_InvalidCACertFile(t *testing.T) {
 	_, err := newMQTTConn(zaptest.NewLogger(t), mqttConfig{CACertFile: "/nonexistent/ca.pem"})
 	require.Error(t, err)
 }
+
+// TestWriteValue_WrappedEcho confirms the echo check accepts a real zwave-js-ui value-topic payload
+// (a {"time","value",...} object) and still rejects a wrapped echo of the wrong value.
+func TestWriteValue_WrappedEcho(t *testing.T) {
+	mc, fc := newTestMQTTConn(t, mqttConfig{Prefix: "zwave"})
+	v := valueID{nodeID: 5, topicBase: "nodeID_5", commandClass: ccBinarySwitch, endpoint: 0, property: "targetValue"}
+	topic := mc.topicFor(v)
+
+	fc.respond(topic+"/set", topic, []byte(`{"time":1791339173114,"value":true,"nodeName":"plug"}`))
+	require.NoError(t, mc.WriteValue(context.Background(), v, true))
+
+	mc2, fc2 := newTestMQTTConn(t, mqttConfig{Prefix: "zwave"})
+	fc2.respond(topic+"/set", topic, []byte(`{"time":1,"value":false}`))
+	require.Error(t, mc2.WriteValue(context.Background(), v, true))
+}

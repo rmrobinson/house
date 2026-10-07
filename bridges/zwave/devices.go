@@ -486,17 +486,22 @@ const (
 
 // isFahrenheit reports whether a zwave-js value unit string (e.g. "°F") denotes Fahrenheit.
 func isFahrenheit(unit string) bool {
-	return strings.Contains(strings.ToUpper(unit), "F")
+	switch strings.ToUpper(strings.TrimSpace(unit)) {
+	case "°F", "F", "DEGF":
+		return true
+	}
+	return false
 }
 
 // decodeTemperatureC decodes a temperature value, converting from Fahrenheit when role says the
 // node reports in it.
 func decodeTemperatureC(raw json.RawMessage, role string) float32 {
-	t := decodeFloat32(raw)
+	var t float64
+	_ = json.Unmarshal(raw, &t)
 	if role == roleAirTemperatureF {
-		return float32((float64(t) - 32) * 5 / 9)
+		t = (t - 32) * 5 / 9
 	}
-	return t
+	return float32(t)
 }
 
 func decodeFloat32(raw json.RawMessage) float32 {

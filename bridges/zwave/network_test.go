@@ -570,3 +570,16 @@ func TestUnwrapValue(t *testing.T) {
 	assert.Equal(t, "22.5", string(unwrapValue([]byte(`22.5`))))
 	assert.Equal(t, `{"foo":1}`, string(unwrapValue([]byte(`{"foo":1}`))))
 }
+
+func TestOnMessage_NullValueIgnored(t *testing.T) {
+	nc, _ := newTestNetworkConn(t, zwaveConfig{MQTT: mqttConfig{Prefix: "zwave"}})
+
+	n := nodeInfo{ID: 2, Name: "motion_sensor", Loc: "second_floor/guest_bedroom", Available: true, Status: "Alive", Values: map[string]nodeValue{
+		"temp": {CommandClass: ccMultilevelSensor, Property: "Air temperature", Unit: "°C", Value: []byte("21.5")},
+	}}
+	n.DeviceClass.Generic = genericMultilevelSensor
+	nc.buildNode(n)
+
+	nc.onMessage("zwave/second_floor/guest_bedroom/motion_sensor/sensor_multilevel/endpoint_0/Air_temperature", []byte(`{"time":1,"value":null}`))
+	assert.InDelta(t, 21.5, nc.devices["zwave-2"].device.GetSensor().AirProperties.State.TemperatureC, 0.01)
+}

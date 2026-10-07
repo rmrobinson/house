@@ -370,7 +370,7 @@ func (m *mqttConn) WriteValue(ctx context.Context, v valueID, value any) error {
 
 	select {
 	case raw := <-ch:
-		if !valuesEqual(raw, value) {
+		if !valuesEqual(unwrapValue(raw), value) {
 			return fmt.Errorf("zwave: node did not accept value at %s: got %s, want %v", topic, raw, value)
 		}
 		return nil

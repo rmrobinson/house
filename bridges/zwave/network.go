@@ -476,7 +476,13 @@ func (nc *networkConn) onMessage(topic string, payload []byte) {
 		return
 	}
 
-	bd.builder.applyState(bd.device, role, unwrapValue(payload))
+	value := unwrapValue(payload)
+	if string(value) == "null" {
+		// A null reading carries no information; leave the cached state alone rather than letting the
+		// decoders turn it into a zero/false.
+		return
+	}
+	bd.builder.applyState(bd.device, role, value)
 	trackLastNonZeroLevel(bd)
 	bd.device.Version = computeVersion(bd.device)
 	nc.svc.UpdateDevice(bd.device)
