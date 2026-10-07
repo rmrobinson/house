@@ -226,6 +226,74 @@ func TestSQLiteStoreLogRetentionDisabled(t *testing.T) {
 	assert.Len(t, logs, 2)
 }
 
+// TestSQLiteStoreLastLogs confirms LastLogs returns each policy's single
+// newest row (by insertion order, not just WHERE-filtered like GetLogs).
+func TestSQLiteStoreLastLogs(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0
+
+	base := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "a", StartedAt: base, Status: StatusSuccess}))
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "b", StartedAt: base.Add(time.Second), Status: StatusRunning}))
+	require.NoError(t, store.AppendLog(ExecutionLog{PolicyID: "a", StartedAt: base.Add(2 * time.Second), Status: StatusFailure, Error: "boom"}))
+
+	last, err := store.LastLogs()
+	require.NoError(t, err)
+	require.Len(t, last, 2)
+	assert.Equal(t, StatusFailure, last["a"].Status)
+	assert.Equal(t, "boom", last["a"].Error)
+	assert.Equal(t, StatusRunning, last["b"].Status)
+
+	// A policy with no rows at all simply isn't in the map.
+	_, ok := last["never-ran"]
+	assert.False(t, ok)
+}
+
+// TestEngineLastLogAndLastLogsSurviveRestart confirms a policy's last-run
+// status (as surfaced by the gRPC ListPolicies/GetPolicy calls, via
+// Engine.LastLogs/LastLog) is still there on a brand-new Engine backed by
+// the same store, simulating a policyd restart - LastLog/LastLogs must not
+// depend on e.logs, an in-memory tail that starts empty on every restart.
+func TestEngineLastLogAndLastLogsSurviveRestart(t *testing.T) {
+	r := NewConditionRegistry()
+	trigger := registerManualTrigger(t, r, "trigger")
+	store := newTestSQLiteStore(t, r)
+
+	e := NewEngine(newFakeHomeAPI(), r, zaptest.NewLogger(t), WithStore(store))
+	require.NoError(t, e.Register(&Policy{
+		ID:            "test.restart",
+		ConditionExpr: Use("trigger", struct{}{}),
+		Script:        "x=1",
+	}))
+	trigger.set(true)
+	require.Eventually(t, func() bool {
+		_, ok := e.LastLog("test.restart")
+		return ok
+	}, time.Second, 10*time.Millisecond)
+	e.Close()
+
+	// A fresh Engine/registry/Store on the same underlying db, exactly as
+	// policyd's main does on process restart - e2.logs starts empty.
+	r2 := NewConditionRegistry()
+	registerManualTrigger(t, r2, "trigger")
+	store2, err := NewSQLiteStore(zaptest.NewLogger(t), store.db, r2)
+	require.NoError(t, err)
+
+	e2 := NewEngine(newFakeHomeAPI(), r2, zaptest.NewLogger(t), WithStore(store2))
+	t.Cleanup(e2.Close)
+	require.NoError(t, LoadPersistedPolicies(e2, store2))
+
+	last, ok := e2.LastLog("test.restart")
+	require.True(t, ok)
+	assert.Equal(t, "test.restart", last.PolicyID)
+	assert.Equal(t, StatusSuccess, last.Status)
+
+	lastLogs := e2.LastLogs()
+	require.Contains(t, lastLogs, "test.restart")
+	assert.Equal(t, StatusSuccess, lastLogs["test.restart"].Status)
+}
+
 func TestEngineWithStorePersistsRegisterAndUnregister(t *testing.T) {
 	r := NewConditionRegistry()
 	trigger := registerManualTrigger(t, r, "trigger")

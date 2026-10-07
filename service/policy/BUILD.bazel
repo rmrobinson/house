@@ -24,6 +24,8 @@ go_library(
         "migrations/000001_setup.up.sql",
         "migrations/000002_execution_log_retention.down.sql",
         "migrations/000002_execution_log_retention.up.sql",
+        "migrations/000003_execution_logs_policy_id_index.down.sql",
+        "migrations/000003_execution_logs_policy_id_index.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/policy",
     visibility = ["//visibility:public"],

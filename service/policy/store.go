@@ -28,6 +28,9 @@ type Store interface {
 	// GetLogs returns up to limit ExecutionLogs, newest first. If policyID
 	// is "", it returns logs across every policy; limit <= 0 means no cap.
 	GetLogs(policyID string, limit int) ([]ExecutionLog, error)
+	// LastLogs returns the most recent ExecutionLog for every policy that
+	// has at least one persisted row, keyed by policy ID.
+	LastLogs() (map[string]ExecutionLog, error)
 }
 
 // defaultLogRetention bounds how long an execution_logs row survives:
@@ -236,6 +239,54 @@ func (s *SQLiteStore) GetLogs(policyID string, limit int) ([]ExecutionLog, error
 	}
 	defer rows.Close()
 
+	logs, err := scanExecutionLogs(rows)
+	if err != nil {
+		s.logger.Error("unable to scan execution log row", zap.Error(err))
+		return nil, err
+	}
+	return logs, nil
+}
+
+// LastLogs returns the most recent ExecutionLog for every policy that has
+// at least one persisted row, keyed by policy ID - the SQLite-backed
+// counterpart to Engine's in-memory LastLogs, used so a restarted policyd
+// still shows each policy's last run instead of nothing until it next
+// fires. The subquery picks each policy_id's MAX(id) (ids are assigned in
+// insertion order, so highest id is newest) rather than MAX(started_at),
+// which a caller-supplied clock could make ambiguous across policies.
+func (s *SQLiteStore) LastLogs() (map[string]ExecutionLog, error) {
+	rows, err := s.db.Query(`
+		SELECT el.policy_id, el.started_at, el.ended_at, el.status, el.error
+		FROM execution_logs el
+		JOIN (
+			SELECT policy_id, MAX(id) AS max_id
+			FROM execution_logs
+			GROUP BY policy_id
+		) latest ON el.policy_id = latest.policy_id AND el.id = latest.max_id
+	`)
+	if err != nil {
+		s.logger.Error("unable to get last execution logs", zap.Error(err))
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs, err := scanExecutionLogs(rows)
+	if err != nil {
+		s.logger.Error("unable to scan last execution log row", zap.Error(err))
+		return nil, err
+	}
+
+	out := make(map[string]ExecutionLog, len(logs))
+	for _, l := range logs {
+		out[l.PolicyID] = l
+	}
+	return out, nil
+}
+
+// scanExecutionLogs scans every remaining row of rows into ExecutionLogs.
+// rows must be a query selecting exactly (policy_id, started_at, ended_at,
+// status, error), the shared shape GetLogs and LastLogs both query.
+func scanExecutionLogs(rows *sql.Rows) ([]ExecutionLog, error) {
 	var logs []ExecutionLog
 	for rows.Next() {
 		var l ExecutionLog
@@ -244,7 +295,6 @@ func (s *SQLiteStore) GetLogs(policyID string, limit int) ([]ExecutionLog, error
 		var errStr sql.NullString
 
 		if err := rows.Scan(&l.PolicyID, &l.StartedAt, &endedAt, &status, &errStr); err != nil {
-			s.logger.Error("unable to scan execution log row", zap.Error(err))
 			return nil, err
 		}
 
