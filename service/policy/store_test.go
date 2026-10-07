@@ -2,6 +2,7 @@ package policy
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -178,10 +179,11 @@ func TestSQLiteStoreAppendLogPrunesOldRows(t *testing.T) {
 	store.logRetention = time.Hour
 
 	now := time.Now().UTC()
-	// Pruning runs opportunistically on every AppendLog, including the one
-	// that just inserted this row: a row already older than the retention
-	// window at insert time (e.g. a backfill, or a long-delayed write) is
-	// pruned immediately rather than surviving until some later call.
+	// A brand-new store's lastPruneAt is the zero value, far enough in the
+	// past that shouldPrune always fires on the very first AppendLog - so
+	// a row already older than the retention window at insert time (e.g. a
+	// backfill, or a long-delayed write) is pruned immediately rather than
+	// surviving until some later call.
 	require.NoError(t, store.AppendLog(ExecutionLog{
 		PolicyID:  "old",
 		StartedAt: now.Add(-2 * time.Hour),
@@ -191,6 +193,43 @@ func TestSQLiteStoreAppendLogPrunesOldRows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, logs)
 
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: now,
+		Status:    StatusSuccess,
+	}))
+
+	logs, err = store.GetLogs("", 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "new", logs[0].PolicyID)
+}
+
+// TestSQLiteStoreAppendLogThrottlesPrune confirms shouldPrune's throttle
+// actually suppresses the prune on a call that follows too soon after the
+// last one - without it, AppendLog would pay a second write transaction on
+// every single insert (see pruneInterval's comment).
+func TestSQLiteStoreAppendLogThrottlesPrune(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = time.Hour
+	store.lastPruneAt = time.Now() // pretend a prune just ran
+
+	now := time.Now().UTC()
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "old",
+		StartedAt: now.Add(-2 * time.Hour),
+		Status:    StatusSuccess,
+	}))
+
+	// Throttled: this call's prune didn't run, so the old row - past the
+	// retention cutoff - is still there.
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, 1)
+
+	// Expire the throttle and append again: now it prunes.
+	store.lastPruneAt = time.Time{}
 	require.NoError(t, store.AppendLog(ExecutionLog{
 		PolicyID:  "new",
 		StartedAt: now,
@@ -355,4 +394,53 @@ func TestLoadPersistedPoliciesSurvivesRestart(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return home2.getHouseState("occupancy") == "motion-seen"
 	}, time.Second, 10*time.Millisecond)
+}
+
+// flakyAppendStore wraps a Store so a test can make exactly one AppendLog
+// call fail, simulating the transient store write failure appendLog
+// already tolerates (logged as a warning, not surfaced as an error - see
+// its comment) without needing a real SQLite fault.
+type flakyAppendStore struct {
+	Store
+	failNextAppend bool
+}
+
+func (f *flakyAppendStore) AppendLog(l ExecutionLog) error {
+	if f.failNextAppend {
+		f.failNextAppend = false
+		return errors.New("simulated append failure")
+	}
+	return f.Store.AppendLog(l)
+}
+
+// TestEngineLastLogPrefersFresherMemoryOverStaleStore confirms LastLog/
+// LastLogs don't just trust a successful-but-stale store read: when a
+// policy's latest run only made it into e.logs because its own
+// Store.AppendLog failed, both methods must still surface that run rather
+// than the older one the store actually has.
+func TestEngineLastLogPrefersFresherMemoryOverStaleStore(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	flaky := &flakyAppendStore{Store: store}
+
+	e := NewEngine(newFakeHomeAPI(), r, zaptest.NewLogger(t), WithStore(flaky))
+	t.Cleanup(e.Close)
+
+	base := time.Now().UTC()
+	e.appendLog(ExecutionLog{PolicyID: "p", StartedAt: base, Status: StatusSuccess})
+
+	flaky.failNextAppend = true
+	e.appendLog(ExecutionLog{PolicyID: "p", StartedAt: base.Add(time.Minute), Status: StatusFailure, Error: "boom"})
+
+	// The store only has the first run; e.logs has both. LastLog/LastLogs
+	// must return the second (newer, in-memory-only) one.
+	last, ok := e.LastLog("p")
+	require.True(t, ok)
+	assert.Equal(t, StatusFailure, last.Status)
+	assert.Equal(t, "boom", last.Error)
+
+	lastLogs := e.LastLogs()
+	require.Contains(t, lastLogs, "p")
+	assert.Equal(t, StatusFailure, lastLogs["p"].Status)
+	assert.Equal(t, "boom", lastLogs["p"].Error)
 }

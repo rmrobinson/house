@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -34,11 +35,18 @@ type Store interface {
 }
 
 // defaultLogRetention bounds how long an execution_logs row survives:
-// AppendLog prunes anything older than this on every call, so the table
-// stays bounded the same way Engine's in-memory logs tail is capped at
-// maxInMemoryLogs - unlike that cap, Store is the durable copy, so it's
-// bounded by age rather than by count. Override via WithLogRetention.
+// AppendLog prunes anything older than this, so the table stays bounded
+// the same way Engine's in-memory logs tail is capped at maxInMemoryLogs -
+// unlike that cap, Store is the durable copy, so it's bounded by age
+// rather than by count. Override via WithLogRetention.
 const defaultLogRetention = 30 * 24 * time.Hour
+
+// pruneInterval throttles AppendLog's retention prune to at most once per
+// interval rather than running an extra DELETE on every single insert -
+// without this, a frequently-firing policy would pay a second write
+// transaction on every trigger just to re-check a cutoff that only
+// actually changes on the scale of days.
+const pruneInterval = time.Hour
 
 // StoreOption configures optional SQLiteStore behaviour at construction
 // time, matching the EngineOption pattern in engine.go.
@@ -58,6 +66,9 @@ type SQLiteStore struct {
 	db           *sql.DB
 	registry     *ConditionRegistry
 	logRetention time.Duration
+
+	pruneMu     sync.Mutex
+	lastPruneAt time.Time
 }
 
 // NewSQLiteStore creates a SQLiteStore backed by db, running any pending
@@ -184,12 +195,12 @@ func (s *SQLiteStore) LoadPolicies() ([]*Policy, error) {
 	return policies, rows.Err()
 }
 
-// AppendLog inserts a single execution log record, then opportunistically
-// prunes anything older than s.logRetention so the table doesn't grow
-// unbounded. The prune is cheap once the table is caught up: it's an
-// index-range delete (see migration 000002) that touches zero rows once
-// nothing is past the cutoff, so running it on every insert costs far less
-// than letting the table grow forever would.
+// AppendLog inserts a single execution log record, then - at most once per
+// pruneInterval - prunes anything older than s.logRetention so the table
+// doesn't grow unbounded. The prune is cheap once the table is caught up:
+// it's an index-range delete (see migration 000002) that touches zero rows
+// once nothing is past the cutoff, but it's still a second write
+// transaction, so it's throttled rather than run on every single insert.
 func (s *SQLiteStore) AppendLog(l ExecutionLog) error {
 	var endedAt sql.NullTime
 	if !l.EndedAt.IsZero() {
@@ -205,7 +216,7 @@ func (s *SQLiteStore) AppendLog(l ExecutionLog) error {
 		return err
 	}
 
-	if s.logRetention > 0 {
+	if s.logRetention > 0 && s.shouldPrune() {
 		cutoff := time.Now().UTC().Add(-s.logRetention)
 		if _, err := s.db.Exec("DELETE FROM execution_logs WHERE started_at < ?", cutoff); err != nil {
 			// The log itself is already committed above; a failed prune just
@@ -215,6 +226,22 @@ func (s *SQLiteStore) AppendLog(l ExecutionLog) error {
 		}
 	}
 	return nil
+}
+
+// shouldPrune reports whether at least pruneInterval has passed since the
+// last prune, and if so, immediately marks a prune as starting now - so
+// two AppendLog calls racing this check can't both decide to prune at
+// once. lastPruneAt's zero value is far enough in the past that the very
+// first call always prunes.
+func (s *SQLiteStore) shouldPrune() bool {
+	s.pruneMu.Lock()
+	defer s.pruneMu.Unlock()
+
+	if time.Since(s.lastPruneAt) < pruneInterval {
+		return false
+	}
+	s.lastPruneAt = time.Now()
+	return true
 }
 
 // GetLogs returns up to limit ExecutionLogs, newest first, optionally
