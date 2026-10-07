@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
@@ -44,6 +46,13 @@ const (
 	ccBattery          = 128
 )
 
+// lastActiveRefresh is the minimum advance in a node's lastActive before it is written through.
+const lastActiveRefresh = 5 * time.Minute
+
+// roleLastActive tags a topicToRole entry as a node's <base>/lastActive topic rather than a value
+// role from a deviceBuilder.
+const roleLastActive = "__last_active__"
+
 // nodeInfo mirrors the subset of a zwave-js-ui getNodes response entry this bridge consumes.
 type nodeInfo struct {
 	ID        int    `json:"id"`
@@ -52,6 +61,10 @@ type nodeInfo struct {
 	Available bool   `json:"available"`
 	Name      string `json:"name"`
 	Loc       string `json:"loc"`
+
+	// LastActive is zwave-js-ui's per-node "last time any frame was heard from this node", in
+	// epoch milliseconds; 0 if never heard from.
+	LastActive int64 `json:"lastActive"`
 
 	// DeviceID is "<manufacturerId>-<productId>-<producttype>" - stable per physical product
 	// model, used as the key for this bridge's config overrides.
@@ -333,6 +346,9 @@ func (nc *networkConn) buildNode(n nodeInfo) {
 		d.Address = &device.Device_Address{}
 	}
 	d.Address.IsReachable = n.Available && !strings.EqualFold(n.Status, "Dead")
+	if n.LastActive > 0 {
+		d.LastSeen = timestamppb.New(time.UnixMilli(n.LastActive))
+	}
 
 	nc.mu.Lock()
 	// A device id already claimed by a *different* node - almost always a config `id` override
@@ -362,6 +378,9 @@ func (nc *networkConn) buildNode(n nodeInfo) {
 		// moment of reconnect despite having been at a nonzero level moments before.
 		existing.mu.Lock()
 		bd.lastNonZeroLevel = existing.lastNonZeroLevel
+		if d.LastSeen == nil {
+			d.LastSeen = existing.device.LastSeen
+		}
 		existing.mu.Unlock()
 	}
 	trackLastNonZeroLevel(bd)
@@ -376,6 +395,12 @@ func (nc *networkConn) buildNode(n nodeInfo) {
 		nc.topicToDeviceID[topic] = id
 		nc.topicToRole[topic] = role
 	}
+	// zwave-js-ui republishes each node's lastActive on <node topic base>/lastActive whenever it
+	// changes; routed via the same topicToDeviceID map as value topics, tagged with a role no
+	// builder ever uses so onMessage can tell it apart.
+	lastActiveTopic := nc.mqtt.cfg.Prefix + "/" + nodeTopicBase(n) + "/lastActive"
+	nc.topicToDeviceID[lastActiveTopic] = id
+	nc.topicToRole[lastActiveTopic] = roleLastActive
 	nc.mu.Unlock()
 
 	nc.zb.registerDevice(id, nc)
@@ -430,6 +455,25 @@ func (nc *networkConn) onMessage(topic string, payload []byte) {
 
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
+
+	if role == roleLastActive {
+		var p struct {
+			Value int64 `json:"value"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil || p.Value <= 0 {
+			return
+		}
+		// zwave-js-ui republishes lastActive on every frame; throttled for the same
+		// UpdateDevice-dedupe reason as bridges/zigbee's lastSeenRefresh. Version is deliberately
+		// not recomputed - last_seen is excluded from it by contract.
+		t := time.UnixMilli(p.Value)
+		if bd.device.LastSeen != nil && t.Sub(bd.device.LastSeen.AsTime()) < lastActiveRefresh {
+			return
+		}
+		bd.device.LastSeen = timestamppb.New(t)
+		nc.svc.UpdateDevice(bd.device)
+		return
+	}
 
 	bd.builder.applyState(bd.device, role, payload)
 	trackLastNonZeroLevel(bd)

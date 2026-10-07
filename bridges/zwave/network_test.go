@@ -510,3 +510,31 @@ func TestParseStatus(t *testing.T) {
 	_, _, ok = parseStatus([]byte(`true`))
 	assert.False(t, ok)
 }
+
+// TestLastActive_FromGetNodesAndTopic covers both sources of Device.LastSeen: getNodes' lastActive
+// at build time, and the node's own <base>/lastActive topic afterward (observed on a real broker:
+// {"time":..., "value": <epoch ms>}, with no nodeId in the payload - routed by topic alone).
+func TestLastActive_FromGetNodesAndTopic(t *testing.T) {
+	nc, _ := newTestNetworkConn(t, zwaveConfig{MQTT: mqttConfig{Prefix: "zwave"}})
+
+	n := nodeInfo{ID: 7, Name: "plug", Loc: "kitchen", Available: true, Status: "Alive", LastActive: 1790000000000}
+	n.DeviceClass.Generic = genericBinarySwitch
+	nc.buildNode(n)
+
+	bd := nc.devices["zwave-7"]
+	bd.mu.Lock()
+	assert.True(t, bd.device.LastSeen.AsTime().Equal(time.UnixMilli(1790000000000)))
+	bd.mu.Unlock()
+
+	// Under lastActiveRefresh: throttled, not written.
+	nc.onMessage("zwave/kitchen/plug/lastActive", []byte(`{"time":1790000100000,"value":1790000050000}`))
+	bd.mu.Lock()
+	assert.True(t, bd.device.LastSeen.AsTime().Equal(time.UnixMilli(1790000000000)))
+	bd.mu.Unlock()
+
+	// Past it: written.
+	nc.onMessage("zwave/kitchen/plug/lastActive", []byte(`{"time":1790000700000,"value":1790000600000}`))
+	bd.mu.Lock()
+	defer bd.mu.Unlock()
+	assert.True(t, bd.device.LastSeen.AsTime().Equal(time.UnixMilli(1790000600000)))
+}

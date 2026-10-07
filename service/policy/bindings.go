@@ -59,6 +59,14 @@ type HomeAPI interface {
 	// HouseService connection should return ErrNotImplemented, the same
 	// "unconfigured" story GetHouseState/SetHouseState use.
 	GetDeviceRoom(id string) (string, error)
+	// GetLastSeen returns when id was last heard from (Device.last_seen), or
+	// the zero time (no error) if its bridge never reports one - "unknown",
+	// not "never". Lives outside Device.details, so GetState can't reach it.
+	GetLastSeen(id string) (time.Time, error)
+	// IsReachable reports Device.address.is_reachable. A device whose bridge
+	// reports no address at all is treated as reachable: absence of the
+	// signal isn't evidence of a connectivity problem.
+	IsReachable(id string) (bool, error)
 
 	// House state
 	GetHouseState(key string) (any, error)
@@ -243,6 +251,32 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 				return 0
 			}
 			L.Push(lua.LString(room))
+			return 1
+		},
+		// secondsSinceSeen returns nil (not 0) when the device's bridge reports
+		// no last_seen at all, so a script can tell "unknown" from "just now".
+		"secondsSinceSeen": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			t, err := api.GetLastSeen(id)
+			if err != nil {
+				fail(L, err, "home.secondsSinceSeen(%q)", id)
+				return 0
+			}
+			if t.IsZero() {
+				L.Push(lua.LNil)
+				return 1
+			}
+			L.Push(lua.LNumber(time.Since(t).Seconds()))
+			return 1
+		},
+		"isReachable": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			ok, err := api.IsReachable(id)
+			if err != nil {
+				fail(L, err, "home.isReachable(%q)", id)
+				return 0
+			}
+			L.Push(lua.LBool(ok))
 			return 1
 		},
 		"getHouseState": func(L *lua.LState) int {
