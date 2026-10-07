@@ -48,9 +48,9 @@ type deviceView struct {
 	// Level is its current 0-100 level.
 	CanDim bool
 	Level  int
-	// NowPlaying is this device's own MediaSummary, shown under its name in
-	// the devices table regardless of whether CanControlMedia is set (a
-	// read-only media player still reports what's playing).
+	// NowPlaying is this device's own MediaSummary, shown in its readings row
+	// regardless of whether CanControlMedia is set (a read-only media player
+	// still reports what's playing).
 	NowPlaying string
 	// CanControlMedia is true when the device's Media trait allows control;
 	// IsPlaying picks the play/pause button's icon and action. CanSkipForward/
@@ -65,12 +65,32 @@ type deviceView struct {
 	VolumeLevel      int
 	VolumeMax        int
 	IsCamera         bool
+	// Presets are a StandingDesk's preset buttons (its Mode trait's
+	// available_modes), one control each; CurrentPreset is the one last
+	// activated, if the bridge reports it.
+	Presets       []presetView
+	CurrentPreset string
+	// Readings are this device's own measurements (temperature, humidity,
+	// power, ...), shown in a second row under it; see houseview.Readings.
+	Readings []houseview.Reading
 	// ViewHref opens this camera's player. RowView is true when it's the
 	// room's only camera, so its own row carries the [ VIEW ] button; with
 	// several, the DEVICES header offers one [ VIEW ] that opens a picker.
 	ViewHref string
 	RowView  bool
 	Error    string
+}
+
+// presetView is one Mode value offered as a button.
+type presetView struct {
+	Value string
+	Label string
+}
+
+// presetLabel makes a preset's mode value readable on a button:
+// "preset_3_stand" -> "3 STAND".
+func presetLabel(mode string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.TrimPrefix(mode, "preset_"), "_", " "))
 }
 
 type roomDetailView struct {
@@ -169,6 +189,7 @@ func deviceToView(d *apiDevice.Device) deviceView {
 		Kind:     houseview.Kind(d),
 		Online:   d.GetAddress().GetIsReachable(),
 		IsCamera: d.GetCamera() != nil,
+		Readings: houseview.Readings(d),
 	}
 	if onOff := houseview.OnOff(d); onOff != nil && onOff.GetAttributes().GetCanControl() {
 		dv.CanToggle = true
@@ -180,6 +201,10 @@ func deviceToView(d *apiDevice.Device) deviceView {
 	}
 	if m := houseview.Media(d); m != nil {
 		dv.NowPlaying = houseview.MediaSummary(m, houseview.App(d).GetState().GetApplicationName())
+		if dv.NowPlaying != "" {
+			// Shown as the first entry of the device's readings row.
+			dv.Readings = append([]houseview.Reading{{Label: "Playing", Value: dv.NowPlaying}}, dv.Readings...)
+		}
 		if attrs := m.GetAttributes(); attrs.GetCanControl() {
 			dv.CanControlMedia = true
 			dv.IsPlaying = m.GetState().GetPlaybackState() == apiTrait.Media_PS_PLAYING
@@ -197,6 +222,12 @@ func deviceToView(d *apiDevice.Device) deviceView {
 			// render one no drag can move.
 			dv.VolumeMax = 100
 		}
+	}
+	if mode := d.GetStandingDesk().GetMode(); mode.GetAttributes().GetCanControl() {
+		for _, m := range mode.GetAttributes().GetAvailableModes() {
+			dv.Presets = append(dv.Presets, presetView{Value: m, Label: presetLabel(m)})
+		}
+		dv.CurrentPreset = mode.GetState().GetCurrentMode()
 	}
 	return dv
 }

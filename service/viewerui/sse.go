@@ -79,7 +79,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			// A row for a device not on this page has no matching id and
 			// is simply dropped by htmx.
-			if !s.writeFragments(w, "device_row_oob", deviceToView(du.GetDevice())) {
+			dv := deviceToView(du.GetDevice())
+			if !s.writeFragments(w, "device_row_oob", dv) || !s.writeFragments(w, "device_readings_oob", dv) {
 				return
 			}
 			if m := houseview.Media(du.GetDevice()); m != nil && names.mediaChanged(du.GetDevice().GetId(), houseview.MediaSignature(m)) {
