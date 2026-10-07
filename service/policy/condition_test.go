@@ -357,7 +357,7 @@ func TestSunEventConditionRetriesWhenLocationUnavailable(t *testing.T) {
 	cond := NewSunEventCondition(time.UTC, false, 0, func() (float64, float64, bool) { return 0, 0, false })
 	from := time.Date(2026, 6, 21, 0, 0, 0, 0, time.UTC)
 	next, fire := cond.next(from)
-	assert.Equal(t, from.Add(sunLocationRetryInterval), next)
+	assert.Equal(t, from.Add(cond.retryInterval), next)
 	assert.False(t, fire)
 }
 
@@ -365,14 +365,14 @@ func TestSunEventConditionRetriesWhenLocationUnavailable(t *testing.T) {
 // 2026-10-01: a policyd deployed with no --house-addr/--building-id (so locate always returns
 // ok=false) made SunEventCondition fire for real once an hour, every hour, instead of staying
 // silent until a location became available - because Start used to pulse onChange on every timer
-// wake-up unconditionally, including sunLocationRetryInterval retry ticks. sunLocationRetryInterval
-// is shrunk here so the test can observe several retry ticks elapse without waiting a real hour.
+// wake-up unconditionally, including retryInterval retry ticks. retryInterval is shrunk here, on
+// this cond alone, so the test can observe several retry ticks elapse without waiting a real hour -
+// it's a field rather than a package global specifically so this doesn't race Start's background
+// goroutine, which reads it on every reschedule for as long as it runs (including past this test's
+// own return, since nothing joins that goroutine).
 func TestSunEventConditionDoesNotPulseOnLocationRetryTick(t *testing.T) {
-	origInterval := sunLocationRetryInterval
-	sunLocationRetryInterval = 10 * time.Millisecond
-	defer func() { sunLocationRetryInterval = origInterval }()
-
 	cond := NewSunEventCondition(time.UTC, false, 0, func() (float64, float64, bool) { return 0, 0, false })
+	cond.retryInterval = 10 * time.Millisecond
 
 	changes := make(chan bool, 8)
 	cond.Start(t.Context(), func(v bool) { changes <- v })

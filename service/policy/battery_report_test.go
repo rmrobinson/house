@@ -89,7 +89,7 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	trigger.set(true)
 
 	require.Eventually(t, func() bool {
-		return len(notify.calls) == 1
+		return notify.callCount() == 1
 	}, time.Second, 10*time.Millisecond)
 
 	logs := e.LogsForPolicy(batteryReportPolicyID)
@@ -97,7 +97,7 @@ func TestBatteryReportPolicyExecutesAndNotifies(t *testing.T) {
 	assert.Equal(t, StatusSuccess, logs[0].Status)
 	assert.Empty(t, logs[0].Error)
 
-	call := notify.calls[0]
+	call := notify.call(0)
 	assert.Equal(t, []string{"r"}, call.recipientIDs)
 	assert.Equal(t, "Battery report", call.subject)
 	assert.Equal(t, "text/html", call.content)
@@ -136,7 +136,7 @@ func TestBatteryReportPolicySurvivesGetDeviceRoomError(t *testing.T) {
 	trigger.set(true)
 
 	require.Eventually(t, func() bool {
-		return len(notify.calls) == 1
+		return notify.callCount() == 1
 	}, time.Second, 10*time.Millisecond)
 
 	logs := e.LogsForPolicy(batteryReportPolicyID)
@@ -144,7 +144,7 @@ func TestBatteryReportPolicySurvivesGetDeviceRoomError(t *testing.T) {
 	assert.Equal(t, StatusSuccess, logs[0].Status, "a getDeviceRoom error must not fail the whole report")
 	assert.Empty(t, logs[0].Error)
 
-	call := notify.calls[0]
+	call := notify.call(0)
 	assert.Contains(t, call.body, "Hallway Smoke Detector: 5%", "no room suffix, but the device must still be reported")
 }
 
@@ -186,7 +186,7 @@ func TestBatteryReportPolicyListsUnreachableAndStaleDevices(t *testing.T) {
 	trigger.set(true)
 
 	require.Eventually(t, func() bool {
-		return len(notify.calls) == 1
+		return notify.callCount() == 1
 	}, time.Second, 10*time.Millisecond)
 
 	logs := e.LogsForPolicy(batteryReportPolicyID)
@@ -194,7 +194,7 @@ func TestBatteryReportPolicyListsUnreachableAndStaleDevices(t *testing.T) {
 	assert.Equal(t, StatusSuccess, logs[0].Status)
 	assert.Empty(t, logs[0].Error)
 
-	body := notify.calls[0].body
+	body := notify.call(0).body
 	assert.Contains(t, body, "<h3>Unreachable</h3><ul><li>Guest Motion Sensor (Guest Bedroom) (last seen 3d ago)</li></ul>")
 	assert.Contains(t, body, "<h3>No activity in 24h</h3><ul><li>Porch Light (last seen 30h ago)</li></ul>")
 	assert.NotContains(t, body, "Foyer Light")

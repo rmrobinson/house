@@ -605,16 +605,21 @@ func (s *ScheduleCondition) Start(ctx context.Context, onChange func(bool)) {
 	}()
 }
 
-// sunLocationRetryInterval is how long SunEventCondition/SunWindowCondition
-// wait before checking again when locate reports the observer's location
-// isn't available yet - a fixed backoff rather than the "hold the last
-// value" convention numeric readers use, since there's no prior sun
-// computation to fall back on the first time this happens.
-var sunLocationRetryInterval = time.Hour
+// defaultSunLocationRetryInterval is how long SunEventCondition/
+// SunWindowCondition wait before checking again when locate reports the
+// observer's location isn't available yet - a fixed backoff rather than
+// the "hold the last value" convention numeric readers use, since there's
+// no prior sun computation to fall back on the first time this happens.
+// It's a per-instance field (retryInterval below) rather than a package
+// global so a test can shrink it on its own condition without racing
+// Start's background goroutine, which reads it on every reschedule for as
+// long as it's running - including past the end of whichever test created
+// it, since nothing joins that goroutine.
+const defaultSunLocationRetryInterval = time.Hour
 
 // SunEventCondition fires once each day at the computed sunrise or sunset
 // for a location supplied by locate (degrees; ok=false defers to
-// sunLocationRetryInterval), offset by offset, pulsing onChange(true) then
+// retryInterval), offset by offset, pulsing onChange(true) then
 // onChange(false) exactly like ScheduleCondition - "at sunset" is a
 // momentary event, not a state that stays true. locate is called fresh on
 // every reschedule, so a location that becomes available (or changes) after
@@ -625,7 +630,8 @@ type SunEventCondition struct {
 	sunset bool // true selects sunset, false selects sunrise
 	offset time.Duration
 
-	now func() time.Time // overridable in tests
+	now           func() time.Time // overridable in tests
+	retryInterval time.Duration    // overridable in tests; see defaultSunLocationRetryInterval
 
 	value atomic.Bool
 }
@@ -634,7 +640,7 @@ type SunEventCondition struct {
 // over sunrise; offset shifts the trigger from the exact instant (negative
 // fires earlier, positive later).
 func NewSunEventCondition(loc *time.Location, sunset bool, offset time.Duration, locate func() (lat, lon float64, ok bool)) *SunEventCondition {
-	return &SunEventCondition{loc: loc, sunset: sunset, offset: offset, locate: locate, now: time.Now}
+	return &SunEventCondition{loc: loc, sunset: sunset, offset: offset, locate: locate, now: time.Now, retryInterval: defaultSunLocationRetryInterval}
 }
 
 func (s *SunEventCondition) Evaluate() bool {
@@ -645,15 +651,15 @@ func (s *SunEventCondition) Evaluate() bool {
 // should wake up, and whether that instant is a genuine sunrise/sunset
 // event Start should pulse onChange for (fire=true): the next day (starting
 // with from's own calendar day) whose computed sunrise/sunset+offset falls
-// after from. fire is false when from's wake-up is only a
-// sunLocationRetryInterval check-back - the location isn't available, or no
+// after from. fire is false when from's wake-up is only a retryInterval
+// check-back - the location isn't available, or no
 // solution turned up within a year (deep polar latitudes) - so Start knows
 // to silently reschedule rather than treat the retry tick itself as a sun
 // event.
 func (s *SunEventCondition) next(from time.Time) (next time.Time, fire bool) {
 	lat, lon, ok := s.locate()
 	if !ok {
-		return from.Add(sunLocationRetryInterval), false
+		return from.Add(s.retryInterval), false
 	}
 
 	local := from.In(s.loc)
@@ -673,7 +679,7 @@ func (s *SunEventCondition) next(from time.Time) (next time.Time, fire bool) {
 		}
 		day = day.AddDate(0, 0, 1)
 	}
-	return from.Add(sunLocationRetryInterval), false
+	return from.Add(s.retryInterval), false
 }
 
 func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
@@ -694,7 +700,7 @@ func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
 				// pulsed unconditionally on every timer wake-up, so a location that
 				// never resolved (e.g. policyd started with no --house-addr/
 				// --building-id) made the condition fire for real, every
-				// sunLocationRetryInterval, around the clock.
+				// s.retryInterval, around the clock.
 				if !fire {
 					continue
 				}
@@ -710,14 +716,15 @@ func (s *SunEventCondition) Start(ctx context.Context, onChange func(bool)) {
 
 // SunWindowCondition is true while the current time is between today's
 // sunrise and sunset for a location supplied by locate, recomputing at each
-// transition (or retrying after sunLocationRetryInterval if the location
-// isn't available) so it stays correct as sunrise/sunset drift day to day.
-// Wrap with Not for "is it dark"/"is it night".
+// transition (or retrying after retryInterval if the location isn't
+// available) so it stays correct as sunrise/sunset drift day to day. Wrap
+// with Not for "is it dark"/"is it night".
 type SunWindowCondition struct {
 	locate func() (lat, lon float64, ok bool)
 	loc    *time.Location
 
-	now func() time.Time // overridable in tests
+	now           func() time.Time // overridable in tests
+	retryInterval time.Duration    // overridable in tests; see defaultSunLocationRetryInterval
 
 	value atomic.Bool
 }
@@ -725,7 +732,7 @@ type SunWindowCondition struct {
 // NewSunWindowCondition creates a SunWindowCondition for a location supplied
 // by locate.
 func NewSunWindowCondition(loc *time.Location, locate func() (lat, lon float64, ok bool)) *SunWindowCondition {
-	return &SunWindowCondition{loc: loc, locate: locate, now: time.Now}
+	return &SunWindowCondition{loc: loc, locate: locate, now: time.Now, retryInterval: defaultSunLocationRetryInterval}
 }
 
 func (w *SunWindowCondition) Evaluate() bool {
@@ -737,7 +744,7 @@ func (w *SunWindowCondition) Evaluate() bool {
 func (w *SunWindowCondition) state(t time.Time) (up bool, next time.Time) {
 	lat, lon, ok := w.locate()
 	if !ok {
-		return false, t.Add(sunLocationRetryInterval)
+		return false, t.Add(w.retryInterval)
 	}
 
 	local := t.In(w.loc)

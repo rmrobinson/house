@@ -79,8 +79,8 @@ func TestUPSOnBatteryPolicyCoversAnyUPSAndNamesWhichOne(t *testing.T) {
 	// First UPS drops: one email naming only it, with room and runtime.
 	setUPS(home, "ups-a", true, 90, 35)
 	e.UpdateDeviceState("ups-a", "ups", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	c := notify.calls[0]
+	require.Eventually(t, func() bool { return notify.callCount() == 1 }, time.Second, 10*time.Millisecond)
+	c := notify.call(0)
 	assert.Equal(t, []string{"r"}, c.recipientIDs)
 	assert.Equal(t, "text/html", c.content)
 	assert.Equal(t, "[POWER] Office UPS (Office) lost grid power", c.subject)
@@ -92,16 +92,16 @@ func TestUPSOnBatteryPolicyCoversAnyUPSAndNamesWhichOne(t *testing.T) {
 	// Same UPS updating again: no repeat alert.
 	e.UpdateDeviceState("ups-a", "ups", nil)
 	time.Sleep(100 * time.Millisecond)
-	assert.Len(t, notify.calls, 1)
+	assert.Equal(t, 1, notify.callCount())
 
 	// A second UPS joins while the first is still down: a new alert naming
 	// only the new one - a plain level condition would have swallowed this.
 	setUPS(home, "ups-b", true, 80, 20)
 	e.UpdateDeviceState("ups-b", "ups", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "[POWER] Rack UPS lost grid power", notify.calls[1].subject)
-	assert.Contains(t, notify.calls[1].body, "80%")
-	assert.NotContains(t, notify.calls[1].body, "Office UPS")
+	require.Eventually(t, func() bool { return notify.callCount() == 2 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, "[POWER] Rack UPS lost grid power", notify.call(1).subject)
+	assert.Contains(t, notify.call(1).body, "80%")
+	assert.NotContains(t, notify.call(1).body, "Office UPS")
 }
 
 func TestUPSLowBatteryPolicyOnlyListsUPSesAtOrBelowThreshold(t *testing.T) {
@@ -122,15 +122,15 @@ func TestUPSLowBatteryPolicyOnlyListsUPSesAtOrBelowThreshold(t *testing.T) {
 	setUPS(home, "ups-b", true, 60, 20)
 	e.UpdateDeviceState("ups-b", "ups", nil)
 	time.Sleep(100 * time.Millisecond)
-	assert.Empty(t, notify.calls)
+	assert.Zero(t, notify.callCount())
 
 	// The low UPS goes on battery: alert names it and not the healthy one.
 	setUPS(home, "ups-a", true, 15, 5)
 	e.UpdateDeviceState("ups-a", "ups", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "[POWER] Office UPS battery low", notify.calls[0].subject)
-	assert.Contains(t, notify.calls[0].body, "15%")
-	assert.NotContains(t, notify.calls[0].body, "Rack UPS")
+	require.Eventually(t, func() bool { return notify.callCount() == 1 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, "[POWER] Office UPS battery low", notify.call(0).subject)
+	assert.Contains(t, notify.call(0).body, "15%")
+	assert.NotContains(t, notify.call(0).body, "Rack UPS")
 }
 
 func TestWaterDetectedPolicyCoversAnySensorAndSkipsNonWaterSensors(t *testing.T) {
@@ -150,15 +150,15 @@ func TestWaterDetectedPolicyCoversAnySensorAndSkipsNonWaterSensors(t *testing.T)
 
 	_ = home.SetState("w-1", "water.is_active", true)
 	e.UpdateDeviceState("w-1", "sensor", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "[WATER] Water detected: Sump Pump Water Sensor", notify.calls[0].subject)
-	assert.NotContains(t, notify.calls[0].body, "Under Sink")
-	assert.NotContains(t, notify.calls[0].body, "Hall Motion")
+	require.Eventually(t, func() bool { return notify.callCount() == 1 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, "[WATER] Water detected: Sump Pump Water Sensor", notify.call(0).subject)
+	assert.NotContains(t, notify.call(0).body, "Under Sink")
+	assert.NotContains(t, notify.call(0).body, "Hall Motion")
 
 	_ = home.SetState("w-2", "water.is_active", true)
 	e.UpdateDeviceState("w-2", "sensor", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 2 }, time.Second, 10*time.Millisecond)
-	assert.Equal(t, "[WATER] Water detected: Under Sink Water Sensor", notify.calls[1].subject)
+	require.Eventually(t, func() bool { return notify.callCount() == 2 }, time.Second, 10*time.Millisecond)
+	assert.Equal(t, "[WATER] Water detected: Under Sink Water Sensor", notify.call(1).subject)
 }
 
 // TestAnyDevicePoliciesSurviveGetDeviceRoomError: the room suffix is
@@ -177,8 +177,8 @@ func TestAnyDevicePoliciesSurviveGetDeviceRoomError(t *testing.T) {
 
 	_ = home.SetState("w-1", "water.is_active", true)
 	e.UpdateDeviceState("w-1", "sensor", nil)
-	require.Eventually(t, func() bool { return len(notify.calls) == 1 }, time.Second, 10*time.Millisecond)
-	assert.Contains(t, notify.calls[0].body, "Sump Pump Water Sensor")
+	require.Eventually(t, func() bool { return notify.callCount() == 1 }, time.Second, 10*time.Millisecond)
+	assert.Contains(t, notify.call(0).body, "Sump Pump Water Sensor")
 }
 
 func TestAnyDeviceConditionClearsWhenNoDeviceMatches(t *testing.T) {
