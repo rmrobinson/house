@@ -3,6 +3,7 @@ package policy
 import (
 	"database/sql"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,6 +135,95 @@ func TestSQLiteStoreAppendAndGetLogs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, runningLogs, 1)
 	assert.True(t, runningLogs[0].EndedAt.IsZero())
+}
+
+// TestSQLiteStoreAppendLogConcurrentNoLostRows confirms concurrent AppendLog
+// calls queue rather than one losing its row to SQLITE_BUSY - the race that
+// sqlitestore-busy-timeout-gap flagged (two concurrent Engine.trigger runs
+// both writing an execution log). db.SetMaxOpenConns(1) in NewSQLiteStore is
+// what makes database/sql itself serialize these instead of opening a
+// second connection that collides on SQLite's single-writer lock.
+func TestSQLiteStoreAppendLogConcurrentNoLostRows(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0 // isolate this test from the retention prune
+
+	const n = 50
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			err := store.AppendLog(ExecutionLog{
+				PolicyID:  "concurrent",
+				StartedAt: time.Now().UTC(),
+				Status:    StatusSuccess,
+			})
+			assert.NoError(t, err)
+		}(i)
+	}
+	wg.Wait()
+
+	logs, err := store.GetLogs("concurrent", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, n)
+}
+
+// TestSQLiteStoreAppendLogPrunesOldRows confirms AppendLog prunes rows older
+// than its configured retention (policy-execution-log-retention-todo) so
+// execution_logs doesn't grow unbounded forever.
+func TestSQLiteStoreAppendLogPrunesOldRows(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = time.Hour
+
+	now := time.Now().UTC()
+	// Pruning runs opportunistically on every AppendLog, including the one
+	// that just inserted this row: a row already older than the retention
+	// window at insert time (e.g. a backfill, or a long-delayed write) is
+	// pruned immediately rather than surviving until some later call.
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "old",
+		StartedAt: now.Add(-2 * time.Hour),
+		Status:    StatusSuccess,
+	}))
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Empty(t, logs)
+
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: now,
+		Status:    StatusSuccess,
+	}))
+
+	logs, err = store.GetLogs("", 0)
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	assert.Equal(t, "new", logs[0].PolicyID)
+}
+
+// TestSQLiteStoreLogRetentionDisabled confirms a zero WithLogRetention keeps
+// every row forever instead of pruning.
+func TestSQLiteStoreLogRetentionDisabled(t *testing.T) {
+	r := NewConditionRegistry()
+	store := newTestSQLiteStore(t, r)
+	store.logRetention = 0
+
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "ancient",
+		StartedAt: time.Now().UTC().AddDate(-1, 0, 0),
+		Status:    StatusSuccess,
+	}))
+	require.NoError(t, store.AppendLog(ExecutionLog{
+		PolicyID:  "new",
+		StartedAt: time.Now().UTC(),
+		Status:    StatusSuccess,
+	}))
+
+	logs, err := store.GetLogs("", 0)
+	require.NoError(t, err)
+	assert.Len(t, logs, 2)
 }
 
 func TestEngineWithStorePersistsRegisterAndUnregister(t *testing.T) {

@@ -30,13 +30,31 @@ type Store interface {
 	GetLogs(policyID string, limit int) ([]ExecutionLog, error)
 }
 
+// defaultLogRetention bounds how long an execution_logs row survives:
+// AppendLog prunes anything older than this on every call, so the table
+// stays bounded the same way Engine's in-memory logs tail is capped at
+// maxInMemoryLogs - unlike that cap, Store is the durable copy, so it's
+// bounded by age rather than by count. Override via WithLogRetention.
+const defaultLogRetention = 30 * 24 * time.Hour
+
+// StoreOption configures optional SQLiteStore behaviour at construction
+// time, matching the EngineOption pattern in engine.go.
+type StoreOption func(*SQLiteStore)
+
+// WithLogRetention overrides defaultLogRetention. A retention of 0 disables
+// pruning entirely (every execution_logs row is kept forever).
+func WithLogRetention(d time.Duration) StoreOption {
+	return func(s *SQLiteStore) { s.logRetention = d }
+}
+
 // SQLiteStore is a Store backed by SQLite via modernc.org/sqlite (pure Go,
 // no cgo), following the same golang-migrate/embed.FS convention as
 // service/house/db.
 type SQLiteStore struct {
-	logger   *zap.Logger
-	db       *sql.DB
-	registry *ConditionRegistry
+	logger       *zap.Logger
+	db           *sql.DB
+	registry     *ConditionRegistry
+	logRetention time.Duration
 }
 
 // NewSQLiteStore creates a SQLiteStore backed by db, running any pending
@@ -45,7 +63,17 @@ type SQLiteStore struct {
 // service/house/db.NewDatabase. registry is used to resolve a persisted
 // policy's condition_expr JSON back into a typed ConditionExpr tree on
 // LoadPolicies.
-func NewSQLiteStore(logger *zap.Logger, db *sql.DB, registry *ConditionRegistry) (*SQLiteStore, error) {
+//
+// db is restricted to a single open connection: SQLite allows only one
+// writer at a time regardless, and without this, a second connection
+// racing a write (e.g. two concurrent Engine.trigger runs both calling
+// AppendLog) hits SQLITE_BUSY immediately rather than queueing - the pool
+// would return an error instead of just blocking the caller, silently
+// dropping whichever write lost the race. Capping the pool at one
+// connection makes database/sql itself queue that second caller instead.
+func NewSQLiteStore(logger *zap.Logger, db *sql.DB, registry *ConditionRegistry, opts ...StoreOption) (*SQLiteStore, error) {
+	db.SetMaxOpenConns(1)
+
 	migrations, err := iofs.New(migrationsFS, "migrations")
 	if err != nil {
 		logger.Error("unable to open embedded migrations", zap.Error(err))
@@ -66,11 +94,16 @@ func NewSQLiteStore(logger *zap.Logger, db *sql.DB, registry *ConditionRegistry)
 		return nil, err
 	}
 
-	return &SQLiteStore{
-		logger:   logger,
-		db:       db,
-		registry: registry,
-	}, nil
+	s := &SQLiteStore{
+		logger:       logger,
+		db:           db,
+		registry:     registry,
+		logRetention: defaultLogRetention,
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // SavePolicy inserts or updates p, keyed by ID.
@@ -148,7 +181,12 @@ func (s *SQLiteStore) LoadPolicies() ([]*Policy, error) {
 	return policies, rows.Err()
 }
 
-// AppendLog inserts a single execution log record.
+// AppendLog inserts a single execution log record, then opportunistically
+// prunes anything older than s.logRetention so the table doesn't grow
+// unbounded. The prune is cheap once the table is caught up: it's an
+// index-range delete (see migration 000002) that touches zero rows once
+// nothing is past the cutoff, so running it on every insert costs far less
+// than letting the table grow forever would.
 func (s *SQLiteStore) AppendLog(l ExecutionLog) error {
 	var endedAt sql.NullTime
 	if !l.EndedAt.IsZero() {
@@ -162,6 +200,16 @@ func (s *SQLiteStore) AppendLog(l ExecutionLog) error {
 	if err != nil {
 		s.logger.Error("unable to append execution log", zap.String("policy_id", l.PolicyID), zap.Error(err))
 		return err
+	}
+
+	if s.logRetention > 0 {
+		cutoff := time.Now().UTC().Add(-s.logRetention)
+		if _, err := s.db.Exec("DELETE FROM execution_logs WHERE started_at < ?", cutoff); err != nil {
+			// The log itself is already committed above; a failed prune just
+			// means the table grows a little more before the next attempt, not
+			// a lost write, so it's a warning rather than a returned error.
+			s.logger.Warn("unable to prune old execution logs", zap.Error(err))
+		}
 	}
 	return nil
 }

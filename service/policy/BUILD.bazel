@@ -22,6 +22,8 @@ go_library(
     embedsrcs = [
         "migrations/000001_setup.down.sql",
         "migrations/000001_setup.up.sql",
+        "migrations/000002_execution_log_retention.down.sql",
+        "migrations/000002_execution_log_retention.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/policy",
     visibility = ["//visibility:public"],
@@ -58,6 +60,7 @@ go_test(
         "sun_test.go",
         "ups_water_policies_test.go",
     ],
+    embed = [":policy"],
     embedsrcs = [
         "scripts/battery_report.lua",
         "scripts/sys_occupancy.lua",
@@ -66,7 +69,6 @@ go_test(
         "scripts/ups_on_battery.lua",
         "scripts/water_detected.lua",
     ],
-    embed = [":policy"],
     deps = [
         "//api",
         "@com_github_stretchr_testify//assert",
