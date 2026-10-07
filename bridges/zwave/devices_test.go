@@ -497,3 +497,19 @@ func TestRGBLightBuilder_ApplyCommand_PartialFailure(t *testing.T) {
 	err = rgbLightBuilder{}.applyCommand(context.Background(), mc, roles, d, cmd)
 	assert.ErrorIs(t, err, bridge.ErrCommandTimeout)
 }
+
+func TestSensorBuilder_FahrenheitNode(t *testing.T) {
+	n := nodeInfo{ID: 12, Values: map[string]nodeValue{
+		"temp": {CommandClass: ccMultilevelSensor, Property: "Air temperature", Unit: "°F", Value: []byte("76")},
+	}}
+	n.DeviceClass.Generic = genericSensorNotification
+	d, roles, err := sensorBuilder{}.build(n, deviceOverride{})
+	require.NoError(t, err)
+
+	assert.InDelta(t, 24.44, d.GetSensor().AirProperties.State.TemperatureC, 0.01)
+	assert.Contains(t, roles, roleAirTemperatureF)
+	assert.NotContains(t, roles, roleAirTemperature)
+
+	sensorBuilder{}.applyState(d, roleAirTemperatureF, []byte("32"))
+	assert.InDelta(t, 0, d.GetSensor().AirProperties.State.TemperatureC, 0.01)
+}

@@ -96,6 +96,7 @@ type nodeInfo struct {
 type nodeValue struct {
 	CommandClass int             `json:"commandClass"`
 	Endpoint     int             `json:"endpoint"`
+	Unit         string          `json:"unit"`
 	Property     string          `json:"-"`
 	PropertyKey  string          `json:"-"`
 	Value        json.RawMessage `json:"value"`
@@ -475,10 +476,25 @@ func (nc *networkConn) onMessage(topic string, payload []byte) {
 		return
 	}
 
-	bd.builder.applyState(bd.device, role, payload)
+	bd.builder.applyState(bd.device, role, unwrapValue(payload))
 	trackLastNonZeroLevel(bd)
 	bd.device.Version = computeVersion(bd.device)
 	nc.svc.UpdateDevice(bd.device)
+}
+
+// unwrapValue extracts the "value" from a value-topic payload. zwave-js-ui publishes value topics
+// as {"time":...,"value":<v>,"nodeName":...,"nodeLocation":...} objects (confirmed against a real
+// broker), but a bare value is also accepted since that's the shape its "payload only value"
+// setting and this bridge's own getNodes snapshot use. A payload that isn't an object with a
+// "value" member is returned unchanged.
+func unwrapValue(payload []byte) json.RawMessage {
+	var wrapped struct {
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(payload, &wrapped); err == nil && wrapped.Value != nil {
+		return wrapped.Value
+	}
+	return payload
 }
 
 // handleStatus applies a node status-topic update to the owning device's Address.IsReachable.

@@ -538,3 +538,35 @@ func TestLastActive_FromGetNodesAndTopic(t *testing.T) {
 	defer bd.mu.Unlock()
 	assert.True(t, bd.device.LastSeen.AsTime().Equal(time.UnixMilli(1790000600000)))
 }
+
+// TestOnMessage_UnwrapsRealValuePayload confirms a value topic's real zwave-js-ui payload shape - a
+// {"time","value","nodeName","nodeLocation"} object, not a bare value - is decoded, and that a
+// Fahrenheit node's temperature is converted to Celsius.
+func TestOnMessage_UnwrapsRealValuePayload(t *testing.T) {
+	nc, _ := newTestNetworkConn(t, zwaveConfig{MQTT: mqttConfig{Prefix: "zwave"}})
+
+	n := nodeInfo{ID: 2, Name: "motion_sensor", Loc: "second_floor/guest_bedroom", Available: true, Status: "Alive", Values: map[string]nodeValue{
+		"temp":     {CommandClass: ccMultilevelSensor, Property: "Air temperature", Unit: "°F"},
+		"humidity": {CommandClass: ccMultilevelSensor, Property: "Humidity", Unit: "%"},
+	}}
+	n.DeviceClass.Generic = genericMultilevelSensor
+	nc.buildNode(n)
+
+	base := "zwave/second_floor/guest_bedroom/motion_sensor/sensor_multilevel/endpoint_0/"
+	nc.onMessage(base+"Air_temperature", []byte(`{"time":1791339173114,"value":63.4,"nodeName":"motion_sensor","nodeLocation":"second_floor/guest_bedroom"}`))
+	nc.onMessage(base+"Humidity", []byte(`{"time":1791339173781,"value":74,"nodeName":"motion_sensor","nodeLocation":"second_floor/guest_bedroom"}`))
+	nc.onMessage("zwave/second_floor/guest_bedroom/motion_sensor/notification/endpoint_0/Home_Security/Motion_sensor_status", []byte(`{"time":1,"value":8}`))
+
+	s := nc.devices["zwave-2"].device.GetSensor()
+	assert.InDelta(t, 17.44, s.AirProperties.State.TemperatureC, 0.01)
+	assert.InDelta(t, 74, s.AirProperties.State.HumidityPercentage, 0.01)
+	assert.True(t, s.Presence.State.MotionDetected)
+}
+
+func TestUnwrapValue(t *testing.T) {
+	assert.JSONEq(t, `63.4`, string(unwrapValue([]byte(`{"time":1,"value":63.4}`))))
+	assert.JSONEq(t, `false`, string(unwrapValue([]byte(`{"value":false}`))))
+	assert.Equal(t, "true", string(unwrapValue([]byte(`true`))))
+	assert.Equal(t, "22.5", string(unwrapValue([]byte(`22.5`))))
+	assert.Equal(t, `{"foo":1}`, string(unwrapValue([]byte(`{"foo":1}`))))
+}
