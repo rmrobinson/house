@@ -146,6 +146,12 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 		} else if d.GetFan().GetToggles() != nil && req.GetToggle() != nil {
 			return true
 		}
+	} else if d.GetStandingDesk() != nil {
+		// Presets are Mode values (bridges/esphome's standingDeskBuilder). Position/Movement
+		// commands aren't accepted: the builder doesn't wire either up yet.
+		if d.GetStandingDesk().GetMode() != nil && req.GetMode() != nil {
+			return true
+		}
 	} else if d.GetMediaPlayer() != nil {
 		if d.GetMediaPlayer().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true

@@ -4,8 +4,9 @@
   {{template "now_playing" .}}
 </div>
 <div class="box">
-  <div class="box-title title-bar">DEVICES{{if gt (len .Cameras) 1}}
-    <button class="action" onclick="this.parentElement.nextElementSibling.showModal()">[ VIEW ]</button>{{end}}</div>
+  <div class="box-title title-bar">DEVICES<span>
+    <button class="action readings-toggle" aria-pressed="true" title="Show or hide each device's readings">[ DETAILS ]</button>{{if gt (len .Cameras) 1}}
+    <button class="action" onclick="this.closest('.title-bar').nextElementSibling.showModal()">[ VIEW ]</button>{{end}}</span></div>
   {{if gt (len .Cameras) 1}}<dialog onclick="if (event.target === this) this.close()">
     <div class="box-title title-bar">CAMERAS <button class="action" onclick="this.closest('dialog').close()" aria-label="Close">[ X ]</button></div>
     <ul class="list">
@@ -13,7 +14,7 @@
     {{end}}</ul>
   </dialog>{{end}}
   <table class="devices"><tbody>
-  {{range .Devices}}{{template "device_row" .}}
+  {{range .Devices}}{{template "device_row" .}}{{template "device_readings" .}}
   {{else}}<tr><td class="dim">No devices linked.</td></tr>
   {{end}}</tbody></table>
 </div>{{end}}

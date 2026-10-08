@@ -300,6 +300,18 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "standing desk preset mode supported",
+			d:    &device.Device{Id: "d1", Details: &device.Device_StandingDesk{StandingDesk: &device.StandingDesk{Mode: &trait.Mode{}}}},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Mode{Mode: &command.Mode{Value: "preset_4_sit"}}},
+			want: true,
+		},
+		{
+			name: "standing desk position not supported (movement not wired)",
+			d:    &device.Device{Id: "d1", Details: &device.Device_StandingDesk{StandingDesk: &device.StandingDesk{Mode: &trait.Mode{}}}},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Position{Position: &command.Position{}}},
+			want: false,
+		},
+		{
 			name: "fan volume not supported",
 			d:    fanDevice("d1"),
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: 10}}},

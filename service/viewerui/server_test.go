@@ -635,6 +635,60 @@ func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
 	assert.NotContains(t, sb.String(), "<tr", "replacing the row would drop its VIEW button")
 }
 
+func fanWithTemp() *apiDevice.Device {
+	return &apiDevice.Device{
+		Id:      "fan1",
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Config:  &apiDevice.Device_Config{Name: "Tower Fan"},
+		Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
+			Temperature: &apiTrait.Temperature{State: &apiTrait.Temperature_State{Value: 23.5}},
+		}},
+	}
+}
+
+func TestRoomDetailShowsDeviceReadingsRowAndToggle(t *testing.T) {
+	s, house, _ := startTestServer(t)
+	house.setExtraDevice(fanWithTemp())
+	body := get(s, "/rooms/r1", "HX-Request", "true").Body.String()
+	assert.Contains(t, body, "readings-toggle")
+	assert.Contains(t, body, `id="device-readings-fan1"`)
+	assert.Contains(t, body, "23.5°C")
+	// A device with nothing to report still gets a hidden row for live fills.
+	assert.Regexp(t, `id="device-readings-[^"]*" class="readings" hidden`, body)
+}
+
+func TestStandingDeskPresetsAreControlsAndSendMode(t *testing.T) {
+	desk := &apiDevice.Device{
+		Id:      "desk1",
+		Config:  &apiDevice.Device_Config{Name: "Desk"},
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Details: &apiDevice.Device_StandingDesk{StandingDesk: &apiDevice.StandingDesk{
+			Mode: &apiTrait.Mode{Attributes: &apiTrait.Mode_Attributes{CanControl: true, AvailableModes: []string{"preset_3_stand", "preset_4_sit"}}},
+		}},
+	}
+	dv := deviceToView(desk)
+	assert.Equal(t, []presetView{{"preset_3_stand", "3 STAND"}, {"preset_4_sit", "4 SIT"}}, dv.Presets)
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
+	assert.Contains(t, sb.String(), `{"mode": "preset_4_sit"}`)
+	assert.Contains(t, sb.String(), "[ 4 SIT ]")
+}
+
+func TestPlayingMediaIsFirstReadingNotUnderName(t *testing.T) {
+	dv := deviceToView(speaker("Kitchen Speaker", true, true, true))
+	require.NotEmpty(t, dv.Readings)
+	assert.Equal(t, "Playing", dv.Readings[0].Label)
+	assert.Equal(t, dv.NowPlaying, dv.Readings[0].Value)
+}
+
+func TestDeviceReadingsOOBCarriesReadings(t *testing.T) {
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_readings_oob", deviceToView(fanWithTemp())))
+	assert.Contains(t, sb.String(), `hx-swap-oob="true"`)
+	assert.Contains(t, sb.String(), "23.5°C")
+	assert.NotContains(t, sb.String(), "hidden")
+}
+
 func TestDeviceToViewPopulatesMediaAndVolume(t *testing.T) {
 	dv := deviceToView(speaker("Kitchen Speaker", true, false, true))
 	assert.True(t, dv.CanControlMedia)

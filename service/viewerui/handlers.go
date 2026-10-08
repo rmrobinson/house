@@ -200,7 +200,8 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 // updated row: form field "on" (true|false) sends OnOff, "brightness"
 // (0-100) sends BrightnessAbsolute, "playback" (play|pause) sends Playback,
 // "skip" (forward|backward) sends SkipForward/SkipBackward, "volume" (0-N)
-// sends VolumeAbsolute.
+// sends VolumeAbsolute, "mode" (a Mode value, e.g. a standing desk preset)
+// sends Mode.
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -227,6 +228,8 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		cmd.Details = &command.Command_SkipForward{SkipForward: &command.SkipForward{}}
 	case r.PostForm.Get("skip") == "backward":
 		cmd.Details = &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}
+	case r.PostForm.Get("mode") != "":
+		cmd.Details = &command.Command_Mode{Mode: &command.Mode{Value: r.PostForm.Get("mode")}}
 	case r.PostForm.Has("volume"):
 		level, err := strconv.Atoi(r.PostForm.Get("volume"))
 		if err != nil || level < 0 {
@@ -235,7 +238,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		}
 		cmd.Details = &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: int32(level)}}
 	default:
-		http.Error(w, `expected on=true|false, brightness=0-100, playback=play|pause, skip=forward|backward, or volume=0-N`, http.StatusBadRequest)
+		http.Error(w, `expected on=true|false, brightness=0-100, playback=play|pause, skip=forward|backward, volume=0-N, or mode=<value>`, http.StatusBadRequest)
 		return
 	}
 

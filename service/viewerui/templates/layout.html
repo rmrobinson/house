@@ -56,8 +56,15 @@
   .pad { padding: 0.5rem 0.75rem; }
   .nowplaying { padding: 0.5rem 0.75rem; border-top: 1px solid var(--line); color: var(--accent); }
   .nowplaying[hidden] { display: none; }
-  .nowplaying-device { font-size: 0.8rem; }
   input.dimmer, input.volume { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
+  table.devices td:last-child:not([colspan]) { white-space: nowrap; width: 1%; }
+  tr.readings td { padding: 0 0.75rem 0.4rem 2rem; font-size: 0.72rem; opacity: 0.7; }
+  tr.readings td::before { content: "\21b3"; margin-right: 0.5rem; color: var(--dim); }
+  html:not(.hide-readings) table.devices tr:has(+ tr.readings:not([hidden])) td { border-bottom: none; }
+  tr.readings[hidden], html.hide-readings tr.readings { display: none; }
+  .reading { margin-right: 1.25rem; white-space: nowrap; }
+  .reading.alert { color: var(--err); }
+  button.action[aria-pressed="false"] { color: var(--dim); }
   button.action:disabled, button.toggle:disabled { opacity: 0.35; cursor: default; border-color: var(--line); }
   button.action:disabled:hover, button.toggle:disabled:hover { border-color: var(--line); }
 </style>
@@ -132,6 +139,27 @@ document.addEventListener('htmx:oobBeforeSwap', function (e) {
   if (t && t.tagName === 'TR' && t.contains(document.activeElement) && document.activeElement.matches('input.dimmer, input.volume')) {
     e.detail.shouldSwap = false;
   }
+});
+
+// DETAILS toggle: show or hide every device's readings row. Remembered per
+// browser; the room pane is swapped in by htmx, so the button's pressed state
+// is re-synced on every load.
+function readingsHidden() {
+  try { return localStorage.getItem('viewerui.hideReadings') === '1'; } catch (e) { return false; }
+}
+function syncReadingsToggle() {
+  var hidden = readingsHidden();
+  document.documentElement.classList.toggle('hide-readings', hidden);
+  document.querySelectorAll('button.readings-toggle').forEach(function (b) {
+    b.setAttribute('aria-pressed', hidden ? 'false' : 'true');
+  });
+}
+syncReadingsToggle();
+document.addEventListener('htmx:load', syncReadingsToggle);
+document.addEventListener('click', function (e) {
+  if (!e.target.closest('button.readings-toggle')) return;
+  try { localStorage.setItem('viewerui.hideReadings', readingsHidden() ? '0' : '1'); } catch (err) {}
+  syncReadingsToggle();
 });
 
 // Cap the event log so a wall-mounted tab doesn't grow forever.
