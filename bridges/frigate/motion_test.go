@@ -68,6 +68,7 @@ func (f *fakeFrigate) bridge(t *testing.T) (*FrigateBridge, *publishLog) {
 		occupancyLabels: map[string]bool{"person": true},
 		active:          map[string]map[string]int{},
 		publish:         log.record,
+		presenceGrace:   time.Hour,
 	}, log
 }
 
@@ -147,9 +148,33 @@ func TestSetOccupancyLabelsAddsLabels(t *testing.T) {
 	assert.Equal(t, []string{"garage_camera:motion-off/occ-on", "garage_camera:motion-off/occ-off"}, log.get())
 }
 
-func TestWatchFeedClearsAndReconnectsOnDrop(t *testing.T) {
+func TestWatchFeedHoldsPresenceAcrossBriefDrop(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t) // presenceGrace is an hour: a drop never goes stale here
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fb.watchMotion(ctx)
+
+	c := f.accept(t)
+	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
+	require.Eventually(t, func() bool { return len(log.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	// Frigate doesn't replay state on connect, so a blip must not report the person gone.
+	c.Close()
+	c = f.accept(t)
+	assert.Equal(t, []string{"garage_camera:motion-off/occ-on"}, log.get())
+
+	// The reconnected feed carries on from the held state.
+	send(t, c, `{"topic":"garage_camera/person/active","payload":"0"}`) // string count, as MQTT relays it
+	assert.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "garage_camera:motion-off/occ-off", log.get()[1])
+}
+
+func TestWatchFeedClearsPresenceWhenDownTooLong(t *testing.T) {
 	f := newFakeFrigate(t)
 	fb, log := f.bridge(t)
+	fb.presenceGrace = 50 * time.Millisecond // shorter than the 1s reconnect backoff
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -160,7 +185,7 @@ func TestWatchFeedClearsAndReconnectsOnDrop(t *testing.T) {
 	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
 	require.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
 
-	// Dropping the feed mid-presence must clear both: the OFF/zero would otherwise never arrive.
+	// Down past the grace period: a missed zero could leave it stuck on, so fail safe to absent.
 	c.Close()
 	assert.Eventually(t, func() bool { return len(log.get()) == 3 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, "garage_camera:motion-off/occ-off", log.get()[2])
@@ -169,4 +194,27 @@ func TestWatchFeedClearsAndReconnectsOnDrop(t *testing.T) {
 	c = f.accept(t)
 	send(t, c, `{"topic":"backyard_camera/person/active","payload":1}`)
 	assert.Eventually(t, func() bool { return len(log.get()) == 4 }, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestWatchFeedPublishesNothingOnShutdown(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t)
+	fb.presenceGrace = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { fb.watchMotion(ctx); close(done) }()
+
+	c := f.accept(t)
+	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
+	require.Eventually(t, func() bool { return len(log.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchMotion did not stop on cancel")
+	}
+	time.Sleep(100 * time.Millisecond)
+	assert.Len(t, log.get(), 1, "shutdown must not publish cleared presence")
 }

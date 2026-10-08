@@ -21,8 +21,9 @@ const (
 	wsPath        = "/ws"
 
 	// wsReadTimeout bounds how long the websocket may stay silent before it's considered dead. Frigate
-	// publishes its stats topic every few seconds, so a healthy connection is never quiet for this long.
-	wsReadTimeout = 60 * time.Second
+	// publishes its stats topic every mqtt.stats_interval (60s by default), so a healthy connection is
+	// never quiet for longer than that; this allows two missed intervals plus slack.
+	wsReadTimeout = 150 * time.Second
 )
 
 // CameraConfig contains some of the configured fields in a camera. This is only a partial definition.
@@ -170,6 +171,9 @@ type FeedHandlers struct {
 	// shadows, lighting changes and animals.
 	OnMotion func(camera string, motion bool)
 
+	// OnConnect is called once the websocket is established, before any update is delivered.
+	OnConnect func()
+
 	// OnActiveCount is called with the number of currently-active objects of a label on a camera, from
 	// Frigate's "<camera>/<label>/active" topics. "Active" excludes objects Frigate has judged
 	// stationary (a parked car, someone sitting still).
@@ -197,6 +201,10 @@ func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
 	// Unblock the read below as soon as ctx is cancelled.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
+
+	if h.OnConnect != nil {
+		h.OnConnect()
+	}
 
 	for {
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
@@ -227,8 +235,8 @@ func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
 			}
 		case len(parts) == 3 && parts[2] == "active" && parts[1] != "all":
 			// "<camera>/<label>/active"; "all" is Frigate's aggregate across labels.
-			var count int
-			if err := json.Unmarshal(msg.Payload, &count); err != nil {
+			count, err := parseCount(msg.Payload)
+			if err != nil {
 				c.logger.Warn("unparseable active-object count", zap.String("topic", msg.Topic), zap.Error(err))
 				continue
 			}
@@ -237,4 +245,19 @@ func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
 			}
 		}
 	}
+}
+
+// parseCount reads an active-object count that may arrive as a JSON number or, as MQTT relays it, a numeric
+// string.
+func parseCount(raw json.RawMessage) (int, error) {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(s)
 }

@@ -25,6 +25,12 @@ const (
 	cameraRestreamFormat     = "rtsp://%s:8554/%s"
 	cameraRestreamWHEPFormat = "http://%s:%d/api/webrtc?src=%s"
 
+	// presenceGrace is how long a dropped motion feed may stay down before every camera's presence is
+	// cleared. Frigate doesn't replay current state when a client connects, so clearing on every blip would
+	// report someone absent who is still standing there; but a feed down for long enough that a lights-off
+	// transition could have been missed must fail safe to "nobody there".
+	presenceGrace = 30 * time.Second
+
 	motionReconnectMin = time.Second
 	motionReconnectMax = 30 * time.Second
 )
@@ -59,6 +65,9 @@ type FrigateBridge struct {
 	// publish pushes a camera's current state to the house; it defaults to svc.UpdateDevice and is a
 	// field only so tests can observe publishes without a running bridge service.
 	publish func(*Camera)
+
+	// presenceGrace overrides the package default; tests shorten it.
+	presenceGrace time.Duration
 }
 
 // NewFrigateBridge returns a new instance of the Frigate bridge.
@@ -93,6 +102,7 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		occupancyLabels:        map[string]bool{"person": true},
 		active:                 map[string]map[string]int{},
 		publish:                func(c *Camera) { svc.UpdateDevice(c.ToDevice()) },
+		presenceGrace:          presenceGrace,
 	}
 }
 
@@ -298,21 +308,43 @@ func (fb *FrigateBridge) clearPresence() {
 	}
 }
 
-// watchMotion keeps a websocket to Frigate open for the life of ctx, applying its motion and active-object updates and
-// reconnecting with backoff after a drop.
+// watchMotion keeps a websocket to Frigate open for the life of ctx, applying its motion and active-object
+// updates and reconnecting with backoff after a drop. Presence is held across a brief drop and only cleared
+// if the feed stays down for presenceGrace.
 func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 	backoff := motionReconnectMin
+
+	// staleTimer fires clearPresence once the feed has been down for presenceGrace. It's stopped whenever a
+	// connection is established, and only ever touched from this goroutine (OnConnect runs synchronously
+	// inside StreamFeed).
+	var staleTimer *time.Timer
+	defer func() {
+		if staleTimer != nil {
+			staleTimer.Stop()
+		}
+	}()
+
 	for ctx.Err() == nil {
 		started := time.Now()
 		err := fb.client.StreamFeed(ctx, frigate.FeedHandlers{
+			OnConnect: func() {
+				if staleTimer != nil {
+					staleTimer.Stop()
+				}
+			},
 			OnMotion:      fb.setMotion,
 			OnActiveCount: fb.setActiveCount,
 		})
-		fb.clearPresence()
 		if ctx.Err() != nil {
 			return
 		}
 		fb.logger.Error("frigate motion feed dropped, reconnecting", zap.Error(err), zap.Duration("backoff", backoff))
+
+		if staleTimer == nil {
+			staleTimer = time.AfterFunc(fb.presenceGrace, fb.clearPresence)
+		} else {
+			staleTimer.Reset(fb.presenceGrace)
+		}
 
 		// A feed that held for a while was healthy, so start the backoff over rather than keep growing it.
 		if time.Since(started) > motionReconnectMax {
