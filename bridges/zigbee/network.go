@@ -321,6 +321,14 @@ func (nc *networkConn) buildDevice(bd bridgeDevice) {
 		renamed := oldFriendlyName != bd.FriendlyName
 		if renamed {
 			existingBD.friendlyName = bd.FriendlyName
+			// The published device's name must follow too, otherwise consumers keep showing the
+			// name the device was first discovered under (typically the raw ieee address).
+			if existingBD.device.Config == nil {
+				existingBD.device.Config = &device.Device_Config{}
+			}
+			existingBD.device.Config.Name = bd.FriendlyName
+			existingBD.device.Version = computeVersion(existingBD.device)
+			nc.svc.UpdateDevice(existingBD.device)
 		}
 		existingBD.mu.Unlock()
 

@@ -203,6 +203,7 @@ func TestHandleBridgeDevices_RenameUpdatesRouting(t *testing.T) {
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
 	assert.True(t, bd.device.GetGeneric().OnOff.State.IsOn, "a state update on the new friendly_name's topic must still route correctly after a rename")
+	assert.Equal(t, "renamed_plug", bd.device.GetConfig().GetName(), "a rename must update the published device's Config.Name")
 }
 
 // TestBuildDevice_RenameRaceWithApplyCommand is a regression test for a data race an earlier
