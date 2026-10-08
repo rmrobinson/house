@@ -297,3 +297,57 @@ func TestSnapshotOnReconnectCorrectsMissedUpdates(t *testing.T) {
 	assert.Eventually(t, func() bool { return len(log.get()) == 4 }, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, "backyard_camera:motion-off/occ-off", log.get()[3])
 }
+
+func TestStaleClearDoesNotWipeStateRestoredByReconnect(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t)
+
+	fb.setActiveCount("garage_camera", "person", 1)
+	staleGen := fb.currentFeedGen() // a clear armed during an outage...
+
+	fb.markFeedConnected() // ...then the feed reconnects and restores state...
+	fb.clearPresence(staleGen)
+
+	// ...so the clear that was already in flight must be a no-op.
+	assert.True(t, fb.cameras["garage_camera"].OccupancyDetected)
+	assert.Equal(t, []string{"garage_camera:motion-off/occ-on"}, log.get())
+
+	fb.clearPresence(fb.currentFeedGen()) // a current-generation clear still works
+	assert.False(t, fb.cameras["garage_camera"].OccupancyDetected)
+}
+
+func TestSnapshotTreatsOmittedCameraAsIdle(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t)
+
+	fb.setMotion("garage_camera", true)
+	fb.setActiveCount("garage_camera", "person", 1)
+
+	// The snapshot reports on the backyard only: the garage has gone quiet or been disabled.
+	fb.applySnapshot(map[string]frigate.CameraActivity{"backyard_camera": {}})
+
+	assert.False(t, fb.cameras["garage_camera"].MotionDetected)
+	assert.False(t, fb.cameras["garage_camera"].OccupancyDetected)
+	assert.Equal(t, "garage_camera:motion-off/occ-off", log.get()[len(log.get())-1])
+}
+
+func TestGraceCountsFromTheFirstFailureNotEachRetry(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t)
+	fb.presenceGrace = 1500 * time.Millisecond // retries come at ~1s and ~3s; resetting per retry would slip past 4s
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fb.watchMotion(ctx)
+
+	c := f.accept(t)
+	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
+	require.Eventually(t, func() bool { return len(log.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	// Take Frigate away entirely so every redial fails.
+	c.Close()
+	f.srv.Close()
+
+	assert.Eventually(t, func() bool { return len(log.get()) == 2 }, 2500*time.Millisecond, 10*time.Millisecond,
+		"presence should clear ~1.5s after the drop, not after the last retry")
+}

@@ -66,6 +66,11 @@ type FrigateBridge struct {
 	// field only so tests can observe publishes without a running bridge service.
 	publish func(*Camera)
 
+	// feedGen increments each time the motion feed connects. A pending clearPresence carries the generation it
+	// was armed in, so one that fires (or is already waiting on mu) after a reconnect can tell it is stale and
+	// must not wipe the state that reconnect just restored.
+	feedGen uint64
+
 	// presenceGrace overrides the package default; tests shorten it.
 	presenceGrace time.Duration
 }
@@ -296,13 +301,34 @@ func (fb *FrigateBridge) updateOccupancyLocked(name string, camera *Camera) {
 	fb.publish(camera)
 }
 
-// applySnapshot replaces motion and active-object state for every configured camera Frigate reports on with
-// that snapshot. Frigate only publishes changes, so this is how the bridge learns what was already happening
+// markFeedConnected records that the feed (re)connected, invalidating any clearPresence armed before it.
+func (fb *FrigateBridge) markFeedConnected() {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	fb.feedGen++
+}
+
+func (fb *FrigateBridge) currentFeedGen() uint64 {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	return fb.feedGen
+}
+
+// applySnapshot replaces motion and active-object state for every configured camera with that snapshot, a
+// camera it omits counting as idle. Frigate only publishes changes, so this is how the bridge learns what was already happening
 // when it (re)connected, and how it recovers from an update missed during a drop. Active counts exclude
 // stationary objects, matching what Frigate's own "<camera>/<label>/active" topics count.
 func (fb *FrigateBridge) applySnapshot(cameras map[string]frigate.CameraActivity) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
+
+	// A configured camera missing from the snapshot (disabled, or detection off) has nothing happening, so
+	// its held state must not survive the reconnect.
+	for name := range fb.cameras {
+		if _, reported := cameras[name]; !reported {
+			cameras[name] = frigate.CameraActivity{}
+		}
+	}
 
 	for name, activity := range cameras {
 		camera, ok := fb.cameras[name]
@@ -329,9 +355,15 @@ func (fb *FrigateBridge) applySnapshot(cameras map[string]frigate.CameraActivity
 // clearPresence forgets every active-object count and marks every camera as having neither motion nor
 // occupancy. Used when the feed drops: Frigate only publishes changes, so a value still held would never be
 // reset by the update we missed, leaving presence-triggered policies stuck.
-func (fb *FrigateBridge) clearPresence() {
+//
+// It does nothing if the feed has reconnected since gen was read from currentFeedGen.
+func (fb *FrigateBridge) clearPresence(gen uint64) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
+
+	if gen != fb.feedGen {
+		return
+	}
 
 	fb.active = map[string]map[string]int{}
 	for _, camera := range fb.cameras {
@@ -349,9 +381,10 @@ func (fb *FrigateBridge) clearPresence() {
 func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 	backoff := motionReconnectMin
 
-	// staleTimer fires clearPresence once the feed has been down for presenceGrace. It's stopped whenever a
-	// connection is established, and only ever touched from this goroutine (OnConnect runs synchronously
-	// inside StreamFeed).
+	// staleTimer fires clearPresence once the feed has been down for presenceGrace. It is armed once per
+	// outage - not on each failed retry, which would keep pushing the deadline out - and disarmed when a
+	// connection is established. Only this goroutine touches it (OnConnect runs synchronously inside
+	// StreamFeed).
 	var staleTimer *time.Timer
 	defer func() {
 		if staleTimer != nil {
@@ -363,8 +396,10 @@ func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 		started := time.Now()
 		err := fb.client.StreamFeed(ctx, frigate.FeedHandlers{
 			OnConnect: func() {
+				fb.markFeedConnected()
 				if staleTimer != nil {
 					staleTimer.Stop()
+					staleTimer = nil
 				}
 			},
 			OnSnapshot:    fb.applySnapshot,
@@ -377,9 +412,8 @@ func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 		fb.logger.Error("frigate motion feed dropped, reconnecting", zap.Error(err), zap.Duration("backoff", backoff))
 
 		if staleTimer == nil {
-			staleTimer = time.AfterFunc(fb.presenceGrace, fb.clearPresence)
-		} else {
-			staleTimer.Reset(fb.presenceGrace)
+			gen := fb.currentFeedGen()
+			staleTimer = time.AfterFunc(fb.presenceGrace, func() { fb.clearPresence(gen) })
 		}
 
 		// A feed that held for a while was healthy, so start the backoff over rather than keep growing it.
