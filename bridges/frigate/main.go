@@ -26,6 +26,7 @@ func main() {
 	viper.SetDefault("bridge.refresh_interval", 60)
 	viper.SetDefault("bridge.listen_port", 17008)
 	viper.SetDefault("frigate.restream_http_port", 1984)
+	viper.SetDefault("frigate.motion_labels", []string{"person"})
 
 	configPath, err := configutil.FindConfigFile("frigate", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
 	if err != nil {
@@ -76,6 +77,8 @@ func main() {
 	svc := bridge.NewService(logger)
 
 	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr, viper.GetInt("frigate.restream_http_port"))
+
+	fb.SetMotionLabels(viper.GetStringSlice("frigate.motion_labels"))
 
 	var cameraConfigs []CameraConfig
 	if err := viper.UnmarshalKey("frigate.cameras", &cameraConfigs); err != nil {

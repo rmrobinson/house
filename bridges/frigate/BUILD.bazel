@@ -34,11 +34,17 @@ go_binary(
 
 go_test(
     name = "frigate_test",
-    srcs = ["camera_test.go"],
+    srcs = [
+        "camera_test.go",
+        "motion_test.go",
+    ],
     embed = [":frigate_lib"],
     deps = [
         "//api/trait",
+        "//bridges/frigate/frigate",
+        "@com_github_gorilla_websocket//:websocket",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

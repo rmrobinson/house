@@ -54,3 +54,14 @@ func TestCameraToDeviceOmitsWHEPEndpointWhenUnset(t *testing.T) {
 	require.Len(t, endpoints, 1)
 	assert.Equal(t, trait.MediaStream_RTSP, endpoints[0].GetProtocol())
 }
+
+func TestCameraToDeviceReportsMotion(t *testing.T) {
+	rtsp, err := url.Parse("rtsp://192.168.1.100:8554/garage_camera")
+	require.NoError(t, err)
+
+	c := &Camera{ID: "cam1", Name: "garage_camera", Endpoint: rtsp}
+	assert.False(t, c.ToDevice().GetCamera().GetPresence().GetState().GetMotionDetected())
+
+	c.MotionDetected = true
+	assert.True(t, c.ToDevice().GetCamera().GetPresence().GetState().GetMotionDetected())
+}

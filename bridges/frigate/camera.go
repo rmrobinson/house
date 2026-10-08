@@ -56,7 +56,7 @@ func (c *Camera) ToDevice() *device.Device {
 					},
 				},
 				Presence: &trait.Presence{
-					State: &trait.Presence_State{},
+					State: &trait.Presence_State{MotionDetected: c.MotionDetected},
 				},
 			},
 		},

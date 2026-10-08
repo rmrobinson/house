@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -23,6 +24,9 @@ import (
 const (
 	cameraRestreamFormat     = "rtsp://%s:8554/%s"
 	cameraRestreamWHEPFormat = "http://%s:%d/api/webrtc?src=%s"
+
+	motionReconnectMin = time.Second
+	motionReconnectMax = 30 * time.Second
 )
 
 // CameraConfig includes basic configuration data for a specific camera identified using its Name
@@ -42,7 +46,19 @@ type FrigateBridge struct {
 	cameraRestreamHostname string
 	cameraRestreamHTTPPort int
 
+	// mu guards cameras' contents: Refresh and the motion stream both update them from separate
+	// goroutines.
+	mu      sync.Mutex
 	cameras map[string]*Camera
+
+	// motionLabels is the set of object labels that count as "motion" for a camera's presence trait,
+	// and active is the last-reported count of each, per camera.
+	motionLabels map[string]bool
+	active       map[string]map[string]int
+
+	// publish pushes a camera's current state to the house; it defaults to svc.UpdateDevice and is a
+	// field only so tests can observe publishes without a running bridge service.
+	publish func(*Camera)
 }
 
 // NewFrigateBridge returns a new instance of the Frigate bridge.
@@ -74,6 +90,9 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		cameraRestreamHostname: cameraRestreamHostname,
 		cameraRestreamHTTPPort: cameraRestreamHTTPPort,
 		cameras:                map[string]*Camera{},
+		motionLabels:           map[string]bool{"person": true},
+		active:                 map[string]map[string]int{},
+		publish:                func(c *Camera) { svc.UpdateDevice(c.ToDevice()) },
 	}
 }
 
@@ -98,6 +117,9 @@ func (fb *FrigateBridge) SetBridgeConfig(ctx context.Context, config bridge.Conf
 
 // Setup loads the configured cameras into the bridge for use. It then retrieves initial state and errors if it can't reach the Frigate API.
 func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) error {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
 	for _, camera := range cameras {
 		fb.cameras[camera.Name] = fb.newCamera(camera)
 	}
@@ -138,7 +160,7 @@ func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) erro
 			}
 
 			fb.cameras[cameraName] = camera
-			fb.svc.UpdateDevice(camera.ToDevice())
+			fb.publish(camera)
 		} else {
 			// In this case we haven't gotten an initial config for this camera but we can mark the Model and Manufacturer as unknown
 			camera := fb.newCamera(CameraConfig{Name: frigateCameraConfig.Name, Manufacturer: "Unknown", ModelID: "Unknown"})
@@ -152,7 +174,7 @@ func (fb *FrigateBridge) Setup(ctx context.Context, cameras []CameraConfig) erro
 			}
 
 			fb.cameras[cameraName] = camera
-			fb.svc.UpdateDevice(camera.ToDevice())
+			fb.publish(camera)
 		}
 	}
 
@@ -190,20 +212,108 @@ func (fb *FrigateBridge) Refresh(ctx context.Context) error {
 		return status.Error(codes.Internal, "unable to get stats from frigate")
 	}
 
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
 	for cameraName, camera := range fb.cameras {
 		if cameraStats, statsPresent := stats.Cameras[cameraName]; statsPresent {
 			camera.Active = (cameraStats.CameraFPS > 0)
 			camera.LastActivity = time.Now() // TODO: use the 'events' feed for this
 			fb.cameras[cameraName] = camera
-			fb.svc.UpdateDevice(camera.ToDevice())
+			fb.publish(camera)
 		}
 	}
 	return nil
 }
 
+// SetMotionLabels sets which object labels (e.g. "person") make a camera report motion. Call before Run.
+func (fb *FrigateBridge) SetMotionLabels(labels []string) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	fb.motionLabels = map[string]bool{}
+	for _, l := range labels {
+		fb.motionLabels[l] = true
+	}
+}
+
+// setActiveCount records how many active objects of label are on a camera, and republishes the camera if
+// whether it has any object of a motion label changed. Labels outside motionLabels and cameras this bridge
+// isn't configured for are ignored.
+func (fb *FrigateBridge) setActiveCount(name, label string, count int) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	camera, ok := fb.cameras[name]
+	if !ok || !fb.motionLabels[label] {
+		return
+	}
+
+	if fb.active[name] == nil {
+		fb.active[name] = map[string]int{}
+	}
+	fb.active[name][label] = count
+
+	motion := false
+	for l, n := range fb.active[name] {
+		if n > 0 && fb.motionLabels[l] {
+			motion = true
+		}
+	}
+	if camera.MotionDetected == motion {
+		return
+	}
+	camera.MotionDetected = motion
+	fb.publish(camera)
+}
+
+// clearMotion forgets every active-object count and marks every camera as having no motion. Used when the
+// feed drops: Frigate only publishes changes, so a count still held would never be reset by the zero we
+// missed, leaving motion-triggered policies stuck.
+func (fb *FrigateBridge) clearMotion() {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	fb.active = map[string]map[string]int{}
+	for _, camera := range fb.cameras {
+		if camera.MotionDetected {
+			camera.MotionDetected = false
+			fb.publish(camera)
+		}
+	}
+}
+
+// watchMotion keeps a websocket to Frigate open for the life of ctx, applying its active-object counts and
+// reconnecting with backoff after a drop.
+func (fb *FrigateBridge) watchMotion(ctx context.Context) {
+	backoff := motionReconnectMin
+	for ctx.Err() == nil {
+		started := time.Now()
+		err := fb.client.StreamActiveObjects(ctx, fb.setActiveCount)
+		fb.clearMotion()
+		if ctx.Err() != nil {
+			return
+		}
+		fb.logger.Error("frigate motion feed dropped, reconnecting", zap.Error(err), zap.Duration("backoff", backoff))
+
+		// A feed that held for a while was healthy, so start the backoff over rather than keep growing it.
+		if time.Since(started) > motionReconnectMax {
+			backoff = motionReconnectMin
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		backoff = min(backoff*2, motionReconnectMax)
+	}
+}
+
 // Run begins the process of polling the sensor and reporting back the state.
 func (fb *FrigateBridge) Run(ctx context.Context) {
 	fb.Refresh(ctx)
+
+	go fb.watchMotion(ctx)
 
 	refreshTimer := time.NewTicker(time.Second * time.Duration(viper.GetInt("bridge.refresh_interval")))
 	fb.logger.Info("beginning refresh loop", zap.Int("refresh_interval", viper.GetInt("bridge.refresh_interval")))

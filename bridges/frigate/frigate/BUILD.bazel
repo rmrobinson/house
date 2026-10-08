@@ -5,5 +5,8 @@ go_library(
     srcs = ["client.go"],
     importpath = "github.com/rmrobinson/house/bridges/frigate/frigate",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_zap//:zap"],
+    deps = [
+        "@com_github_gorilla_websocket//:websocket",
+        "@org_uber_go_zap//:zap",
+    ],
 )

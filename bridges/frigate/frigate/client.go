@@ -8,13 +8,21 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
 const (
 	apiConfigPath = "/api/config"
 	apiStatsPath  = "/api/stats"
+	wsPath        = "/ws"
+
+	// wsReadTimeout bounds how long the websocket may stay silent before it's considered dead. Frigate
+	// publishes its stats topic every few seconds, so a healthy connection is never quiet for this long.
+	wsReadTimeout = 60 * time.Second
 )
 
 // CameraConfig contains some of the configured fields in a camera. This is only a partial definition.
@@ -148,4 +156,65 @@ func (c *Client) apiRequest(ctx context.Context, path string, apiResp any) error
 	}
 
 	return nil
+}
+
+// wsMessage is one frame on Frigate's /ws feed. Payload's shape depends on Topic, so it's left raw.
+type wsMessage struct {
+	Topic   string          `json:"topic"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// StreamActiveObjects connects to Frigate's websocket feed and calls onCount with the number of
+// currently-active objects of each label on each camera, from its "<camera>/<label>/active" topics,
+// until the connection drops or ctx is cancelled, then returns the reason. "Active" excludes objects
+// Frigate has judged stationary (a parked car, someone sitting still), unlike the plain "<camera>/<label>"
+// count or Frigate's raw pixel-motion topic, which also fires on shadows and lighting changes.
+//
+// Frigate only publishes when a count changes, so the caller owns what a dropped connection means for
+// the counts it was tracking.
+func (c *Client) StreamActiveObjects(ctx context.Context, onCount func(camera, label string, count int)) error {
+	scheme := "ws"
+	if c.apiEndpoint.Scheme == "https" {
+		scheme = "wss"
+	}
+
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	conn, _, err := dialer.DialContext(ctx, fmt.Sprintf("%s://%s%s", scheme, c.apiEndpoint.Host, wsPath), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Unblock the read below as soon as ctx is cancelled.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+
+		var msg wsMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+
+		// Topic is "<camera>/<label>/active"; "all" is Frigate's aggregate across labels.
+		parts := strings.Split(msg.Topic, "/")
+		if len(parts) != 3 || parts[2] != "active" || parts[1] == "all" {
+			continue
+		}
+
+		var count int
+		if err := json.Unmarshal(msg.Payload, &count); err != nil {
+			c.logger.Warn("unparseable active-object count", zap.String("topic", msg.Topic), zap.Error(err))
+			continue
+		}
+		onCount(parts[0], parts[1], count)
+	}
 }
