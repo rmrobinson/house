@@ -51,10 +51,10 @@ type FrigateBridge struct {
 	mu      sync.Mutex
 	cameras map[string]*Camera
 
-	// motionLabels is the set of object labels that count as "motion" for a camera's presence trait,
-	// and active is the last-reported count of each, per camera.
-	motionLabels map[string]bool
-	active       map[string]map[string]int
+	// occupancyLabels is the set of object labels that make a camera report occupancy, and active is the
+	// last-reported count of each, per camera.
+	occupancyLabels map[string]bool
+	active          map[string]map[string]int
 
 	// publish pushes a camera's current state to the house; it defaults to svc.UpdateDevice and is a
 	// field only so tests can observe publishes without a running bridge service.
@@ -90,7 +90,7 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		cameraRestreamHostname: cameraRestreamHostname,
 		cameraRestreamHTTPPort: cameraRestreamHTTPPort,
 		cameras:                map[string]*Camera{},
-		motionLabels:           map[string]bool{"person": true},
+		occupancyLabels:        map[string]bool{"person": true},
 		active:                 map[string]map[string]int{},
 		publish:                func(c *Camera) { svc.UpdateDevice(c.ToDevice()) },
 	}
@@ -226,26 +226,40 @@ func (fb *FrigateBridge) Refresh(ctx context.Context) error {
 	return nil
 }
 
-// SetMotionLabels sets which object labels (e.g. "person") make a camera report motion. Call before Run.
-func (fb *FrigateBridge) SetMotionLabels(labels []string) {
+// SetOccupancyLabels sets which object labels (e.g. "person") make a camera report occupancy. Call before Run.
+func (fb *FrigateBridge) SetOccupancyLabels(labels []string) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
-	fb.motionLabels = map[string]bool{}
+	fb.occupancyLabels = map[string]bool{}
 	for _, l := range labels {
-		fb.motionLabels[l] = true
+		fb.occupancyLabels[l] = true
 	}
 }
 
+// setMotion records a camera's raw pixel-motion state and republishes it if that changed. Cameras this
+// bridge isn't configured for are ignored.
+func (fb *FrigateBridge) setMotion(name string, motion bool) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	camera, ok := fb.cameras[name]
+	if !ok || camera.MotionDetected == motion {
+		return
+	}
+	camera.MotionDetected = motion
+	fb.publish(camera)
+}
+
 // setActiveCount records how many active objects of label are on a camera, and republishes the camera if
-// whether it has any object of a motion label changed. Labels outside motionLabels and cameras this bridge
-// isn't configured for are ignored.
+// whether it has any object of an occupancy label changed. Labels outside occupancyLabels and cameras this
+// bridge isn't configured for are ignored.
 func (fb *FrigateBridge) setActiveCount(name, label string, count int) {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
 	camera, ok := fb.cameras[name]
-	if !ok || !fb.motionLabels[label] {
+	if !ok || !fb.occupancyLabels[label] {
 		return
 	}
 
@@ -254,43 +268,47 @@ func (fb *FrigateBridge) setActiveCount(name, label string, count int) {
 	}
 	fb.active[name][label] = count
 
-	motion := false
+	occupied := false
 	for l, n := range fb.active[name] {
-		if n > 0 && fb.motionLabels[l] {
-			motion = true
+		if n > 0 && fb.occupancyLabels[l] {
+			occupied = true
 		}
 	}
-	if camera.MotionDetected == motion {
+	if camera.OccupancyDetected == occupied {
 		return
 	}
-	camera.MotionDetected = motion
+	camera.OccupancyDetected = occupied
 	fb.publish(camera)
 }
 
-// clearMotion forgets every active-object count and marks every camera as having no motion. Used when the
-// feed drops: Frigate only publishes changes, so a count still held would never be reset by the zero we
-// missed, leaving motion-triggered policies stuck.
-func (fb *FrigateBridge) clearMotion() {
+// clearPresence forgets every active-object count and marks every camera as having neither motion nor
+// occupancy. Used when the feed drops: Frigate only publishes changes, so a value still held would never be
+// reset by the update we missed, leaving presence-triggered policies stuck.
+func (fb *FrigateBridge) clearPresence() {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
 	fb.active = map[string]map[string]int{}
 	for _, camera := range fb.cameras {
-		if camera.MotionDetected {
+		if camera.MotionDetected || camera.OccupancyDetected {
 			camera.MotionDetected = false
+			camera.OccupancyDetected = false
 			fb.publish(camera)
 		}
 	}
 }
 
-// watchMotion keeps a websocket to Frigate open for the life of ctx, applying its active-object counts and
+// watchMotion keeps a websocket to Frigate open for the life of ctx, applying its motion and active-object updates and
 // reconnecting with backoff after a drop.
 func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 	backoff := motionReconnectMin
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := fb.client.StreamActiveObjects(ctx, fb.setActiveCount)
-		fb.clearMotion()
+		err := fb.client.StreamFeed(ctx, frigate.FeedHandlers{
+			OnMotion:      fb.setMotion,
+			OnActiveCount: fb.setActiveCount,
+		})
+		fb.clearPresence()
 		if ctx.Err() != nil {
 			return
 		}

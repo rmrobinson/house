@@ -17,9 +17,10 @@ frigate:
   # go2rtc's HTTP API port, used to build each camera's WHEP (WebRTC) restream
   # endpoint. go2rtc's default is 1984; omit to use that default.
   restream_http_port: 1984
-  # Object labels that make a camera report motion on its presence trait. Only objects Frigate considers
-  # actively moving count - a parked car or someone sitting still does not. Defaults to just "person".
-  motion_labels:
+  # Object labels that make a camera report occupancy on its presence trait (motion is Frigate's raw pixel
+  # motion, reported separately). Only objects Frigate considers actively moving count - a parked car or
+  # someone sitting still does not. Defaults to just "person".
+  occupancy_labels:
     - person
   cameras:
     - name: "camera-one"

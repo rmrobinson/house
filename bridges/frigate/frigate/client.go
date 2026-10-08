@@ -164,15 +164,24 @@ type wsMessage struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// StreamActiveObjects connects to Frigate's websocket feed and calls onCount with the number of
-// currently-active objects of each label on each camera, from its "<camera>/<label>/active" topics,
-// until the connection drops or ctx is cancelled, then returns the reason. "Active" excludes objects
-// Frigate has judged stationary (a parked car, someone sitting still), unlike the plain "<camera>/<label>"
-// count or Frigate's raw pixel-motion topic, which also fires on shadows and lighting changes.
+// FeedHandlers receives the updates StreamFeed extracts from Frigate's websocket feed. Either may be nil.
+type FeedHandlers struct {
+	// OnMotion is called when a camera's raw pixel-motion state changes. That signal also fires on
+	// shadows, lighting changes and animals.
+	OnMotion func(camera string, motion bool)
+
+	// OnActiveCount is called with the number of currently-active objects of a label on a camera, from
+	// Frigate's "<camera>/<label>/active" topics. "Active" excludes objects Frigate has judged
+	// stationary (a parked car, someone sitting still).
+	OnActiveCount func(camera, label string, count int)
+}
+
+// StreamFeed connects to Frigate's websocket feed and dispatches its motion and active-object updates to h
+// until the connection drops or ctx is cancelled, then returns the reason.
 //
-// Frigate only publishes when a count changes, so the caller owns what a dropped connection means for
-// the counts it was tracking.
-func (c *Client) StreamActiveObjects(ctx context.Context, onCount func(camera, label string, count int)) error {
+// Frigate only publishes when a value changes, so the caller owns what a dropped connection means for the
+// state it was tracking.
+func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
 	scheme := "ws"
 	if c.apiEndpoint.Scheme == "https" {
 		scheme = "wss"
@@ -204,17 +213,28 @@ func (c *Client) StreamActiveObjects(ctx context.Context, onCount func(camera, l
 			continue
 		}
 
-		// Topic is "<camera>/<label>/active"; "all" is Frigate's aggregate across labels.
 		parts := strings.Split(msg.Topic, "/")
-		if len(parts) != 3 || parts[2] != "active" || parts[1] == "all" {
-			continue
+		switch {
+		case len(parts) == 2 && parts[1] == "motion":
+			// "<camera>/motion": "ON" or "OFF".
+			var state string
+			if err := json.Unmarshal(msg.Payload, &state); err != nil {
+				c.logger.Warn("unparseable motion payload", zap.String("topic", msg.Topic), zap.Error(err))
+				continue
+			}
+			if h.OnMotion != nil {
+				h.OnMotion(parts[0], state == "ON")
+			}
+		case len(parts) == 3 && parts[2] == "active" && parts[1] != "all":
+			// "<camera>/<label>/active"; "all" is Frigate's aggregate across labels.
+			var count int
+			if err := json.Unmarshal(msg.Payload, &count); err != nil {
+				c.logger.Warn("unparseable active-object count", zap.String("topic", msg.Topic), zap.Error(err))
+				continue
+			}
+			if h.OnActiveCount != nil {
+				h.OnActiveCount(parts[0], parts[1], count)
+			}
 		}
-
-		var count int
-		if err := json.Unmarshal(msg.Payload, &count); err != nil {
-			c.logger.Warn("unparseable active-object count", zap.String("topic", msg.Topic), zap.Error(err))
-			continue
-		}
-		onCount(parts[0], parts[1], count)
 	}
 }

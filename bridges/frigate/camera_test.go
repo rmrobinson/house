@@ -55,13 +55,25 @@ func TestCameraToDeviceOmitsWHEPEndpointWhenUnset(t *testing.T) {
 	assert.Equal(t, trait.MediaStream_RTSP, endpoints[0].GetProtocol())
 }
 
-func TestCameraToDeviceReportsMotion(t *testing.T) {
+func TestCameraToDeviceReportsMotionAndOccupancySeparately(t *testing.T) {
 	rtsp, err := url.Parse("rtsp://192.168.1.100:8554/garage_camera")
 	require.NoError(t, err)
 
+	state := func(c *Camera) *trait.Presence_State {
+		return c.ToDevice().GetCamera().GetPresence().GetState()
+	}
+
 	c := &Camera{ID: "cam1", Name: "garage_camera", Endpoint: rtsp}
-	assert.False(t, c.ToDevice().GetCamera().GetPresence().GetState().GetMotionDetected())
+	assert.False(t, state(c).GetMotionDetected())
+	// Occupancy is always populated (never absent), so a policy reading it gets false rather than an error.
+	require.NotNil(t, state(c).OccupancyDetected)
+	assert.False(t, state(c).GetOccupancyDetected())
 
 	c.MotionDetected = true
-	assert.True(t, c.ToDevice().GetCamera().GetPresence().GetState().GetMotionDetected())
+	assert.True(t, state(c).GetMotionDetected())
+	assert.False(t, state(c).GetOccupancyDetected())
+
+	c.MotionDetected, c.OccupancyDetected = false, true
+	assert.False(t, state(c).GetMotionDetected())
+	assert.True(t, state(c).GetOccupancyDetected())
 }

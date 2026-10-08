@@ -65,9 +65,9 @@ func (f *fakeFrigate) bridge(t *testing.T) (*FrigateBridge, *publishLog) {
 			"garage_camera":   {Name: "garage_camera", Endpoint: ep},
 			"backyard_camera": {Name: "backyard_camera", Endpoint: ep},
 		},
-		motionLabels: map[string]bool{"person": true},
-		active:       map[string]map[string]int{},
-		publish:      log.record,
+		occupancyLabels: map[string]bool{"person": true},
+		active:          map[string]map[string]int{},
+		publish:         log.record,
 	}, log
 }
 
@@ -83,7 +83,11 @@ func (p *publishLog) record(c *Camera) {
 	if c.MotionDetected {
 		state = "on"
 	}
-	p.seen = append(p.seen, c.Name+":"+state)
+	occ := "off"
+	if c.OccupancyDetected {
+		occ = "on"
+	}
+	p.seen = append(p.seen, c.Name+":motion-"+state+"/occ-"+occ)
 }
 
 func (p *publishLog) get() []string {
@@ -97,7 +101,7 @@ func send(t *testing.T, c *websocket.Conn, frame string) {
 	require.NoError(t, c.WriteMessage(websocket.TextMessage, []byte(frame)))
 }
 
-func TestWatchMotionTracksActivePeople(t *testing.T) {
+func TestWatchFeedSeparatesMotionFromOccupancy(t *testing.T) {
 	f := newFakeFrigate(t)
 	fb, log := f.bridge(t)
 
@@ -108,34 +112,42 @@ func TestWatchMotionTracksActivePeople(t *testing.T) {
 	c := f.accept(t)
 	send(t, c, `{"topic":"stats","payload":"{}"}`)                          // ignored
 	send(t, c, `{"topic":"events","payload":"{}"}`)                         // ignored
-	send(t, c, `{"topic":"garage_camera/motion","payload":"ON"}`)           // raw pixel motion: ignored
 	send(t, c, `{"topic":"garage_camera/person","payload":1}`)              // includes stationary: ignored
-	send(t, c, `{"topic":"garage_camera/car/active","payload":1}`)          // not a motion label
+	send(t, c, `{"topic":"garage_camera/car/active","payload":1}`)          // not an occupancy label
 	send(t, c, `{"topic":"garage_camera/all/active","payload":1}`)          // aggregate: ignored
+	send(t, c, `{"topic":"unconfigured_camera/motion","payload":"ON"}`)     // not one of ours
 	send(t, c, `{"topic":"unconfigured_camera/person/active","payload":1}`) // not one of ours
-	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)       // -> on
-	send(t, c, `{"topic":"garage_camera/person/active","payload":2}`)       // still on: no republish
-	send(t, c, `{"topic":"backyard_camera/person/active","payload":1}`)     // -> on
-	send(t, c, `{"topic":"garage_camera/person/active","payload":0}`)       // -> off
+	send(t, c, `{"topic":"garage_camera/motion","payload":"ON"}`)           // motion only
+	send(t, c, `{"topic":"garage_camera/motion","payload":"ON"}`)           // duplicate: no republish
+	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)       // + occupancy
+	send(t, c, `{"topic":"garage_camera/person/active","payload":2}`)       // still occupied: no republish
+	send(t, c, `{"topic":"garage_camera/motion","payload":"OFF"}`)          // motion ends, person remains
+	send(t, c, `{"topic":"garage_camera/person/active","payload":0}`)       // occupancy ends
 
-	assert.Eventually(t, func() bool { return len(log.get()) == 3 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"garage_camera:on", "backyard_camera:on", "garage_camera:off"}, log.get())
+	want := []string{
+		"garage_camera:motion-on/occ-off",
+		"garage_camera:motion-on/occ-on",
+		"garage_camera:motion-off/occ-on",
+		"garage_camera:motion-off/occ-off",
+	}
+	assert.Eventually(t, func() bool { return len(log.get()) == len(want) }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, want, log.get())
 }
 
-func TestSetMotionLabelsAddsLabels(t *testing.T) {
+func TestSetOccupancyLabelsAddsLabels(t *testing.T) {
 	f := newFakeFrigate(t)
 	fb, log := f.bridge(t)
-	fb.SetMotionLabels([]string{"person", "car"})
+	fb.SetOccupancyLabels([]string{"person", "car"})
 
 	fb.setActiveCount("garage_camera", "car", 1)
-	fb.setActiveCount("garage_camera", "person", 1) // already on: no republish
+	fb.setActiveCount("garage_camera", "person", 1) // already occupied: no republish
 	fb.setActiveCount("garage_camera", "car", 0)    // person still there
 	fb.setActiveCount("garage_camera", "person", 0)
 
-	assert.Equal(t, []string{"garage_camera:on", "garage_camera:off"}, log.get())
+	assert.Equal(t, []string{"garage_camera:motion-off/occ-on", "garage_camera:motion-off/occ-off"}, log.get())
 }
 
-func TestWatchMotionClearsAndReconnectsOnDrop(t *testing.T) {
+func TestWatchFeedClearsAndReconnectsOnDrop(t *testing.T) {
 	f := newFakeFrigate(t)
 	fb, log := f.bridge(t)
 
@@ -144,16 +156,17 @@ func TestWatchMotionClearsAndReconnectsOnDrop(t *testing.T) {
 	go fb.watchMotion(ctx)
 
 	c := f.accept(t)
+	send(t, c, `{"topic":"garage_camera/motion","payload":"ON"}`)
 	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
-	require.Eventually(t, func() bool { return len(log.get()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
 
-	// Dropping the feed mid-motion must clear it: the zero count would otherwise never arrive.
+	// Dropping the feed mid-presence must clear both: the OFF/zero would otherwise never arrive.
 	c.Close()
-	assert.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
-	assert.Equal(t, []string{"garage_camera:on", "garage_camera:off"}, log.get())
+	assert.Eventually(t, func() bool { return len(log.get()) == 3 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "garage_camera:motion-off/occ-off", log.get()[2])
 
 	// And it reconnects on its own, starting from a clean slate.
 	c = f.accept(t)
 	send(t, c, `{"topic":"backyard_camera/person/active","payload":1}`)
-	assert.Eventually(t, func() bool { return len(log.get()) == 3 }, 5*time.Second, 10*time.Millisecond)
+	assert.Eventually(t, func() bool { return len(log.get()) == 4 }, 5*time.Second, 10*time.Millisecond)
 }
