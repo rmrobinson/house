@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -43,6 +44,11 @@ func (f *fakeFrigate) accept(t *testing.T) *websocket.Conn {
 	t.Helper()
 	select {
 	case c := <-f.conns:
+		// Every connection must start by asking for the current state.
+		c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		var req struct{ Topic string }
+		require.NoError(t, c.ReadJSON(&req))
+		assert.Equal(t, "onConnect", req.Topic)
 		return c
 	case <-time.After(5 * time.Second):
 		t.Fatal("bridge never connected to the motion feed")
@@ -217,4 +223,77 @@ func TestWatchFeedPublishesNothingOnShutdown(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	assert.Len(t, log.get(), 1, "shutdown must not publish cleared presence")
+}
+
+// snapshot builds a camera_activity frame the way Frigate sends it: a JSON document inside a JSON string.
+func snapshot(t *testing.T, cameras map[string]any) string {
+	t.Helper()
+	inner, err := json.Marshal(cameras)
+	require.NoError(t, err)
+	frame, err := json.Marshal(map[string]string{"topic": "camera_activity", "payload": string(inner)})
+	require.NoError(t, err)
+	return string(frame)
+}
+
+func activity(motion bool, objects ...map[string]any) map[string]any {
+	return map[string]any{"motion": motion, "objects": objects, "config": map[string]any{"detect": true}}
+}
+
+func object(label string, stationary bool) map[string]any {
+	return map[string]any{"id": "x", "label": label, "stationary": stationary, "score": 0.9}
+}
+
+func TestSnapshotSeedsStateOnConnect(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fb.watchMotion(ctx)
+
+	c := f.accept(t)
+	send(t, c, snapshot(t, map[string]any{
+		// Someone already in frame, plus a parked car: occupied and in motion.
+		"garage_camera": activity(true, object("person", false), object("car", true)),
+		// Only a stationary person: no occupancy, no motion.
+		"backyard_camera": activity(false, object("person", true)),
+		// Not one of ours.
+		"unconfigured_camera": activity(true, object("person", false)),
+	}))
+
+	assert.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, []string{"garage_camera:motion-off/occ-on", "garage_camera:motion-on/occ-on"}, log.get())
+	assert.False(t, fb.cameras["backyard_camera"].OccupancyDetected)
+}
+
+func TestSnapshotOnReconnectCorrectsMissedUpdates(t *testing.T) {
+	f := newFakeFrigate(t)
+	fb, log := f.bridge(t) // presenceGrace is an hour: the drop is "brief"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go fb.watchMotion(ctx)
+
+	c := f.accept(t)
+	send(t, c, `{"topic":"garage_camera/person/active","payload":1}`)
+	send(t, c, `{"topic":"backyard_camera/person/active","payload":1}`)
+	require.Eventually(t, func() bool { return len(log.get()) == 2 }, 5*time.Second, 10*time.Millisecond)
+
+	// Both people leave while the feed is down. The reconnect snapshot says the garage is empty but the
+	// backyard still has someone, so only the garage changes.
+	c.Close()
+	c = f.accept(t)
+	send(t, c, snapshot(t, map[string]any{
+		"garage_camera":   activity(false),
+		"backyard_camera": activity(false, object("person", false)),
+	}))
+
+	assert.Eventually(t, func() bool { return len(log.get()) == 3 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "garage_camera:motion-off/occ-off", log.get()[2])
+	assert.True(t, fb.cameras["backyard_camera"].OccupancyDetected)
+
+	// The counts were rebuilt from the snapshot, so a later zero still clears the backyard.
+	send(t, c, `{"topic":"backyard_camera/person/active","payload":0}`)
+	assert.Eventually(t, func() bool { return len(log.get()) == 4 }, 5*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "backyard_camera:motion-off/occ-off", log.get()[3])
 }

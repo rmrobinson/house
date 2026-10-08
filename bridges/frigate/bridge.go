@@ -277,7 +277,12 @@ func (fb *FrigateBridge) setActiveCount(name, label string, count int) {
 		fb.active[name] = map[string]int{}
 	}
 	fb.active[name][label] = count
+	fb.updateOccupancyLocked(name, camera)
+}
 
+// updateOccupancyLocked recomputes a camera's occupancy from its active counts and republishes it if that
+// changed. fb.mu must be held.
+func (fb *FrigateBridge) updateOccupancyLocked(name string, camera *Camera) {
 	occupied := false
 	for l, n := range fb.active[name] {
 		if n > 0 && fb.occupancyLabels[l] {
@@ -289,6 +294,36 @@ func (fb *FrigateBridge) setActiveCount(name, label string, count int) {
 	}
 	camera.OccupancyDetected = occupied
 	fb.publish(camera)
+}
+
+// applySnapshot replaces motion and active-object state for every configured camera Frigate reports on with
+// that snapshot. Frigate only publishes changes, so this is how the bridge learns what was already happening
+// when it (re)connected, and how it recovers from an update missed during a drop. Active counts exclude
+// stationary objects, matching what Frigate's own "<camera>/<label>/active" topics count.
+func (fb *FrigateBridge) applySnapshot(cameras map[string]frigate.CameraActivity) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+
+	for name, activity := range cameras {
+		camera, ok := fb.cameras[name]
+		if !ok {
+			continue
+		}
+
+		counts := map[string]int{}
+		for _, o := range activity.Objects {
+			if !o.Stationary {
+				counts[o.Label]++
+			}
+		}
+		fb.active[name] = counts
+		fb.updateOccupancyLocked(name, camera)
+
+		if camera.MotionDetected != activity.Motion {
+			camera.MotionDetected = activity.Motion
+			fb.publish(camera)
+		}
+	}
 }
 
 // clearPresence forgets every active-object count and marks every camera as having neither motion nor
@@ -332,6 +367,7 @@ func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 					staleTimer.Stop()
 				}
 			},
+			OnSnapshot:    fb.applySnapshot,
 			OnMotion:      fb.setMotion,
 			OnActiveCount: fb.setActiveCount,
 		})
