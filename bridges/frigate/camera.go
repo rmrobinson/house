@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/rmrobinson/house/api/device"
@@ -18,10 +19,13 @@ type Camera struct {
 	Endpoint     *url.URL
 	WHEPEndpoint *url.URL
 
-	Enabled        bool
-	Active         bool
-	MotionDetected bool
-	LastActivity   time.Time
+	Enabled bool
+	Active  bool
+	// MotionDetected is Frigate's raw pixel-motion state; OccupancyDetected is whether it has an active
+	// (moving, non-stationary) object of a configured label - by default a person - in view.
+	MotionDetected    bool
+	OccupancyDetected bool
+	LastActivity      time.Time
 }
 
 func (c *Camera) ToDevice() *device.Device {
@@ -56,7 +60,10 @@ func (c *Camera) ToDevice() *device.Device {
 					},
 				},
 				Presence: &trait.Presence{
-					State: &trait.Presence_State{},
+					State: &trait.Presence_State{
+						MotionDetected:    c.MotionDetected,
+						OccupancyDetected: proto.Bool(c.OccupancyDetected),
+					},
 				},
 			},
 		},

@@ -8,13 +8,28 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
 const (
 	apiConfigPath = "/api/config"
 	apiStatsPath  = "/api/stats"
+	wsPath        = "/ws"
+
+	// wsOnConnectTopic, sent by a client, makes Frigate reply with its current state (camera_activity among
+	// others) - the same request its own web UI makes when it connects.
+	wsOnConnectTopic = "onConnect"
+	// wsActivityTopic carries every camera's current motion and tracked objects.
+	wsActivityTopic = "camera_activity"
+
+	// wsReadTimeout bounds how long the websocket may stay silent before it's considered dead. Frigate
+	// publishes its stats topic every mqtt.stats_interval (60s by default), so a healthy connection is
+	// never quiet for longer than that; this allows two missed intervals plus slack.
+	wsReadTimeout = 150 * time.Second
 )
 
 // CameraConfig contains some of the configured fields in a camera. This is only a partial definition.
@@ -148,4 +163,160 @@ func (c *Client) apiRequest(ctx context.Context, path string, apiResp any) error
 	}
 
 	return nil
+}
+
+// wsMessage is one frame on Frigate's /ws feed. Payload's shape depends on Topic, so it's left raw.
+type wsMessage struct {
+	Topic   string          `json:"topic"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// CameraActivity is one camera's entry in Frigate's "camera_activity" snapshot. This is only a partial
+// definition.
+type CameraActivity struct {
+	// Motion is the camera's raw pixel-motion state.
+	Motion bool `json:"motion"`
+
+	// Objects are the objects Frigate is currently tracking on the camera, stationary ones included.
+	Objects []ActivityObject `json:"objects"`
+}
+
+// ActivityObject is one tracked object in a CameraActivity.
+type ActivityObject struct {
+	Label      string `json:"label"`
+	Stationary bool   `json:"stationary"`
+}
+
+// FeedHandlers receives the updates StreamFeed extracts from Frigate's websocket feed. Either may be nil.
+type FeedHandlers struct {
+	// OnMotion is called when a camera's raw pixel-motion state changes. That signal also fires on
+	// shadows, lighting changes and animals.
+	OnMotion func(camera string, motion bool)
+
+	// OnConnect is called once the websocket is established, before any update is delivered.
+	OnConnect func()
+
+	// OnSnapshot is called with every camera's full current state, which StreamFeed requests on connect.
+	// Frigate doesn't otherwise tell a new client anything until something changes, so this is the only way
+	// to learn what is already happening, and it is authoritative whenever it arrives.
+	OnSnapshot func(cameras map[string]CameraActivity)
+
+	// OnActiveCount is called with the number of currently-active objects of a label on a camera, from
+	// Frigate's "<camera>/<label>/active" topics. "Active" excludes objects Frigate has judged
+	// stationary (a parked car, someone sitting still).
+	OnActiveCount func(camera, label string, count int)
+}
+
+// StreamFeed connects to Frigate's websocket feed and dispatches its motion and active-object updates to h
+// until the connection drops or ctx is cancelled, then returns the reason.
+//
+// Frigate only publishes when a value changes, so the caller owns what a dropped connection means for the
+// state it was tracking.
+func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
+	scheme := "ws"
+	if c.apiEndpoint.Scheme == "https" {
+		scheme = "wss"
+	}
+
+	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	conn, _, err := dialer.DialContext(ctx, fmt.Sprintf("%s://%s%s", scheme, c.apiEndpoint.Host, wsPath), nil)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Unblock the read below as soon as ctx is cancelled.
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	defer stop()
+
+	if h.OnConnect != nil {
+		h.OnConnect()
+	}
+
+	// Ask for the current state. Frigate answers with a camera_activity message, handled below.
+	if err := conn.WriteJSON(wsMessage{Topic: wsOnConnectTopic, Payload: json.RawMessage(`""`)}); err != nil {
+		return err
+	}
+
+	for {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return err
+		}
+
+		var msg wsMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			continue
+		}
+
+		if msg.Topic == wsActivityTopic {
+			cameras, err := parseActivity(msg.Payload)
+			if err != nil {
+				c.logger.Warn("unparseable camera activity", zap.Error(err))
+				continue
+			}
+			if h.OnSnapshot != nil {
+				h.OnSnapshot(cameras)
+			}
+			continue
+		}
+
+		parts := strings.Split(msg.Topic, "/")
+		switch {
+		case len(parts) == 2 && parts[1] == "motion":
+			// "<camera>/motion": "ON" or "OFF".
+			var state string
+			if err := json.Unmarshal(msg.Payload, &state); err != nil {
+				c.logger.Warn("unparseable motion payload", zap.String("topic", msg.Topic), zap.Error(err))
+				continue
+			}
+			if h.OnMotion != nil {
+				h.OnMotion(parts[0], state == "ON")
+			}
+		case len(parts) == 3 && parts[2] == "active" && parts[1] != "all":
+			// "<camera>/<label>/active"; "all" is Frigate's aggregate across labels.
+			count, err := parseCount(msg.Payload)
+			if err != nil {
+				c.logger.Warn("unparseable active-object count", zap.String("topic", msg.Topic), zap.Error(err))
+				continue
+			}
+			if h.OnActiveCount != nil {
+				h.OnActiveCount(parts[0], parts[1], count)
+			}
+		}
+	}
+}
+
+// parseCount reads an active-object count that may arrive as a JSON number or, as MQTT relays it, a numeric
+// string.
+func parseCount(raw json.RawMessage) (int, error) {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, nil
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(s)
+}
+
+// parseActivity decodes a camera_activity payload. Frigate relays it as a JSON document wrapped in a JSON
+// string, as it does for its other structured topics; a bare object is accepted too.
+func parseActivity(raw json.RawMessage) (map[string]CameraActivity, error) {
+	var wrapped string
+	if err := json.Unmarshal(raw, &wrapped); err == nil {
+		raw = json.RawMessage(wrapped)
+	}
+
+	var cameras map[string]CameraActivity
+	if err := json.Unmarshal(raw, &cameras); err != nil {
+		return nil, err
+	}
+	return cameras, nil
 }
