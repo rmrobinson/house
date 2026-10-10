@@ -71,12 +71,7 @@ func (onOffBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		},
 	}
 
-	if _, ok := findByProperty(bd.Definition.Exposes, "power"); ok {
-		g.Power = &trait.Power{
-			Attributes: &trait.Power_Attributes{},
-			State:      &trait.Power_State{},
-		}
-	}
+	g.Power = newPowerTrait(bd.Definition.Exposes)
 
 	return &device.Device{
 		Manufacturer:     bd.Definition.Vendor,
@@ -94,17 +89,42 @@ func (onOffBuilder) applyState(d *device.Device, state map[string]any) {
 		g.OnOff.State.IsOn = v == zigbeeStateOn
 	}
 
-	if g.Power == nil {
+	applyPowerState(g.Power, state)
+}
+
+// newPowerTrait returns a read-only Power trait if the device's exposes report "power" and/or
+// "energy" (a metering plug, or a metering dimmer such as the Inovelli VZM31-SN), else nil. Shared
+// by onOffBuilder and lightBuilder so both decode metering identically.
+func newPowerTrait(exposes []expose) *trait.Power {
+	_, hasPower := findByProperty(exposes, "power")
+	_, hasEnergy := findByProperty(exposes, "energy")
+	if !hasPower && !hasEnergy {
+		return nil
+	}
+	return &trait.Power{
+		Attributes: &trait.Power_Attributes{},
+		State:      &trait.Power_State{},
+	}
+}
+
+// applyPowerState copies whichever metering keys are present in a (possibly partial) state
+// message onto p. A nil p (device doesn't meter) is a no-op. zigbee2mqtt reports "energy" in kWh,
+// matching Power.State.energy_kwh.
+func applyPowerState(p *trait.Power, state map[string]any) {
+	if p == nil {
 		return
 	}
 	if v, ok := numberValue(state["power"]); ok {
-		g.Power.State.PowerW = v
+		p.State.PowerW = v
 	}
 	if v, ok := numberValue(state["current"]); ok {
-		g.Power.State.CurrentA = v
+		p.State.CurrentA = v
 	}
 	if v, ok := numberValue(state["voltage"]); ok {
-		g.Power.State.VoltageV = v
+		p.State.VoltageV = v
+	}
+	if v, ok := numberValue(state["energy"]); ok {
+		p.State.EnergyKwh = &v
 	}
 }
 
@@ -222,6 +242,8 @@ func (lb lightBuilder) build(bd bridgeDevice) (*device.Device, error) {
 		}
 	}
 
+	l.Power = newPowerTrait(bd.Definition.Exposes)
+
 	return &device.Device{
 		Manufacturer:     bd.Definition.Vendor,
 		ModelId:          bd.Definition.Model,
@@ -237,6 +259,8 @@ func (lb lightBuilder) applyState(d *device.Device, state map[string]any) {
 	if v, ok := state["state"].(string); ok {
 		l.OnOff.State.IsOn = v == zigbeeStateOn
 	}
+
+	applyPowerState(l.Power, state)
 
 	if l.Brightness != nil {
 		if v, ok := numberValue(state["brightness"]); ok {

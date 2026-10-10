@@ -26,6 +26,13 @@ message Power {
 
     // What is the current status of the power monitor?
     string status = 5;
+
+    // Cumulative energy consumed by the device, reported in kilowatt-hours.
+    // Unlike the other fields this is a running total, not an instantaneous
+    // reading, and it can reset to a lower value if the device is re-paired or
+    // factory reset - consumers integrating it should tolerate decreases.
+    // Absent if the device doesn't meter energy.
+    optional double energy_kwh = 6;
   }
 
   Attributes attributes = 1;

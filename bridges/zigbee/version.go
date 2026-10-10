@@ -23,7 +23,7 @@ import (
 //
 // Excluded: everything under Sensor - sensorBuilder.applyCommand always returns
 // bridge.ErrUnsupportedCommand, so a Sensor device has no command-target fields at all;
-// generic.power (onOffBuilder's optional metering trait is read-only telemetry, not a command
+// generic.power and light.power (onOffBuilder's/lightBuilder's optional metering trait is read-only telemetry, not a command
 // target); fan.speed (fanBuilder always builds this with Attributes.can_control left false - it's
 // read-only telemetry from a separate diagnostic property, not something any Command can move -
 // see fanBuilder's doc comment); and, per the contract, address.* (including is_reachable) and

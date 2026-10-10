@@ -73,11 +73,13 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   `"switch"` composite expose or a bare top-level `"state"` property. There's no dedicated
   `Switch`/`Outlet` device type in this repo yet, so this mirrors `bridges/zwave`'s `switchBuilder`
   choice. A device that also exposes `"power"` (a metering smart plug) gets `Generic.Power`
-  populated too, reading `power`/`current`/`voltage` directly - still `Generic`, not a separate
-  `Sensor`, since a metering plug is fundamentally one controllable device.
+  populated too, reading `power`/`current`/`voltage`/`energy` (cumulative kWh) directly - still
+  `Generic`, not a separate `Sensor`, since a metering plug is fundamentally one controllable
+  device.
 - **Lights** → `Light`/`OnOff` (+`Brightness` if the light's `"light"` expose reports a
   `"brightness"` feature, +`Colour` if it reports `"color_temp"` and/or `"color_hs"`), from a
-  top-level `"light"` composite expose. Brightness is scaled from zigbee2mqtt's native 0-254 range
+  top-level `"light"` composite expose. A light that also has top-level `"power"`/`"energy"` exposes
+  (e.g. the Inovelli VZM31-SN) gets `Light.Power`, decoded the same way as a plug's. Brightness is scaled from zigbee2mqtt's native 0-254 range
   (the expose's own `value_max`, defaulting to 254 if absent) to house's 0-100 percent.
   `"color_temp"` (mireds) converts to Kelvin via the fixed `mired = 1,000,000 / kelvin` relation -
   a physical conversion, not a device-specific guess. `"color_hs"` maps directly onto
