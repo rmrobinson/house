@@ -14,6 +14,43 @@ permissions:
   contents: read
 
 jobs:
+  # Cheap checks that catch generated/derived files drifting from their source.
+  # Not checked: MODULE.bazel.lock, since `bazel mod deps --lockfile_mode=error`
+  # reports platform-specific extension entries (rules_python, rules_rust) as
+  # stale even on a clean tree.
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: bazel-contrib/setup-bazel@0.14.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-hygiene
+          repository-cache: true
+
+      - name: go mod tidy is a no-op
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: gazelle is a no-op
+        run: |
+          bazel run --config=ci //:gazelle
+          # status (not diff) so newly generated BUILD files are caught too
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short
+            git diff
+            echo "::error::gazelle changed BUILD files; run 'bazel run //:gazelle' and commit"
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
