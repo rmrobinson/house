@@ -10,7 +10,10 @@ go_library(
 
 go_test(
     name = "configutil_test",
-    srcs = ["secrets_test.go"],
+    srcs = [
+        "ci_verify_test.go",
+        "secrets_test.go",
+    ],
     embed = [":configutil"],
     deps = [
         "@com_github_stretchr_testify//assert",
