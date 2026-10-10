@@ -172,6 +172,10 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 		return NewIdleCondition(e.bus, p.Topic, duration)
 	})
 
+	RegisterConditionType(e.registry, "button.action", func(p ButtonActionParams) Condition {
+		return NewButtonActionCondition(e, p.DeviceID, p.Actions)
+	})
+
 	registerDeviceConditionTypes(e)
 }
 

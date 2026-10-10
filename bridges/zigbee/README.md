@@ -97,6 +97,13 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   `bridge/devices`' own `power_source` field (`"Battery"`) rather than inferred, which
   `bridges/zwave` has no equivalent field to do. Every trait here is read-only in zigbee2mqtt's own
   exposes access model; `applyCommand` always rejects, same as `bridges/zwave`'s `Sensor`.
+- **Button actions** → `trait.Buttons` on a `Light` or `Sensor`, whenever a device exposes a
+  top-level `action` enum (a Hue dimmer's `on_press`, an Inovelli VZM31-SN's `up_double`). Each
+  non-empty `action` in a state message increments `Buttons.State.event_count` and sets
+  `last_action`; zigbee2mqtt's empty-string reset message is ignored. The counter, not
+  `last_action`, is what makes two identical taps in a row distinguishable - consume it with the
+  policy engine's `button.action` condition. A device with only an `action` expose (no battery,
+  say) is built as a `Sensor`. For multi-tap on Inovelli, keep `buttonDelay` at 100ms, not 0.
 
   **`illuminance_lux` is preferred over `illuminance`** - confirmed against a real Philips Hue
   motion sensor (9290012607) whose exposes explicitly document `"illuminance"` as "Raw measured

@@ -6,6 +6,7 @@ option go_package = "github.com/rmrobinson/house/api/device";
 
 import "api/trait/app.proto";
 import "api/trait/brightness.proto";
+import "api/trait/button.proto";
 import "api/trait/colour.proto";
 import "api/trait/onoff.proto";
 import "api/trait/power.proto";
@@ -18,4 +19,6 @@ message Light {
   optional faltung.house.api.trait.App scene = 4;
   // Present for lights with built-in power metering (e.g. Inovelli dimmers).
   optional faltung.house.api.trait.Power power = 5;
+  // Present for lights with physical paddles/buttons which report actions (e.g. Inovelli multi-tap).
+  optional faltung.house.api.trait.Buttons buttons = 6;
 }

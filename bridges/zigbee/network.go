@@ -431,6 +431,11 @@ func (nc *networkConn) classify(bd bridgeDevice) (deviceBuilder, bool) {
 			return sensorBuilder{}, true
 		}
 	}
+	// A device whose only capability is reporting button actions (a remote with no battery
+	// expose, say) is still worth building as a Sensor carrying a Buttons trait.
+	if _, ok := findActionExpose(exposes); ok {
+		return sensorBuilder{}, true
+	}
 	return nil, false
 }
 
