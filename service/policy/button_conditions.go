@@ -123,8 +123,10 @@ func (b *ButtonActionCondition) onUpdate(onChange func(bool)) {
 		return
 	}
 
-	// A drop in the count is the bridge having restarted, not a press.
-	if n < prev {
+	// A bridge restart zeroes the count (and last_action), which isn't a press. But a drop to a
+	// nonzero count is: it means policyd missed the zeroed state and this is the first press
+	// after the restart, so only a count of exactly zero is skipped, not every decrease.
+	if n == 0 {
 		return
 	}
 

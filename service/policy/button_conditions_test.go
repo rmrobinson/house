@@ -60,6 +60,19 @@ func TestButtonActionIgnoresOtherActionsAndUnrelatedUpdates(t *testing.T) {
 	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
 }
 
+func TestButtonActionFirstPressAfterUnseenRestartStillFires(t *testing.T) {
+	home := newFakeHomeAPI()
+	_ = home.SetState("remote", buttonEventCountKey, int64(5))
+	e, _ := newTestEngine(t, home)
+	RegisterBuiltinConditionTypes(e)
+
+	registerButtonPolicy(t, e, "any", ButtonActionParams{DeviceID: "remote"})
+
+	// Bridge restarted and policyd never saw the zeroed state: the count jumps 5 -> 1.
+	pressButton(home, e, "remote", "on_press", 1)
+	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
+}
+
 func TestButtonActionCountResetIsNotAnEvent(t *testing.T) {
 	home := newFakeHomeAPI()
 	_ = home.SetState("remote", buttonEventCountKey, int64(5))
