@@ -4,3 +4,10 @@
 # arm-linux-gnueabi toolchain configured.
 build:rpi1 --platforms=//platforms:linux_arm6
 build:rpi1 --@rules_go//go/config:pure=true
+
+# CI: use with `bazel test --config=ci //...`
+common:ci --color=no
+common:ci --curses=no
+build:ci --verbose_failures
+test:ci --keep_going
+test:ci --test_output=errors
