@@ -752,8 +752,8 @@ const evChargerExteriorConditionsFieldNumber = protoreflect.FieldNumber(5)
 // is a trait.Presence, so a camera with motion detection genuinely feeds
 // room occupancy now, which is correct, not a bug (see
 // TestComputeProperties_CameraPresence). ok is false if d has no details
-// set, or its kind carries none of these trait types at all (Light,
-// MediaPlayer, ConnectedDevice, ...).
+// set, or its kind carries none of these trait types at all (MediaPlayer,
+// ConnectedDevice, ...). A Light carries one only when it meters power.
 func extractDeviceTraits(d *apiDevice.Device) (t deviceTraits, ok bool) {
 	msg, _, has := protoreflectutil.OneofMessage(d, "details")
 	if !has {

@@ -53,7 +53,8 @@ type deviceBuilder interface {
 // dedicated Switch/Outlet device type, since this repo has none yet - same gap
 // bridges/zwave/devices.go's switchBuilder documents.
 //
-// If the device also exposes "power" (a smart plug's metering, reported in watts), that's folded
+// If the device also exposes "power" and/or "energy" (a smart plug's metering, in watts and
+// cumulative kWh), that's folded
 // onto the same Generic device's Power trait rather than building a separate Sensor - a metering
 // plug is still fundamentally one controllable device, and Generic supports both traits directly.
 type onOffBuilder struct{}
@@ -90,6 +91,17 @@ func (onOffBuilder) applyState(d *device.Device, state map[string]any) {
 	}
 
 	applyPowerState(g.Power, state)
+}
+
+// zeroPowerIfOff clears the instantaneous power reading after a command turns a metered light
+// off. applyCommand updates state optimistically and a dimmer may be slow (or, with coarse
+// reporting thresholds, never) to report its new draw, which would otherwise leave the pre-off
+// wattage standing and inflate the room's power_draw_w. Cumulative energy is left alone, and the
+// device's own next report corrects any disagreement.
+func zeroPowerIfOff(l *device.Light) {
+	if l.Power != nil && !l.OnOff.State.IsOn {
+		l.Power.State.PowerW = 0
+	}
 }
 
 // newPowerTrait returns a read-only Power trait if the device's exposes report "power" and/or
@@ -305,6 +317,7 @@ func (lb lightBuilder) applyCommand(ctx context.Context, m *mqttConn, friendlyNa
 			return err
 		}
 		l.OnOff.State.IsOn = on
+		zeroPowerIfOff(l)
 		return nil
 
 	case cmd.GetBrightnessAbsolute() != nil || cmd.GetBrightnessRelative() != nil:
@@ -318,6 +331,7 @@ func (lb lightBuilder) applyCommand(ctx context.Context, m *mqttConn, friendlyNa
 		}
 		l.Brightness.State.Level = pct
 		l.OnOff.State.IsOn = pct > 0
+		zeroPowerIfOff(l)
 		return nil
 
 	case cmd.GetColour() != nil:

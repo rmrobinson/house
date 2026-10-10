@@ -678,6 +678,24 @@ func TestLightBuilder_ApplyState_Power(t *testing.T) {
 	assert.EqualValues(t, 1.25, p.State.GetEnergyKwh())
 }
 
+func TestLightBuilder_ApplyCommand_OffZeroesPower(t *testing.T) {
+	mc, fc := newTestMQTTConn(t)
+	fc.respond("zigbee2mqtt/lamp1/set", "zigbee2mqtt/lamp1", []byte(`{"state":"OFF"}`))
+
+	bd := inovelliDevice(true)
+	lb := mustLightBuilder(t, bd)
+	d, err := lb.build(bd)
+	require.NoError(t, err)
+	lb.applyState(d, map[string]any{"state": "ON", "power": 9.2, "energy": 1.5})
+
+	err = lb.applyCommand(context.Background(), mc, "lamp1", d, &command.Command{
+		Details: &command.Command_OnOff{OnOff: &command.OnOff{On: false}},
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, d.GetLight().Power.State.PowerW)
+	assert.EqualValues(t, 1.5, d.GetLight().Power.State.GetEnergyKwh(), "cumulative energy must survive an off command")
+}
+
 func TestLightBuilder_ApplyState_NoMeteringIgnoresPowerKeys(t *testing.T) {
 	bd := inovelliDevice(false)
 	lb := mustLightBuilder(t, bd)
