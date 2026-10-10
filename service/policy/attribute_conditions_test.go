@@ -14,7 +14,7 @@ func TestRegisterBuiltinConditionTypesRegistersAll(t *testing.T) {
 	e, r := newTestEngine(t, newFakeHomeAPI())
 	RegisterBuiltinConditionTypes(e)
 
-	assert.Equal(t, []string{"attribute.equals", "attribute.threshold", "devices.any-match", "event.idle-for", "schedule.daily"}, r.TypeNames())
+	assert.Equal(t, []string{"attribute.equals", "attribute.threshold", "button.action", "devices.any-match", "event.idle-for", "schedule.daily"}, r.TypeNames())
 }
 
 func TestBuiltinConditionType_AttributeThreshold(t *testing.T) {

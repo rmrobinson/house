@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"time"
 
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
@@ -255,6 +256,7 @@ func (lb lightBuilder) build(bd bridgeDevice) (*device.Device, error) {
 	}
 
 	l.Power = newPowerTrait(bd.Definition.Exposes)
+	l.Buttons = newButtonsTrait(bd.Definition.Exposes)
 
 	return &device.Device{
 		Manufacturer:     bd.Definition.Vendor,
@@ -273,6 +275,7 @@ func (lb lightBuilder) applyState(d *device.Device, state map[string]any) {
 	}
 
 	applyPowerState(l.Power, state)
+	applyButtonsState(l.Buttons, state, time.Now())
 
 	if l.Brightness != nil {
 		if v, ok := numberValue(state["brightness"]); ok {
@@ -530,6 +533,7 @@ func (sensorBuilder) build(bd bridgeDevice) (*device.Device, error) {
 	if _, ok := findByProperty(exposes, "battery_low"); ok {
 		ensureMetadata(s)
 	}
+	s.Buttons = newButtonsTrait(exposes)
 
 	if bd.PowerSource == "Battery" {
 		ensureMetadata(s)
@@ -547,6 +551,8 @@ func (sensorBuilder) build(bd bridgeDevice) (*device.Device, error) {
 
 func (sensorBuilder) applyState(d *device.Device, state map[string]any) {
 	s := d.GetSensor()
+
+	applyButtonsState(s.Buttons, state, time.Now())
 
 	if s.Presence != nil {
 		if v, ok := state["occupancy"].(bool); ok {

@@ -10,6 +10,7 @@ import "api/trait/app.proto";
 import "api/trait/audio_output.proto";
 import "api/trait/battery.proto";
 import "api/trait/brightness.proto";
+import "api/trait/button.proto";
 import "api/trait/colour.proto";
 import "api/trait/input.proto";
 import "api/trait/light_level.proto";
@@ -46,4 +47,5 @@ message Generic {
   optional faltung.house.api.trait.Thermostat thermostat = 14;
   optional faltung.house.api.trait.Time time = 15;
   optional faltung.house.api.trait.Volume volume = 16;
+  optional faltung.house.api.trait.Buttons buttons = 17;
 }

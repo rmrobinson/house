@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+import "google/protobuf/timestamp.proto";
+
+// Buttons describes the physical buttons, paddles or taps on a device (a wall remote, or a
+// dimmer's paddle) and the discrete actions they report: a press, a hold, a double tap.
+//
+// Buttons is event-shaped rather than level-shaped: an action happens and is over. So that two
+// identical actions in a row (two double-taps) are still two distinct observable state changes,
+// every action increments event_count. A consumer that wants "react to each action" should
+// trigger on event_count changing and read last_action, not trigger on last_action alone.
+// This is a read-only trait.
+message Buttons {
+  message Attributes {
+    // The set of actions this device can report, in the device's own vocabulary
+    // (e.g. "on_press", "up_double"). Empty if the device does not enumerate them.
+    repeated string actions = 1;
+  }
+  message State {
+    // The most recent action reported. Empty until the first action after the bridge started.
+    // Unlike event_count it is not cleared when the action ends.
+    string last_action = 1;
+
+    // Incremented by one for every action reported. Starts at zero each time the bridge starts, so
+    // only changes in the value are meaningful, never its absolute value.
+    int64 event_count = 2;
+
+    // When last_action was reported.
+    google.protobuf.Timestamp last_action_time = 3;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

@@ -196,6 +196,27 @@ func TestResolveState(t *testing.T) {
 	}
 }
 
+// TestResolveState_ButtonsTraitKeys pins the exact keys the "button.action"
+// condition reads (service/policy/button_conditions.go) against the real
+// protoreflect walker, for both device kinds that carry a Buttons trait.
+func TestResolveState_ButtonsTraitKeys(t *testing.T) {
+	buttons := &trait.Buttons{State: &trait.Buttons_State{LastAction: "up_double", EventCount: 4}}
+	for name, d := range map[string]*device.Device{
+		"light":  {Id: "l", Details: &device.Device_Light{Light: &device.Light{Buttons: buttons}}},
+		"sensor": {Id: "s", Details: &device.Device_Sensor{Sensor: &device.Sensor{Buttons: buttons}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			n, err := resolveState(d, "buttons.state.event_count")
+			require.NoError(t, err)
+			assert.Equal(t, int64(4), n)
+
+			a, err := resolveState(d, "buttons.state.last_action")
+			require.NoError(t, err)
+			assert.Equal(t, "up_double", a)
+		})
+	}
+}
+
 func TestHasState(t *testing.T) {
 	withBattery := sensorDevice("sensor-1", true, true)
 	withoutBattery := &device.Device{

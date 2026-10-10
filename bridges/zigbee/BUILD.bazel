@@ -4,6 +4,7 @@ go_library(
     name = "zigbee_lib",
     srcs = [
         "bridge.go",
+        "buttons.go",
         "config.go",
         "devices.go",
         "main.go",
@@ -38,6 +39,7 @@ go_binary(
 go_test(
     name = "zigbee_test",
     srcs = [
+        "buttons_test.go",
         "devices_test.go",
         "fakemqtt_test.go",
         "mqtt_test.go",

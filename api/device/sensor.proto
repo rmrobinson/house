@@ -9,6 +9,7 @@ import "google/protobuf/timestamp.proto";
 import "api/trait/air_properties.proto";
 import "api/trait/air_quality.proto";
 import "api/trait/battery.proto";
+import "api/trait/button.proto";
 import "api/trait/light_level.proto";
 import "api/trait/power.proto";
 import "api/trait/presence.proto";
@@ -47,6 +48,8 @@ message Sensor {
   optional faltung.house.api.trait.Battery battery = 12;
   optional faltung.house.api.trait.LightLevel light_level = 13;
   optional faltung.house.api.trait.Presence presence = 14;
+  // Present for battery remotes and other devices whose job is reporting button actions.
+  optional faltung.house.api.trait.Buttons buttons = 15;
 
   // Has an alarm been tripped?
   optional BinarySensor alarm = 51;
