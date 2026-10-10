@@ -631,3 +631,76 @@ func TestDecodeAny(t *testing.T) {
 	assert.Equal(t, "fallback", decodeAny(nil, "fallback"))
 	assert.Equal(t, "fallback", decodeAny([]byte(`not json`), "fallback"))
 }
+
+// inovelliDevice mirrors a VZM31-SN: a "light" composite with brightness, plus top-level (not
+// inside the light composite) read-only power and energy metering exposes.
+func inovelliDevice(withMetering bool) bridgeDevice {
+	bd := lightDevice(true, false, false)
+	if withMetering {
+		bd.Definition.Exposes = append(bd.Definition.Exposes,
+			expose{Type: "numeric", Name: "power", Property: "power", Unit: "W"},
+			expose{Type: "numeric", Name: "energy", Property: "energy", Unit: "kWh"},
+		)
+	}
+	return bd
+}
+
+func TestLightBuilder_Build_PowerOnlyWhenAdvertised(t *testing.T) {
+	plain := inovelliDevice(false)
+	d, err := mustLightBuilder(t, plain).build(plain)
+	require.NoError(t, err)
+	assert.Nil(t, d.GetLight().Power)
+
+	metered := inovelliDevice(true)
+	d, err = mustLightBuilder(t, metered).build(metered)
+	require.NoError(t, err)
+	require.NotNil(t, d.GetLight().Power)
+	assert.Nil(t, d.GetLight().Power.State.EnergyKwh, "no energy reading has arrived yet")
+}
+
+func TestLightBuilder_ApplyState_Power(t *testing.T) {
+	bd := inovelliDevice(true)
+	lb := mustLightBuilder(t, bd)
+	d, err := lb.build(bd)
+	require.NoError(t, err)
+	p := d.GetLight().Power
+
+	lb.applyState(d, map[string]any{"state": "ON", "brightness": 254.0, "power": 42.5, "energy": 1.25})
+	assert.EqualValues(t, 42.5, p.State.PowerW)
+	require.NotNil(t, p.State.EnergyKwh)
+	assert.EqualValues(t, 1.25, p.State.GetEnergyKwh())
+
+	// A partial update must not clobber metering, and power: 0 (light off) must be applied.
+	lb.applyState(d, map[string]any{"linkquality": 60.0})
+	assert.EqualValues(t, 42.5, p.State.PowerW)
+	lb.applyState(d, map[string]any{"state": "OFF", "power": 0.0})
+	assert.EqualValues(t, 0, p.State.PowerW)
+	assert.EqualValues(t, 1.25, p.State.GetEnergyKwh())
+}
+
+func TestLightBuilder_ApplyCommand_OffZeroesPower(t *testing.T) {
+	mc, fc := newTestMQTTConn(t)
+	fc.respond("zigbee2mqtt/lamp1/set", "zigbee2mqtt/lamp1", []byte(`{"state":"OFF"}`))
+
+	bd := inovelliDevice(true)
+	lb := mustLightBuilder(t, bd)
+	d, err := lb.build(bd)
+	require.NoError(t, err)
+	lb.applyState(d, map[string]any{"state": "ON", "power": 9.2, "energy": 1.5})
+
+	err = lb.applyCommand(context.Background(), mc, "lamp1", d, &command.Command{
+		Details: &command.Command_OnOff{OnOff: &command.OnOff{On: false}},
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, d.GetLight().Power.State.PowerW)
+	assert.EqualValues(t, 1.5, d.GetLight().Power.State.GetEnergyKwh(), "cumulative energy must survive an off command")
+}
+
+func TestLightBuilder_ApplyState_NoMeteringIgnoresPowerKeys(t *testing.T) {
+	bd := inovelliDevice(false)
+	lb := mustLightBuilder(t, bd)
+	d, err := lb.build(bd)
+	require.NoError(t, err)
+	lb.applyState(d, map[string]any{"state": "ON", "power": 5.0})
+	assert.Nil(t, d.GetLight().Power)
+}

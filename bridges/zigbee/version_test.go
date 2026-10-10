@@ -27,6 +27,17 @@ func TestComputeVersion_StableAcrossPowerTelemetry(t *testing.T) {
 	assert.Equal(t, v1, v2, "read-only Power telemetry must not affect version, per computeVersion's documented contract")
 }
 
+func TestComputeVersion_StableAcrossLightPowerTelemetry(t *testing.T) {
+	bd := inovelliDevice(true)
+	lb := mustLightBuilder(t, bd)
+	d, err := lb.build(bd)
+	require.NoError(t, err)
+
+	v1 := computeVersion(d)
+	lb.applyState(d, map[string]any{"power": 42.0, "energy": 3.5})
+	assert.Equal(t, v1, computeVersion(d), "read-only light Power telemetry must not affect version")
+}
+
 func TestComputeVersion_LightIncludesColourAndBrightness(t *testing.T) {
 	fixture := lightDevice(true, true, true)
 	lb := mustLightBuilder(t, fixture)

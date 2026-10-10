@@ -124,6 +124,9 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 		if s.FrequencyHz != nil && s.GetFrequencyHz() != 0 {
 			add("Frequency", "%.1f Hz", s.GetFrequencyHz())
 		}
+		if s.EnergyKwh != nil {
+			add("Energy", "%.2f kWh", s.GetEnergyKwh())
+		}
 	case *apiTrait.Battery:
 		s := t.GetState()
 		if s.GetCapacityRemainingPct() != 0 {

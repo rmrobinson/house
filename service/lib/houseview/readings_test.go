@@ -25,6 +25,16 @@ func TestReadings(t *testing.T) {
 		{Label: "Voltage", Value: "121.5 V"},
 	}, Readings(ups))
 
+	energy := 3.5
+	light := &apiDevice.Device{Details: &apiDevice.Device_Light{Light: &apiDevice.Light{
+		OnOff: &apiTrait.OnOff{},
+		Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 42.5, EnergyKwh: &energy}},
+	}}}
+	assert.Equal(t, []Reading{
+		{Label: "Power", Value: "42.5 W"},
+		{Label: "Energy", Value: "3.50 kWh"},
+	}, Readings(light))
+
 	fan := &apiDevice.Device{Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
 		Temperature: &apiTrait.Temperature{State: &apiTrait.Temperature_State{Value: 23.5}},
 	}}}

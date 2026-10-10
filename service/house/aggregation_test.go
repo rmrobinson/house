@@ -854,3 +854,15 @@ func TestComputeProperties_BatteryRuntimeIgnoresSensorBatteries(t *testing.T) {
 	})})
 	assert.Nil(t, props)
 }
+
+func TestComputeProperties_LightPowerContributesToRoomPower(t *testing.T) {
+	light := func(w float64) *apiDevice.Device {
+		return &apiDevice.Device{Details: &apiDevice.Device_Light{Light: &apiDevice.Light{
+			OnOff: &apiTrait.OnOff{},
+			Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: w}},
+		}}}
+	}
+	props := computeProperties(nil, []*apiDevice.Device{light(30), light(12.5)})
+	require.NotNil(t, props.PowerDrawW)
+	assert.Equal(t, 42.5, *props.PowerDrawW)
+}
