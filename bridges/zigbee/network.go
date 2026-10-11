@@ -183,6 +183,14 @@ type networkConn struct {
 	friendlyNameToDeviceID map[string]string
 	ieeeToDeviceID         map[string]string
 	devices                map[string]*builtDevice
+
+	// queryMu guards the pending one-off state queries for newly discovered devices, and
+	// queryRunning (whether a goroutine is draining them); see requestInitialState. queryWG lets
+	// tests wait for that goroutine.
+	queryMu      sync.Mutex
+	queries      []initialQuery
+	queryRunning bool
+	queryWG      sync.WaitGroup
 }
 
 func newNetworkConn(logger *zap.Logger, svc *bridge.Service, zb *ZigbeeBridge, mc *mqttConn, cfg zigbeeConfig) *networkConn {
@@ -424,6 +432,75 @@ func (nc *networkConn) buildDevice(bd bridgeDevice) {
 	nc.zb.registerDevice(id, nc)
 	d.Version = computeVersion(d)
 	nc.svc.UpdateDevice(d)
+
+	if q, ok := builder.(stateQuerier); ok {
+		nc.requestInitialState(bd.FriendlyName, q.stateQuery())
+	}
+}
+
+// initialQueryInterval spaces the one-off state queries sent for newly discovered devices. A var
+// so tests can shrink it.
+var initialQueryInterval = 200 * time.Millisecond
+
+// initialQuery is one pending /get for a newly discovered device.
+type initialQuery struct {
+	friendlyName string
+	payload      map[string]any
+}
+
+// maxPendingInitialQueries bounds the queue of not-yet-sent state queries.
+const maxPendingInitialQueries = 256
+
+// requestInitialState queues a one-off "/get" for friendlyName, which makes zigbee2mqtt publish
+// the device's current state to its state topic (applied like any other report). See stateQuerier
+// for why. Queries are sent one at a time, initialQueryInterval apart, from a single goroutine:
+// a bridge restart discovers every device at once, and asking a few dozen devices at the same
+// moment is a burst on a Zigbee mesh that is already the slowest part of this system. Best
+// effort - a device that doesn't answer simply stays at its zero state until it next reports, as
+// before - so a full queue drops the request rather than blocking discovery.
+//
+// The goroutine exists only while there is something to send, so an idle bridge holds none.
+func (nc *networkConn) requestInitialState(friendlyName string, payload map[string]any) {
+	nc.queryMu.Lock()
+	if len(nc.queries) >= maxPendingInitialQueries {
+		nc.queryMu.Unlock()
+		nc.logger.Warn("initial state query queue is full; skipping", zap.String("friendly_name", friendlyName))
+		return
+	}
+	nc.queries = append(nc.queries, initialQuery{friendlyName: friendlyName, payload: payload})
+	start := !nc.queryRunning
+	nc.queryRunning = true
+	nc.queryMu.Unlock()
+
+	if start {
+		nc.queryWG.Add(1)
+		go nc.runInitialQueries()
+	}
+}
+
+func (nc *networkConn) runInitialQueries() {
+	defer nc.queryWG.Done()
+	for {
+		nc.queryMu.Lock()
+		if len(nc.queries) == 0 {
+			nc.queryRunning = false
+			nc.queryMu.Unlock()
+			return
+		}
+		q := nc.queries[0]
+		nc.queries = nc.queries[1:]
+		more := len(nc.queries) > 0
+		nc.queryMu.Unlock()
+
+		topic := nc.mqtt.stateTopic(q.friendlyName) + "/get"
+		if err := nc.mqtt.publish(topic, q.payload); err != nil {
+			nc.logger.Warn("unable to request initial device state",
+				zap.String("friendly_name", q.friendlyName), zap.Error(err))
+		}
+		if more {
+			time.Sleep(initialQueryInterval)
+		}
+	}
 }
 
 // classify maps a zigbee2mqtt device's exposes list to the deviceBuilder that owns it. Unlike

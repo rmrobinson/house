@@ -115,6 +115,10 @@ degrades anything else:
   `action` arriving mid-command is counted, not lost.
 - Commands to one device queue, and a queued command whose caller has given up is dropped before it
   is published, so an unresponsive device never accumulates stale commands.
+- zigbee2mqtt does not retain device state, so on startup each newly discovered *mains-powered*
+  light/switch/plug is sent one `/get` (spaced 200ms apart, best effort) to learn its real state;
+  without it an idle bulb reads as off at 0% until it next changes by itself, which skews relative
+  brightness commands and any policy reading the level. Battery sensors are never queried.
 - A write waits 8s for the device's echo (`writeTimeout`), above policyd's 15s command deadline
   being the outer bound. A timeout means "not confirmed", not "failed": the command may still take
   effect. Confirmations slower than 2s and timeouts are logged, naming the device.

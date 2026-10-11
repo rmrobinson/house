@@ -43,6 +43,18 @@ type deviceBuilder interface {
 	applyCommand(ctx context.Context, m *mqttConn, friendlyName string, d *device.Device, cmd *command.Command) error
 }
 
+// stateQuerier is optionally implemented by a deviceBuilder whose devices are mains-powered and
+// answer a zigbee2mqtt "/get" - the payload it returns is what to ask for. A newly discovered
+// device of such a builder is queried once (see networkConn.requestInitialState), because
+// zigbee2mqtt does not retain device state topics: without it a device that is idle when this
+// bridge starts reports its trait's zero value (an off, 0% bulb) until it next changes by itself,
+// and anything computed from that - a relative brightness command, a policy reading the level -
+// is wrong in the meantime. Sensors don't implement it: they are battery powered and sleep, so a
+// /get either waits for the next wake-up or is dropped, and costs them battery either way.
+type stateQuerier interface {
+	stateQuery() map[string]any
+}
+
 // --- Generic on/off (switch, or plug w/ optional power metering) ---
 
 // onOffBuilder builds a house Generic/OnOff device from a top-level "switch" composite expose
@@ -64,6 +76,10 @@ const (
 	zigbeeStateOn  = "ON"
 	zigbeeStateOff = "OFF"
 )
+
+// stateQuery implements stateQuerier: a plug or switch's "state" answers a /get with the whole
+// device state, metering included.
+func (onOffBuilder) stateQuery() map[string]any { return map[string]any{"state": ""} }
 
 func (onOffBuilder) build(bd bridgeDevice) (*device.Device, error) {
 	g := &device.Generic{
@@ -214,6 +230,10 @@ func newLightBuilder(exposes []expose) (lightBuilder, bool) {
 	}
 	return lb, true
 }
+
+// stateQuery implements stateQuerier. A /get for "state" is answered with the light's whole state
+// - brightness and colour included - confirmed live against Philips Hue and Inovelli bulbs.
+func (lightBuilder) stateQuery() map[string]any { return map[string]any{"state": ""} }
 
 func (lb lightBuilder) build(bd bridgeDevice) (*device.Device, error) {
 	light, _ := findTopLevel(bd.Definition.Exposes, "light")
