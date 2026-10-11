@@ -105,6 +105,20 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   policy engine's `button.action` condition. A device with only an `action` expose (no battery,
   say) is built as a `Sensor`. For multi-tap on Inovelli, keep `buttonDelay` at 100ms, not 0.
 
+**Slow and out-of-range devices.** A device at the edge of range (link quality in the low tens)
+acknowledges commands late, after zigbee2mqtt's own retries. The bridge is built so that never
+degrades anything else:
+- The MQTT receive goroutine never blocks. Device messages are handled on a per-topic queue, in
+  order, so a command waiting on one device cannot delay another device's state or a button press.
+- A message is applied to the cached device even while a command is in flight on the same topic -
+  including a late echo after the caller saw a timeout - so state always converges and a button
+  `action` arriving mid-command is counted, not lost.
+- Commands to one device queue, and a queued command whose caller has given up is dropped before it
+  is published, so an unresponsive device never accumulates stale commands.
+- A write waits 8s for the device's echo (`writeTimeout`), above policyd's 15s command deadline
+  being the outer bound. A timeout means "not confirmed", not "failed": the command may still take
+  effect. Confirmations slower than 2s and timeouts are logged, naming the device.
+
   **`illuminance_lux` is preferred over `illuminance`** - confirmed against a real Philips Hue
   motion sensor (9290012607) whose exposes explicitly document `"illuminance"` as "Raw measured
   illuminance" (an uncalibrated sensor count, not lux) with `"illuminance_lux"` alongside it as the

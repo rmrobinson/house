@@ -33,7 +33,15 @@ import (
 // resolve (or fail) a command against a real device in well under this, and
 // without a deadline a wedged downstream bridge would hang the calling
 // policy script's goroutine forever.
-const commandTimeout = 10 * time.Second
+//
+// It must stay comfortably above the slowest bridge's own confirmation wait
+// (bridges/zigbee's writeTimeout is 8s, since a device at the edge of range
+// is acknowledged late): below that, the caller sees a bare context deadline
+// instead of the bridge's "device did not confirm" error, and the bridge's
+// per-device command queue is left holding commands whose caller has already
+// gone. It is also well under defaultExecutionTimeout (30s), so a script
+// that commands two devices in turn can still finish.
+const commandTimeout = 15 * time.Second
 
 // ErrNotReady is returned by SetLight and SetState - which must reach the
 // connected endpoint to execute a command - when called before Start has

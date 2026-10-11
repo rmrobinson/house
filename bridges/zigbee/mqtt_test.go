@@ -17,6 +17,7 @@ func newTestMQTTConn(t *testing.T) (*mqttConn, *fakeMQTTClient) {
 	logger := zaptest.NewLogger(t)
 	fc := newFakeMQTTClient()
 	mc := &mqttConn{logger: logger, cfg: mqttConfig{BaseTopic: "zigbee2mqtt"}, client: fc, waiters: make(map[string][]chan []byte)}
+	fc.after = mc.quiesce
 	mc.handleConnect(fc)
 	return mc, fc
 }

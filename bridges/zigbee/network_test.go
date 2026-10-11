@@ -38,6 +38,7 @@ func newTestNetworkConn(t *testing.T, cfg zigbeeConfig) (*networkConn, *fakeMQTT
 	zb.net = nc
 	svc.RegisterHandler(zb, zb.b)
 
+	fc.after = mc.quiesce
 	mc.handleConnect(fc)
 	return nc, fc
 }
