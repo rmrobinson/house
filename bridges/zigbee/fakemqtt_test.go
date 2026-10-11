@@ -27,6 +27,11 @@ type fakeMQTTClient struct {
 	// responses maps an exact publish topic to the message that should be delivered back,
 	// synchronously, once a Publish to that topic is observed - see respond.
 	responses map[string]fakeResponse
+
+	// after, if set, runs at the end of every deliver. Tests set it to the connection's quiesce,
+	// because dispatch now hands device messages to per-topic goroutines (see mqttConn.dispatch):
+	// without it, "deliver, then assert state" would race the handler.
+	after func()
 }
 
 type fakeSub struct {
@@ -81,6 +86,9 @@ func (f *fakeMQTTClient) deliver(topic string, payload []byte) {
 		if topicMatchesFilter(s.filter, topic) {
 			s.handler(f, &fakeMessage{topic: topic, payload: payload})
 		}
+	}
+	if f.after != nil {
+		f.after()
 	}
 }
 

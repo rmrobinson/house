@@ -127,6 +127,34 @@ type builtDevice struct {
 	builder      deviceBuilder
 	friendlyName string
 	ieeeAddress  string
+
+	// cmdSlot serializes commands to this device, like mu does, but unlike a bare mutex a waiter
+	// can give up: see acquireCommand.
+	cmdOnce sync.Once
+	cmdSlot chan struct{}
+}
+
+// acquireCommand takes this device's command slot, waiting for any in-flight command to finish
+// first, and returns the func that releases it. It returns ctx's error instead if ctx ends while
+// waiting (or has ended by the time the slot is free).
+//
+// This is what keeps a slow device from poisoning its own queue. With a plain mutex, every
+// command queued behind a stuck one waited its turn regardless of its caller's deadline and then
+// published anyway - so one unresponsive bulb produced a train of stale commands, each costing a
+// full write timeout and each landing on the device long after the caller had given up.
+func (bd *builtDevice) acquireCommand(ctx context.Context) (func(), error) {
+	bd.cmdOnce.Do(func() { bd.cmdSlot = make(chan struct{}, 1) })
+
+	select {
+	case bd.cmdSlot <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-bd.cmdSlot
+		return nil, err
+	}
+	return func() { <-bd.cmdSlot }, nil
 }
 
 // networkConn owns zigbee2mqtt device discovery (driven by the retained bridge/devices message),
@@ -476,6 +504,12 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	if !ok {
 		return nil, bridge.ErrDeviceNotFound
 	}
+
+	release, err := bd.acquireCommand(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	bd.mu.Lock()
 	defer bd.mu.Unlock()

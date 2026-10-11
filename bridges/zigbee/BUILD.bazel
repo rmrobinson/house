@@ -42,6 +42,7 @@ go_test(
         "buttons_test.go",
         "devices_test.go",
         "fakemqtt_test.go",
+        "hardening_test.go",
         "mqtt_test.go",
         "network_test.go",
         "version_test.go",

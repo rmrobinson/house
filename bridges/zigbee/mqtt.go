@@ -21,7 +21,16 @@ import (
 // reflecting an accepted write before giving up. A var, not a const, so tests can shrink it
 // rather than spend real wall-clock time exercising the timeout path. See bridges/zwave/mqtt.go's
 // writeTimeout - same rationale, different protocol.
-var writeTimeout = 5 * time.Second
+//
+// 8s rather than a snappier few seconds: a device at the edge of range (link quality in the low
+// tens) is acknowledged only after zigbee2mqtt's own retries, which routinely take longer than 5s
+// - and giving up early reports a failure for a command that then takes effect anyway. It stays
+// below policyd's command deadline (service/policy/bridgehome.commandTimeout) so the caller sees
+// this error, not a bare deadline.
+var writeTimeout = 8 * time.Second
+
+// slowConfirmThreshold is how long a confirmed write may take before it is logged as slow.
+const slowConfirmThreshold = 2 * time.Second
 
 // mqttConfig describes how to connect to the zigbee2mqtt gateway.
 type mqttConfig struct {
@@ -63,6 +72,11 @@ type mqttConn struct {
 
 	mu      sync.Mutex
 	waiters map[string][]chan []byte
+	// queues holds the per-topic backlog of messages awaiting onMessage; see dispatch/enqueue.
+	// Created lazily (guarded by mu) so a zero-value mqttConn is usable.
+	queues map[string]*topicQueue
+	// handlers counts running per-topic drain goroutines, for quiesce.
+	handlers sync.WaitGroup
 }
 
 func newMQTTConn(logger *zap.Logger, cfg mqttConfig) (*mqttConn, error) {
@@ -171,20 +185,27 @@ func (m *mqttConn) handleMessage(_ mqtt.Client, msg mqtt.Message) {
 	m.dispatch(msg.Topic(), msg.Payload())
 }
 
-// dispatch notifies any waiters registered on topic (see subscribeWaiter) with every message that
-// arrives on it while they're registered, then - only if nothing is currently waiting on this
-// exact topic - hands off to onMessage for ordinary discovery/state routing.
+// dispatch is called on the MQTT client's single receive goroutine, so it must never block: while
+// it does, no message for ANY device is processed - not a button press, not another device's
+// state report, not the echo a pending WriteState is waiting for.
 //
-// A topic with an active waiter is, today, always a WriteState echo (the only caller of
-// subscribeWaiter): forwarding it to onMessage too would re-enter the per-device lock
-// networkConn.applyCommand holds across its own blocking WriteState call - see
-// bridges/zwave/mqtt.go's dispatch doc comment for the full reentrancy rationale, which applies
-// here unchanged even though zigbee2mqtt's per-device topic carries the device's *entire* state
-// rather than a single value. A waiter now keeps receiving messages (instead of being torn down
-// after the first one) specifically so WriteState can look past an intermediate/unrelated report
-// that races the real "set accepted" echo - see WriteState's doc comment. As before, a
-// rejected/differing echo isn't applied to the cached device here - the cache stays at its
-// last-known value until the device's next independent report.
+// Every message is first offered to any waiters registered on its topic (see subscribeWaiter),
+// non-blockingly. Device-topic messages are then ALSO queued for onMessage, handled on a
+// per-topic goroutine (see enqueue), so a message is applied to the cached device whether or not
+// a command happened to be in flight.
+//
+// Both halves matter, and both were once wrong. Previously a topic with an active waiter was
+// consumed by the waiter alone and never applied, on the theory that forwarding it would
+// re-enter the per-device lock networkConn.applyCommand holds across its blocking WriteState
+// (see bridges/zwave/mqtt.go's dispatch doc comment for that reentrancy rationale). The cost: any
+// message arriving during a command - including a button "action" event from a light's paddle -
+// was silently lost. And the alternative of calling onMessage inline would block this goroutine on
+// that very lock, which in turn would stop the command's own echo from ever being delivered, so
+// a command to a slow device stalled message handling for the whole network until it timed out.
+// Handling off this goroutine, ordered per topic, gives both: the echo reaches the waiter
+// immediately, and state is applied (in arrival order) as soon as the command releases the lock.
+//
+// bridge/... topics (discovery, info) are cheap and carry no per-device lock, so they stay inline.
 func (m *mqttConn) dispatch(topic string, payload []byte) {
 	m.mu.Lock()
 	// Copied rather than read directly: cancel (which can run concurrently, once a waiter's
@@ -193,19 +214,88 @@ func (m *mqttConn) dispatch(topic string, payload []byte) {
 	waiters := append([]chan []byte(nil), m.waiters[topic]...)
 	m.mu.Unlock()
 
-	if len(waiters) > 0 {
-		for _, ch := range waiters {
-			select {
-			case ch <- payload:
-			default:
-			}
+	for _, ch := range waiters {
+		select {
+		case ch <- payload:
+		default:
 		}
-		return
 	}
 
-	if m.onMessage != nil {
+	if m.onMessage == nil {
+		return
+	}
+	if strings.HasPrefix(topic, m.cfg.BaseTopic+"/bridge/") {
+		m.onMessage(topic, payload)
+		return
+	}
+	m.enqueue(topic, payload)
+}
+
+// maxQueuedPerTopic bounds one topic's backlog of unhandled messages. A backlog only builds while
+// onMessage is blocked on a device lock held by a command, i.e. for at most a write timeout, so
+// hitting this means something is badly wrong; the oldest message is dropped (and logged) rather
+// than growing without bound.
+const maxQueuedPerTopic = 1024
+
+// topicQueue is one topic's FIFO of messages awaiting onMessage, drained by at most one
+// goroutine at a time so a topic's messages are always handled in arrival order.
+type topicQueue struct {
+	mu      sync.Mutex
+	pending [][]byte
+	running bool
+}
+
+// enqueue appends payload to topic's queue and ensures a goroutine is draining it. The drainer
+// exits when the queue empties, so an idle topic holds no goroutine.
+func (m *mqttConn) enqueue(topic string, payload []byte) {
+	m.mu.Lock()
+	if m.queues == nil {
+		m.queues = make(map[string]*topicQueue)
+	}
+	q := m.queues[topic]
+	if q == nil {
+		q = &topicQueue{}
+		m.queues[topic] = q
+	}
+	m.mu.Unlock()
+
+	q.mu.Lock()
+	if len(q.pending) >= maxQueuedPerTopic {
+		m.logger.Warn("dropping oldest queued message: topic backlog is full", zap.String("topic", topic))
+		q.pending = q.pending[1:]
+	}
+	q.pending = append(q.pending, payload)
+	start := !q.running
+	q.running = true
+	q.mu.Unlock()
+
+	if start {
+		m.handlers.Add(1)
+		go m.drain(topic, q)
+	}
+}
+
+func (m *mqttConn) drain(topic string, q *topicQueue) {
+	defer m.handlers.Done()
+	for {
+		q.mu.Lock()
+		if len(q.pending) == 0 {
+			q.running = false
+			q.mu.Unlock()
+			return
+		}
+		payload := q.pending[0]
+		q.pending = q.pending[1:]
+		q.mu.Unlock()
+
 		m.onMessage(topic, payload)
 	}
+}
+
+// quiesce blocks until every queued message has been handled. Tests use it to get back the
+// "deliver, then assert" determinism that inline handling used to give them.
+func (m *mqttConn) quiesce() {
+	m.handlers.Wait()
 }
 
 // subscribeWaiter registers interest in every message published to topic until cancel is called.
@@ -281,10 +371,18 @@ func (m *mqttConn) stateTopic(friendlyName string) string {
 // A write to an unreachable/offline device publishes successfully but never receives a matching
 // echo, so this naturally surfaces as bridge.ErrCommandTimeout rather than a false success.
 func (m *mqttConn) WriteState(ctx context.Context, friendlyName string, set map[string]any) error {
+	// A caller whose deadline already passed (e.g. it queued behind a slow command to the same
+	// device) must not still publish: the command would reach the device long after anyone
+	// stopped caring, and then be applied on top of whatever happened since.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	topic := m.stateTopic(friendlyName)
 	ch, cancel := m.subscribeWaiter(topic)
 	defer cancel()
 
+	start := time.Now()
 	if err := m.publish(topic+"/set", set); err != nil {
 		return err
 	}
@@ -296,11 +394,23 @@ func (m *mqttConn) WriteState(ctx context.Context, friendlyName string, set map[
 		select {
 		case raw := <-ch:
 			if stateMatches(raw, set) {
+				// A link at the edge of range shows up here first: zigbee2mqtt only echoes once
+				// the device has acknowledged, and on a weak link that takes retries.
+				if elapsed := time.Since(start); elapsed >= slowConfirmThreshold {
+					m.logger.Info("slow command confirmation: device may be at the edge of range",
+						zap.String("device", friendlyName), zap.Duration("elapsed", elapsed))
+				}
 				return nil
 			}
 			// Not our echo - keep waiting for it, rather than failing on what may just be an
 			// unrelated report racing the real one (see doc comment above).
 		case <-deadline.C:
+			// The command is NOT known to have failed: zigbee2mqtt may still deliver it, and a
+			// late echo is applied like any other state report (see dispatch), so the cached
+			// state converges either way.
+			m.logger.Warn("command not confirmed in time; it may still take effect",
+				zap.String("device", friendlyName), zap.Duration("waited", time.Since(start)),
+				zap.Any("set", set))
 			return bridge.ErrCommandTimeout
 		case <-ctx.Done():
 			return ctx.Err()
