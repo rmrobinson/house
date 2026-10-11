@@ -90,3 +90,24 @@ func TestButtonActionCountResetIsNotAnEvent(t *testing.T) {
 	pressButton(home, e, "remote", "off_press", 1)
 	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
 }
+
+// policyd registers its persisted policies before bridgehome has populated the device cache, so
+// the condition's baseline read fails. The first update that DOES arrive carries whatever count and
+// last_action the device already had - a press from before policyd started - and must be taken as
+// the baseline, not mistaken for a new press (which would re-run the policy for the last action on
+// every policyd restart).
+func TestButtonActionDeviceUnknownAtStartDoesNotReplayLastAction(t *testing.T) {
+	home := newFakeHomeAPI() // no state for "remote" yet: the baseline read fails
+	e, _ := newTestEngine(t, home)
+	RegisterBuiltinConditionTypes(e)
+
+	registerButtonPolicy(t, e, "any", ButtonActionParams{DeviceID: "remote"})
+
+	// The device appears with history: 40 events so far, the last being a tap that matches.
+	pressButton(home, e, "remote", "up_double", 40)
+	time.Sleep(100 * time.Millisecond)
+	assert.Equal(t, 0, home.notifyCount(), "pre-existing state must not replay as a new press")
+
+	pressButton(home, e, "remote", "up_double", 41)
+	require.Eventually(t, func() bool { return home.notifyCount() == 1 }, time.Second, 10*time.Millisecond)
+}

@@ -30,6 +30,14 @@ func lightWithButtons() bridgeDevice {
 	return bd
 }
 
+// waitForSet blocks until n /set messages have been published to lamp1: i.e. until that many
+// commands are genuinely in flight, which a fixed sleep only approximates.
+func waitForSet(t *testing.T, fc *fakeMQTTClient, n int) {
+	t.Helper()
+	require.Eventually(t, func() bool { return countPublished(fc, "zigbee2mqtt/lamp1/set") >= n },
+		2*time.Second, time.Millisecond, "command never reached the device")
+}
+
 func offCommand(id string) *command.Command {
 	return &command.Command{DeviceId: id, Details: &command.Command_OnOff{OnOff: &command.OnOff{On: false}}}
 }
@@ -87,7 +95,7 @@ func TestDispatch_StuckDeviceDoesNotBlockOtherDevices(t *testing.T) {
 // consumed by the command's waiter and never applied - silently losing a press.
 func TestActionDuringInFlightCommandIsNotLost(t *testing.T) {
 	shrinkWriteTimeout(t, 300*time.Millisecond)
-	nc, _ := newTestNetworkConn(t, zigbeeConfig{})
+	nc, fc := newTestNetworkConn(t, zigbeeConfig{})
 	nc.buildDevice(lightWithButtons())
 
 	cmdDone := make(chan error, 1)
@@ -95,7 +103,7 @@ func TestActionDuringInFlightCommandIsNotLost(t *testing.T) {
 		_, err := nc.applyCommand(context.Background(), offCommand("zigbee-bulb"))
 		cmdDone <- err
 	}()
-	time.Sleep(50 * time.Millisecond) // the command is now waiting for an echo that never comes
+	waitForSet(t, fc, 1) // the command is now waiting for an echo that never comes
 
 	nc.mqtt.dispatch("zigbee2mqtt/lamp1", []byte(`{"action":"up_double","state":"ON"}`))
 
@@ -125,7 +133,7 @@ func TestQueuedCommandWithExpiredContextIsNotPublished(t *testing.T) {
 		_, err := nc.applyCommand(context.Background(), offCommand("zigbee-bulb"))
 		first <- err
 	}()
-	time.Sleep(50 * time.Millisecond) // first is in flight, holding the device's command slot
+	waitForSet(t, fc, 1) // first is in flight, holding the device's command slot
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
@@ -134,13 +142,7 @@ func TestQueuedCommandWithExpiredContextIsNotPublished(t *testing.T) {
 
 	assert.ErrorIs(t, <-first, bridge.ErrCommandTimeout)
 
-	sets := 0
-	for _, topic := range fc.publishedTopics() {
-		if topic == "zigbee2mqtt/lamp1/set" {
-			sets++
-		}
-	}
-	assert.Equal(t, 1, sets, "only the in-flight command may reach the device; the abandoned one must not")
+	assert.Equal(t, 1, countPublished(fc, "zigbee2mqtt/lamp1/set"), "only the in-flight command may reach the device; the abandoned one must not")
 }
 
 // A late echo (after the caller already saw a timeout) still converges the cached state.
