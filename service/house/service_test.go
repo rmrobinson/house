@@ -47,6 +47,9 @@ func (f *fakeBridgeClient) ExecuteCommand(ctx context.Context, in *command.Comma
 func (f *fakeBridgeClient) ExecuteCommandAsync(ctx context.Context, in *command.Command, opts ...grpc.CallOption) (*api2.ExecuteCommandAsyncResponse, error) {
 	panic("not implemented in fake")
 }
+func (f *fakeBridgeClient) GetDeviceHistory(ctx context.Context, in *api2.GetDeviceHistoryRequest, opts ...grpc.CallOption) (api2.BridgeService_GetDeviceHistoryClient, error) {
+	panic("not implemented in fake")
+}
 func (f *fakeBridgeClient) StreamUpdates(ctx context.Context, in *api2.StreamUpdatesRequest, opts ...grpc.CallOption) (api2.BridgeService_StreamUpdatesClient, error) {
 	panic("not implemented in fake")
 }

@@ -6,6 +6,7 @@ package facade
 
 import (
 	"context"
+	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -266,6 +267,37 @@ func (f *Facade) ExecuteCommandAsync(ctx context.Context, cmd *command.Command) 
 		return nil, err
 	}
 	return client.ExecuteCommandAsync(ctx, cmd)
+}
+
+// GetDeviceHistory forwards req, unchanged, to the bridge that owns
+// req.DeviceId and relays its samples back as they arrive. Samples carry no
+// per-hop address (their snapshot is only recorded trait state), so nothing is
+// rewritten the way present() does for a full Device.
+func (f *Facade) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.BridgeService_GetDeviceHistoryServer) error {
+	client, _, err := f.upstreamClientFor(req.GetDeviceId())
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+
+	up, err := client.GetDeviceHistory(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		sample, err := up.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(sample); err != nil {
+			return err
+		}
+	}
 }
 
 // StreamUpdates never forwards a raw upstream InitialUpdate: a downstream
