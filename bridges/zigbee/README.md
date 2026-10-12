@@ -138,9 +138,13 @@ degrades anything else:
   the second tap sees the first and turns them off. Consequences:
   - repeated *relative* steps (e.g. +10%) add up even while the device is silent (+10, +10 is
     +20), because each is computed from the commanded level, not the last confirmed one;
-  - the assumed state is not rolled back on a timeout or when a newer command abandons the wait -
-    the command was sent and may still take effect - and the device's own next report replaces it,
-    as any report does;
+  - the assumed state stands after a timeout, or when the command's caller gives up - the command
+    was sent and may still take effect - but only for a bounded time (`unconfirmedStateGrace`, 30s,
+    longer than the ~14s delivery stalls captured). A report that carries on/off or brightness
+    replaces it at once; if none arrives, the bridge goes back to the last state the device itself
+    reported, so a lamp that has dropped off the network doesn't read as "on" for ever because a
+    command to it failed. A chain of unconfirmed commands reverts to the last *reported* state, not
+    to an intermediate guess;
   - it IS rolled back, and the correction published, if the command never left the process (the
     broker rejected the publish, the payload couldn't be encoded, or the caller's deadline had
     already passed);
@@ -150,7 +154,9 @@ degrades anything else:
   Captured live, a bulb that had gone quiet was sent nine identical On commands in six seconds -
   one per Brighten press, each decided from a stale cached state - all of which it then flushed at
   once, any of which could land after a later Off. Relative steps (+10%) never join: they would be
-  applied again.
+  applied again. If the caller that owned a joined command gives up (its deadline passes, or its
+  request is cancelled), anyone who joined it takes over and sends it themselves rather than
+  inheriting a cancellation that was never theirs.
 - A write waits 8s for the device's echo (`writeTimeout`), deliberately below policyd's 15s command
   deadline so the caller gets the bridge's "did not confirm" error rather than a bare deadline. A
   timeout means "not confirmed", not "failed": the command may still take effect. Confirmations

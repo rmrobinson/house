@@ -118,6 +118,24 @@ func sameEffect(a, b *command.Command) bool {
 // survives waiting out one such command, but not two in a row: past that the user has moved on.
 const DefaultCommandQueueWait = 10 * time.Second
 
+// ErrOwnerGaveUp is what Flight.Wait returns when the command it joined ended because ITS caller
+// gave up (the caller's deadline passed or its request was cancelled) - not because of anything
+// the device did. The joiner's own request is still alive and nothing was sent on its behalf, so it
+// should Acquire again and become the sender itself, rather than fail with someone else's
+// cancellation.
+var ErrOwnerGaveUp = errors.New("the command joined was abandoned by its own caller")
+
+// joinedOutcome is the outcome a joiner sees for a command that ended with err: the same error,
+// except that an end caused by the OWNER's context is reported as ErrOwnerGaveUp. Superseded,
+// stale and device errors are gRPC status errors, which never wrap a context error, so they pass
+// through unchanged.
+func joinedOutcome(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return ErrOwnerGaveUp
+	}
+	return err
+}
+
 // CommandLane orders the commands sent to ONE device, for a bridge whose device can only do one
 // thing at a time and may be slow to confirm. Its zero value is ready to use.
 //
@@ -167,7 +185,7 @@ type laneEntry struct {
 
 func (e *laneEntry) resolve(err error) {
 	e.resolver.Do(func() {
-		e.err = err
+		e.err = joinedOutcome(err)
 		close(e.done)
 	})
 }
@@ -195,6 +213,10 @@ type Flight struct{ e *laneEntry }
 
 // Wait blocks until the command joined has an outcome and returns it (nil if it succeeded), or
 // returns ctx's error if ctx ends first. Giving up waiting doesn't affect the command joined.
+// ErrOwnerGaveUp means the command joined was abandoned by its own caller: call Acquire again.
+//
+// A joiner still owns the bookkeeping for its OWN request - for an asynchronous command, completing
+// the command id it was given - since the command joined carries the owner's id, not the joiner's.
 func (f *Flight) Wait(ctx context.Context) error {
 	select {
 	case <-f.e.done:

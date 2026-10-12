@@ -38,6 +38,7 @@ go_test(
         "api_test.go",
         "commandlane_join_test.go",
         "commandlane_partial_test.go",
+        "commandlane_takeover_test.go",
         "commandlane_test.go",
         "history_test.go",
         "pump_test.go",
