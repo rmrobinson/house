@@ -20,6 +20,17 @@ metricsd:
     # dropped (and counted) rather than slowing the update stream.
     max_buffered: 100000
 
+  # Devices that record their own history (Airthings BLE sensors) are asked
+  # for it on this schedule and the result written as source=backfill, so
+  # the bridge can poll them rarely. Resumes from the newest backfilled
+  # sample already in Influx. Keep interval well under the device's
+  # max_window (24h for Airthings) or samples age out before collection.
+  backfill:
+    enabled: true
+    interval: 12h
+    initial_delay: 1m
+    timeout: 3m
+
   # State that is never recorded (commands always are). Network clients -
   # what the omada bridge reports, as the connected_device detail - are
   # excluded by default as noise; set `details: []` to record them.

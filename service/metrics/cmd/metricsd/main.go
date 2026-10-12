@@ -34,6 +34,10 @@ func main() {
 	viper.SetDefault("metricsd.room_refresh_interval", "5m")
 	viper.SetDefault("metricsd.influx.flush_interval", "5s")
 	viper.SetDefault("metricsd.influx.max_buffered", 100000)
+	viper.SetDefault("metricsd.backfill.enabled", true)
+	viper.SetDefault("metricsd.backfill.interval", metrics.DefaultBackfillInterval.String())
+	viper.SetDefault("metricsd.backfill.initial_delay", metrics.DefaultBackfillInitialDelay.String())
+	viper.SetDefault("metricsd.backfill.timeout", metrics.DefaultBackfillTimeout.String())
 
 	configPath, err := configutil.FindConfigFile("metricsd", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
 	if err != nil {
@@ -63,14 +67,15 @@ func main() {
 		}
 	}
 
-	writer, err := metrics.NewInfluxWriter(logger, metrics.InfluxConfig{
+	influxCfg := metrics.InfluxConfig{
 		URL:           viper.GetString("metricsd.influx.url"),
 		Org:           viper.GetString("metricsd.influx.org"),
 		Bucket:        viper.GetString("metricsd.influx.bucket"),
 		Token:         viper.GetString("metricsd.influx.token"),
 		FlushInterval: viper.GetDuration("metricsd.influx.flush_interval"),
 		MaxBuffered:   viper.GetInt("metricsd.influx.max_buffered"),
-	})
+	}
+	writer, err := metrics.NewInfluxWriter(logger, influxCfg)
 	if err != nil {
 		logger.Fatal("invalid influx config", zap.Error(err))
 	}
@@ -113,6 +118,21 @@ func main() {
 		zap.Duration("heartbeat", sampling.Heartbeat))
 
 	conn := bridgeconn.New(logger, houseAddr, tlsCfg)
+
+	if viper.GetBool("metricsd.backfill.enabled") {
+		querier, err := metrics.NewInfluxQuerier(influxCfg)
+		if err != nil {
+			logger.Fatal("invalid influx config", zap.Error(err))
+		}
+		backfiller := metrics.NewBackfiller(logger, metrics.BackfillConfig{
+			Interval:     viper.GetDuration("metricsd.backfill.interval"),
+			InitialDelay: viper.GetDuration("metricsd.backfill.initial_delay"),
+			Timeout:      viper.GetDuration("metricsd.backfill.timeout"),
+		}, svc, writer, querier, conn.Client)
+		go backfiller.Run(ctx)
+		logger.Info("history backfill enabled", zap.Duration("interval", viper.GetDuration("metricsd.backfill.interval")))
+	}
+
 	conn.Run(ctx, svc.HandleUpdate, nil)
 	<-writerDone
 

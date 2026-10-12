@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"sort"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -54,6 +56,90 @@ type Service struct {
 	excludeDetails map[string]bool
 	excludeBridges map[string]bool
 	excludeDevices map[string]bool
+
+	historyMu      sync.Mutex
+	historyDevices map[string]HistoryDevice
+}
+
+// HistoryDevice is a device advertising Sensor.Metadata.history, i.e. one a
+// bridge can be asked for recorded samples of.
+type HistoryDevice struct {
+	DeviceID string
+	BridgeID string
+	// Name is Config.Name as last seen; it tags backfilled points.
+	Name string
+	// MaxWindow is the furthest back one request can reach.
+	MaxWindow time.Duration
+	// SampleInterval is the spacing of recorded samples.
+	SampleInterval time.Duration
+}
+
+// HistoryDevices returns the devices seen so far that advertise history,
+// ordered by device ID.
+func (s *Service) HistoryDevices() []HistoryDevice {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	out := make([]HistoryDevice, 0, len(s.historyDevices))
+	for _, h := range s.historyDevices {
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
+}
+
+func (s *Service) noteHistory(bridgeID string, d *apiDevice.Device) {
+	h := d.GetSensor().GetMetadata().GetHistory()
+
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	if h == nil {
+		delete(s.historyDevices, d.GetId())
+		return
+	}
+	if s.historyDevices == nil {
+		s.historyDevices = make(map[string]HistoryDevice)
+	}
+	s.historyDevices[d.GetId()] = HistoryDevice{
+		DeviceID:       d.GetId(),
+		BridgeID:       bridgeID,
+		Name:           d.GetConfig().GetName(),
+		MaxWindow:      h.GetMaxWindow().AsDuration(),
+		SampleInterval: h.GetSampleInterval().AsDuration(),
+	}
+}
+
+// HistoryPoints converts a bridge-reported sample for h into points tagged
+// source=backfill. They bypass the sampler (a historical fact is never
+// "unchanged") and the exclusion lists (a device is only asked for history
+// because it was recorded live). Re-writing a sample is harmless: Influx
+// overwrites a point with identical measurement, tags and timestamp.
+func (s *Service) HistoryPoints(h HistoryDevice, sample *api2.HistorySample) []Point {
+	if sample.GetTime() == nil || sample.GetSnapshot() == nil {
+		return nil
+	}
+	at := sample.GetTime().AsTime()
+
+	var points []Point
+	for _, ts := range Flatten(sample.GetSnapshot()) {
+		fields := make(map[string]FieldValue, len(ts.Leaves))
+		for _, l := range ts.Leaves {
+			fields[l.Name] = l.Value
+		}
+		points = append(points, Point{
+			Measurement: StateMeasurement,
+			Tags: map[string]string{
+				"bridge_id":   h.BridgeID,
+				"device_id":   h.DeviceID,
+				"device_name": h.Name,
+				"room_id":     s.roomID(h.DeviceID),
+				"trait":       ts.Trait,
+				"source":      SourceBackfill,
+			},
+			Fields: fields,
+			Time:   at,
+		})
+	}
+	return points
 }
 
 // SetExcludes replaces the exclusion lists. Call it before HandleUpdate is
@@ -115,6 +201,9 @@ func (s *Service) HandleUpdate(u *api2.Update) {
 	if du := u.GetDeviceUpdate(); du != nil {
 		if u.GetAction() == api2.Update_REMOVED {
 			s.sampler.Forget(du.GetDeviceId())
+			s.historyMu.Lock()
+			delete(s.historyDevices, du.GetDeviceId())
+			s.historyMu.Unlock()
 			return
 		}
 		if d := du.GetDevice(); d != nil {
@@ -127,6 +216,7 @@ func (s *Service) handleDevice(bridgeID string, d *apiDevice.Device, now time.Ti
 	if d.GetId() == "" || s.excluded(bridgeID, d) {
 		return
 	}
+	s.noteHistory(bridgeID, d)
 
 	traits := Flatten(d)
 	// Reachability lives on Device.Address rather than in a trait, but a

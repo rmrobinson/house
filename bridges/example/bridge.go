@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/spf13/viper"
 
@@ -65,6 +67,14 @@ func (d *dev) toDevice() *device.Device {
 	} else if d.isSensor {
 		ret.Details = &device.Device_Sensor{
 			Sensor: &device.Sensor{
+				// Advertises that GetHistory can be asked for samples; see
+				// ExampleBridge.GetHistory.
+				Metadata: &device.Sensor_Metadata{
+					History: &device.Sensor_Metadata_History{
+						MaxWindow:      durationpb.New(historyMaxWindow),
+						SampleInterval: durationpb.New(historySampleInterval),
+					},
+				},
 				LightLevel: &trait.LightLevel{
 					Attributes: &trait.LightLevel_Attributes{
 						CanControl: false,
@@ -79,6 +89,46 @@ func (d *dev) toDevice() *device.Device {
 	}
 
 	return ret
+}
+
+const (
+	// historyMaxWindow and historySampleInterval describe the sensor's
+	// pretend on-device log, advertised via Sensor.Metadata.history.
+	historyMaxWindow      = 24 * time.Hour
+	historySampleInterval = 5 * time.Minute
+)
+
+// GetHistory implements bridge.HistoryHandler for the sensor, demonstrating
+// the optional history API: a device that logs samples itself lets the bridge
+// be polled rarely and the gaps fetched afterwards. The log here is made up -
+// a lux value derived from the wall-clock time of each 5 minute boundary - so
+// it is stable across calls, and asking for an overlapping window returns the
+// same samples again.
+func (b *ExampleBridge) GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error) {
+	if deviceID != b.d2.id {
+		return nil, bridge.ErrDeviceNotFound
+	}
+
+	// The device only remembers historyMaxWindow.
+	oldest := until.Add(-historyMaxWindow)
+	if since.Before(oldest) {
+		since = oldest
+	}
+
+	var samples []*api2.HistorySample
+	for t := since.Truncate(historySampleInterval).Add(historySampleInterval); !t.After(until); t = t.Add(historySampleInterval) {
+		lux := float32(100 + (t.Unix()/int64(historySampleInterval.Seconds()))%50)
+		samples = append(samples, &api2.HistorySample{
+			Time: timestamppb.New(t),
+			Snapshot: &device.Device{
+				Id: b.d2.id,
+				Details: &device.Device_Sensor{Sensor: &device.Sensor{
+					LightLevel: &trait.LightLevel{State: &trait.LightLevel_State{Lux: lux}},
+				}},
+			},
+		})
+	}
+	return samples, nil
 }
 
 // ExampleBridge contains an implementation of a bridge with 2 virtual devices.

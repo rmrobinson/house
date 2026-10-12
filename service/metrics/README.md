@@ -33,6 +33,36 @@ Bucket `house`, two measurements:
 - `Command.origin` is advisory and unauthenticated; don't use it for access
   control.
 
+## History backfill
+
+Devices that record their own samples (they advertise
+`Sensor.Metadata.history` - currently the Airthings BLE sensors) are asked for
+them on a schedule via `BridgeService.GetDeviceHistory`, so the bridge can
+poll them rarely and the gaps are filled in afterwards. Results are written to
+the same `state` measurement with `source=backfill`, bypassing the sampler.
+
+- **Resume point:** the newest `source=backfill` timestamp for the device is
+  read back from Influx (a Flux query), so a restarted or relocated metricsd
+  continues where the data says it stopped. With none, it starts
+  `max_window` ago. If Influx can't be read the device is skipped for that
+  pass rather than refetched blind.
+- **Schedule:** every `backfill.interval` (default 12h), first after
+  `initial_delay`. Keep it well under the device's `max_window` (24h for
+  Airthings) - the bridge can only be asked for "the last N hours", so a
+  missed window is lost.
+- **One device at a time**, since a bridge typically has one BLE adapter. A
+  failure is logged and retried on the next pass; it never stops other
+  devices.
+- Skipped when less than one `sample_interval` has passed since the last
+  backfilled sample, so no BLE session is spent for nothing.
+- Re-fetching an overlapping window is harmless: Influx overwrites a point
+  with identical measurement, tags and timestamp. (A device renamed or moved
+  between rooms in between lands as a new series; the old points keep their
+  old tags.)
+
+Live and backfilled points of the same device are separate series (`source`
+differs), so a query that wants one continuous series should select both.
+
 ## Exclusions
 
 Network clients (what the omada bridge reports, as the `connected_device`
