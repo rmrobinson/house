@@ -62,6 +62,7 @@ go_test(
         "notify_bindings_test.go",
         "policy_test.go",
         "send_idiom_test.go",
+        "send_semantics_test.go",
         "send_test.go",
         "store_test.go",
         "sun_test.go",

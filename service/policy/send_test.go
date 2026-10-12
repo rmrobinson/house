@@ -74,7 +74,7 @@ func TestSendRunsDifferentDevicesInParallel(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- runScriptForTest(t, g, `
-			local results, failures = home.send({
+			local results, failures = home.trySend({
 				{id = "slow", op = "setLight", on = true},
 				{id = "fast", op = "setLight", on = true},
 			})
@@ -109,7 +109,7 @@ func TestSendRunsDifferentDevicesInParallel(t *testing.T) {
 func TestSendKeepsEachDevicesStepsInOrder(t *testing.T) {
 	g := newGatedHome("") // nothing blocks
 	require.NoError(t, runScriptForTest(t, g, `
-		local results = home.send({
+		local results = home.trySend({
 			{id = "a", op = "setLight", on = true},
 			{id = "b", op = "setLight", on = true},
 			{id = "a", op = "setState", key = "brightness_relative", value = {change_percent = 10}},
@@ -128,7 +128,7 @@ func TestSendStopsADevicesStepsAtItsFirstFailureButNotOthers(t *testing.T) {
 	g.setDeviceName("b", "Right Nightstand Light")
 
 	require.NoError(t, runScriptForTest(t, g, `
-		local results, failures = home.send({
+		local results, failures = home.trySend({
 			{id = "a", op = "setLight", on = true},
 			{id = "a", op = "setState", key = "brightness_relative", value = {change_percent = 10}},
 			{id = "b", op = "setLight", on = true},
@@ -152,7 +152,7 @@ func TestSendStopsADevicesStepsAtItsFirstFailureButNotOthers(t *testing.T) {
 func TestSendReportsNoFailuresWhenEverythingSucceeds(t *testing.T) {
 	g := newGatedHome("")
 	require.NoError(t, runScriptForTest(t, g, `
-		local results, failures = home.send({{id = "a", op = "setLight", on = false}})
+		local results, failures = home.trySend({{id = "a", op = "setLight", on = false}})
 		assert(failures == nil, "failures should be nil")
 		assert(#results == 1 and results[1].ok == true and results[1].error == nil)
 	`))
@@ -161,7 +161,7 @@ func TestSendReportsNoFailuresWhenEverythingSucceeds(t *testing.T) {
 func TestSendEmptyBatchIsFine(t *testing.T) {
 	g := newGatedHome("")
 	require.NoError(t, runScriptForTest(t, g, `
-		local results, failures = home.send({})
+		local results, failures = home.trySend({})
 		assert(#results == 0 and failures == nil)
 	`))
 }
@@ -169,14 +169,14 @@ func TestSendEmptyBatchIsFine(t *testing.T) {
 // A malformed steps table is a bug in the script, so it raises - unlike a failed command.
 func TestSendRejectsMalformedSteps(t *testing.T) {
 	cases := map[string]string{
-		"missing id":             `home.send({{op = "setLight", on = true}})`,
-		"unknown op":             `home.send({{id = "a", op = "explode"}})`,
-		"setLight without on":    `home.send({{id = "a", op = "setLight"}})`,
-		"setLight non-boolean":   `home.send({{id = "a", op = "setLight", on = "yes"}})`,
-		"setState without key":   `home.send({{id = "a", op = "setState", value = 1}})`,
-		"setState without value": `home.send({{id = "a", op = "setState", key = "x"}})`,
-		"step is not a table":    `home.send({"a"})`,
-		"argument not a table":   `home.send("a")`,
+		"missing id":             `home.trySend({{op = "setLight", on = true}})`,
+		"unknown op":             `home.trySend({{id = "a", op = "explode"}})`,
+		"setLight without on":    `home.trySend({{id = "a", op = "setLight"}})`,
+		"setLight non-boolean":   `home.trySend({{id = "a", op = "setLight", on = "yes"}})`,
+		"setState without key":   `home.trySend({{id = "a", op = "setState", value = 1}})`,
+		"setState without value": `home.trySend({{id = "a", op = "setState", key = "x"}})`,
+		"step is not a table":    `home.trySend({"a"})`,
+		"argument not a table":   `home.trySend("a")`,
 	}
 	for name, script := range cases {
 		t.Run(name, func(t *testing.T) {
