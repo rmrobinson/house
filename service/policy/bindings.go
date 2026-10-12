@@ -220,6 +220,44 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 			}
 			return 0
 		},
+		// home.send(steps) commands several devices at once: steps is a list of
+		// {id=, op="setLight", on=} / {id=, op="setState", key=, value=} tables. A device's own
+		// steps run in order (and stop at its first failure); different devices run in parallel,
+		// so one slow device never delays the rest. It does not raise for a failed command (it
+		// raises only for a malformed steps table): it returns a results list, one entry per
+		// step, each {ok=bool, skipped=bool, error=string}, then a second value - a summary of
+		// the failures, or nil if there were none - so a script can finish with
+		//   local results, failures = home.send(steps)
+		//   if failures then error(failures) end
+		"send": func(L *lua.LState) int {
+			steps, err := parseSendSteps(luaToGo(L.CheckTable(1)))
+			if err != nil {
+				L.ArgError(1, err.Error())
+				return 0
+			}
+			results := runSendSteps(api, steps)
+
+			out := L.NewTable()
+			for i, r := range results {
+				t := L.NewTable()
+				t.RawSetString("ok", lua.LBool(r.OK))
+				if r.Skipped {
+					t.RawSetString("skipped", lua.LTrue)
+				}
+				if r.Err != nil {
+					t.RawSetString("error", lua.LString(r.Err.Error()))
+				}
+				out.RawSetInt(i+1, t)
+			}
+			L.Push(out)
+
+			if summary := summarizeSendFailures(api, steps, results); summary != "" {
+				L.Push(lua.LString(summary))
+			} else {
+				L.Push(lua.LNil)
+			}
+			return 2
+		},
 		"getSensor": func(L *lua.LState) int {
 			id := L.CheckString(1)
 			v, err := api.GetSensor(id)
