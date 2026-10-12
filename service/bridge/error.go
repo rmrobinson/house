@@ -29,6 +29,9 @@ var (
 	// ErrCommandStale is returned for a command that waited too long for its turn at a busy
 	// device and was dropped rather than delivered late - see CommandLane.
 	ErrCommandStale = status.Error(codes.DeadlineExceeded, "command expired while waiting for the device to finish an earlier one")
+	// ErrHistoryNotSupported is returned by GetDeviceHistory when the bridge's handler
+	// doesn't implement HistoryHandler.
+	ErrHistoryNotSupported = status.Error(codes.Unimplemented, "bridge does not support device history")
 	// ErrStreamFellBehind ends a StreamUpdates stream whose client stopped keeping up with
 	// updates (see Source.SendMessage). The client should reconnect to resync from a fresh
 	// initial snapshot.
