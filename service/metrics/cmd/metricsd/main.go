@@ -105,12 +105,24 @@ func main() {
 		writer.Run(ctx)
 	}()
 
-	houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
-	if err != nil {
-		logger.Fatal("unable to dial house", zap.Error(err), zap.String("addr", houseAddr))
-	}
-	defer houseConn.Close()
-	go rooms.Run(ctx, api2.NewHouseServiceClient(houseConn), viper.GetDuration("metricsd.room_refresh_interval"))
+	// Dialed inside a retry loop, not fatally at startup: with TLS the dial
+	// reads the cert files immediately, and a freshly deployed service can
+	// start before cert-agent has issued its cert. Failing here would
+	// crash-loop the container instead of just waiting for the cert.
+	go bridgeconn.Retry(ctx, bridgeconn.NewBackoff(),
+		func(err error) {
+			logger.Warn("unable to reach house for room links, will retry", zap.String("addr", houseAddr), zap.Error(err))
+		},
+		func(ctx context.Context, backoff *bridgeconn.Backoff) error {
+			houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
+			if err != nil {
+				return err
+			}
+			defer houseConn.Close()
+			backoff.Reset()
+			rooms.Run(ctx, api2.NewHouseServiceClient(houseConn), viper.GetDuration("metricsd.room_refresh_interval"))
+			return nil
+		})
 
 	logger.Info("recording house metrics",
 		zap.String("house_addr", houseAddr),
