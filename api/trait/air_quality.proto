@@ -35,6 +35,10 @@ message AirQuality {
     // Radon measurement, in Becquerel per cubic metre (Bq/m3)
     optional int32 radon_bq_m3 = 7;
 
+    // Short-term average radon measurement, in Becquerel per cubic metre (Bq/m3).
+    // radon_bq_m3 is the long-term average where a device reports both.
+    optional int32 radon_short_term_bq_m3 = 9;
+
     // Whether carbon monoxide has been detected. Binary only.
     optional bool carbon_monoxide_detected = 8;
   }

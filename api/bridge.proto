@@ -4,6 +4,7 @@ package faltung.house.api;
 
 option go_package = "github.com/rmrobinson/house/api";
 
+import "google/protobuf/timestamp.proto";
 import "google/rpc/status.proto";
 
 import "api/command/command.proto";
@@ -120,6 +121,32 @@ message CommandUpdate {
   string resulting_version = 11;
 }
 
+// GetDeviceHistoryRequest asks a bridge for samples a device recorded itself
+// while the bridge wasn't looking (e.g. a BLE sensor's on-board log), so a
+// battery device can be polled rarely and its gaps filled in afterwards.
+// Only devices advertising Sensor.Metadata.history support this; others
+// return UNIMPLEMENTED.
+message GetDeviceHistoryRequest {
+  string device_id = 1;
+  // Only samples strictly after this time are returned. Unset means as far
+  // back as the device can report (see Sensor.Metadata.History.max_window).
+  google.protobuf.Timestamp since = 2;
+  // Only samples at or before this time are returned. Unset means now.
+  google.protobuf.Timestamp until = 3;
+  // Optional cap on the number of samples returned. When it truncates the
+  // result the oldest samples are kept, so a caller can resume from the
+  // last sample's time without skipping any.
+  int32 max_samples = 4;
+}
+
+// HistorySample is one recorded point in time for a device.
+message HistorySample {
+  google.protobuf.Timestamp time = 1;
+  // A device carrying only the trait states that were recorded at this time;
+  // everything else is unset. Never applied to the bridge's cached device.
+  faltung.house.api.device.Device snapshot = 2;
+}
+
 message ExecuteCommandAsyncResponse {
 }
 
@@ -150,8 +177,20 @@ service BridgeService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse) {}
   rpc GetDevice(GetDeviceRequest) returns (faltung.house.api.device.Device) {}
   rpc UpdateDeviceConfig(UpdateDeviceConfigRequest) returns (faltung.house.api.device.Device) {}
+  // ExecuteCommand runs a command against a device and returns its updated state.
+  //
+  // A bridge MAY supersede commands to a device that is slow to respond: a newer command to the
+  // same device replaces older ones still waiting for it (and the one in flight), and an on/off
+  // command replaces older brightness/colour commands, so a burst of requests to an unresponsive
+  // device never plays back stale, out of order, after a later one. A command replaced this way
+  // fails with ABORTED; one that waited too long for its turn fails with DEADLINE_EXCEEDED. A
+  // command already on the wire can't be recalled, so ABORTED means "a newer command now governs
+  // this device", not "the device never applied it". See service/bridge.CommandLane.
   rpc ExecuteCommand(faltung.house.api.command.Command) returns (faltung.house.api.device.Device) {}
   rpc ExecuteCommandAsync(faltung.house.api.command.Command) returns (ExecuteCommandAsyncResponse) {}
+
+  // GetDeviceHistory streams a device's recorded samples, oldest first.
+  rpc GetDeviceHistory(GetDeviceHistoryRequest) returns (stream HistorySample) {}
 
   rpc StreamUpdates(StreamUpdatesRequest) returns (stream Update) {}
 }

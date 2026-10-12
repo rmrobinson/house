@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"sort"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -295,6 +297,73 @@ func (a *API) ExecuteCommandAsync(ctx context.Context, req *command.Command) (*a
 	}
 
 	return &api2.ExecuteCommandAsyncResponse{}, nil
+}
+
+// GetDeviceHistory streams the samples a device recorded in (since, until],
+// oldest first, from the handler's HistoryHandler implementation. The range,
+// ordering and max_samples cap are enforced here so handlers need only return
+// what the device has.
+func (a *API) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.BridgeService_GetDeviceHistoryServer) error {
+	if a.svc.bridge == nil {
+		return ErrBridgeNotReady
+	}
+	if req.GetMaxSamples() < 0 {
+		return status.Error(codes.InvalidArgument, "max_samples must not be negative")
+	}
+
+	logger := a.logger.With(zap.String("device_id", req.GetDeviceId()))
+	if a.svc.getDevice(req.GetDeviceId()) == nil {
+		logger.Debug("history requested for unknown device")
+		return ErrDeviceNotFound
+	}
+	hh, ok := a.svc.handler.(HistoryHandler)
+	if !ok {
+		return ErrHistoryNotSupported
+	}
+
+	var since time.Time
+	if req.GetSince() != nil {
+		since = req.GetSince().AsTime()
+	}
+	until := time.Now()
+	if req.GetUntil() != nil {
+		until = req.GetUntil().AsTime()
+	}
+	if !until.After(since) {
+		return nil
+	}
+
+	samples, err := hh.GetHistory(stream.Context(), req.GetDeviceId(), since, until)
+	if err != nil {
+		if _, ok := status.FromError(err); !ok {
+			logger.Info("received a non-gRPC status error when fetching history. rewriting to internal", zap.Error(err))
+			return status.Error(codes.Internal, err.Error())
+		}
+		return err
+	}
+
+	inRange := make([]*api2.HistorySample, 0, len(samples))
+	for _, s := range samples {
+		if s.GetTime() == nil {
+			continue
+		}
+		if t := s.GetTime().AsTime(); t.After(since) && !t.After(until) {
+			inRange = append(inRange, s)
+		}
+	}
+	sort.SliceStable(inRange, func(i, j int) bool {
+		return inRange[i].GetTime().AsTime().Before(inRange[j].GetTime().AsTime())
+	})
+	if limit := int(req.GetMaxSamples()); limit > 0 && len(inRange) > limit {
+		inRange = inRange[:limit]
+	}
+
+	for _, s := range inRange {
+		if err := stream.Send(s); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {
