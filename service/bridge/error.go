@@ -21,6 +21,14 @@ var (
 	// ErrCommandTimeout is returned when a bridge writes a command to a device but doesn't
 	// observe the device confirm it within the bridge's own timeout.
 	ErrCommandTimeout = status.Error(codes.DeadlineExceeded, "device did not confirm command in time")
+	// ErrCommandSuperseded is returned for a command that a newer command to the same device
+	// replaced before (or while) it was sent - see CommandLane. The device may still apply it
+	// (a command already on the wire can't be recalled), but the caller should treat the newer
+	// command as the one that counts.
+	ErrCommandSuperseded = status.Error(codes.Aborted, "command superseded by a newer command to the same device")
+	// ErrCommandStale is returned for a command that waited too long for its turn at a busy
+	// device and was dropped rather than delivered late - see CommandLane.
+	ErrCommandStale = status.Error(codes.DeadlineExceeded, "command expired while waiting for the device to finish an earlier one")
 	// ErrHistoryNotSupported is returned by GetDeviceHistory when the bridge's handler
 	// doesn't implement HistoryHandler.
 	ErrHistoryNotSupported = status.Error(codes.Unimplemented, "bridge does not support device history")

@@ -177,6 +177,15 @@ service BridgeService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse) {}
   rpc GetDevice(GetDeviceRequest) returns (faltung.house.api.device.Device) {}
   rpc UpdateDeviceConfig(UpdateDeviceConfigRequest) returns (faltung.house.api.device.Device) {}
+  // ExecuteCommand runs a command against a device and returns its updated state.
+  //
+  // A bridge MAY supersede commands to a device that is slow to respond: a newer command to the
+  // same device replaces older ones still waiting for it (and the one in flight), and an on/off
+  // command replaces older brightness/colour commands, so a burst of requests to an unresponsive
+  // device never plays back stale, out of order, after a later one. A command replaced this way
+  // fails with ABORTED; one that waited too long for its turn fails with DEADLINE_EXCEEDED. A
+  // command already on the wire can't be recalled, so ABORTED means "a newer command now governs
+  // this device", not "the device never applied it". See service/bridge.CommandLane.
   rpc ExecuteCommand(faltung.house.api.command.Command) returns (faltung.house.api.device.Device) {}
   rpc ExecuteCommandAsync(faltung.house.api.command.Command) returns (ExecuteCommandAsyncResponse) {}
 
