@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
 )
 
@@ -88,5 +89,38 @@ func TestStreamUpdates_SynthesizesInitialBurstFromCache(t *testing.T) {
 		assert.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("StreamUpdates did not return after context cancellation")
+	}
+}
+
+// A CommandEvent already names its bridge and device, so the facade must
+// republish it to its own subscribers unchanged.
+func TestIngestPassthrough_ForwardsCommandEvent(t *testing.T) {
+	f := newTestFacade(t)
+
+	sink := f.updates.NewSink()
+	defer sink.Close()
+
+	in := &api2.Update{
+		Action: api2.Update_COMMAND,
+		Update: &api2.Update_CommandEvent{
+			CommandEvent: &api2.CommandEvent{
+				Command:  &command.Command{DeviceId: "d1", Id: "cmd1", Origin: "viewerui"},
+				BridgeId: "b1",
+			},
+		},
+	}
+	f.ingestPassthrough(in)
+
+	select {
+	case msg := <-sink.Messages():
+		out := msg.(*api2.Update)
+		assert.Equal(t, api2.Update_COMMAND, out.Action)
+		ev := out.GetCommandEvent()
+		require.NotNil(t, ev)
+		assert.Equal(t, "b1", ev.GetBridgeId())
+		assert.Equal(t, "d1", ev.GetCommand().GetDeviceId())
+		assert.Equal(t, "viewerui", ev.GetCommand().GetOrigin())
+	case <-time.After(time.Second):
+		t.Fatal("CommandEvent was not forwarded to facade subscribers")
 	}
 }

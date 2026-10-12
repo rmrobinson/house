@@ -209,7 +209,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := &command.Command{DeviceId: id}
+	cmd := &command.Command{DeviceId: id, Origin: "viewerui"}
 	switch {
 	case r.PostForm.Has("brightness"):
 		level, err := strconv.Atoi(r.PostForm.Get("brightness"))

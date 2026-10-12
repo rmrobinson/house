@@ -4,6 +4,7 @@ package faltung.house.api;
 
 option go_package = "github.com/rmrobinson/house/api";
 
+import "google/protobuf/timestamp.proto";
 import "google/rpc/status.proto";
 
 import "api/command/command.proto";
@@ -120,6 +121,24 @@ message CommandUpdate {
   string resulting_version = 11;
 }
 
+// CommandEvent records a command that this bridge processed, with the command
+// body and its outcome. It is emitted for every command that reaches the
+// bridge's handler - synchronous (ExecuteCommand) and asynchronous
+// (ExecuteCommandAsync) alike, success and failure - and is purely
+// informational: CommandUpdate remains the correlation mechanism for async
+// callers.
+message CommandEvent {
+  // The command as received, including its origin if the caller set one.
+  faltung.house.api.command.Command command = 1;
+  // The outcome. OK on success.
+  google.rpc.Status result = 2;
+  // Device.version after the command was applied. Empty on failure.
+  string resulting_version = 3;
+  // When the bridge finished processing the command.
+  google.protobuf.Timestamp time = 4;
+  string bridge_id = 5;
+}
+
 message ExecuteCommandAsyncResponse {
 }
 
@@ -133,6 +152,8 @@ message Update {
     ADDED = 3;
     REMOVED = 4;
     EXECUTED = 5;
+    // COMMAND accompanies a CommandEvent.
+    COMMAND = 6;
   }
 
   Action action = 1;
@@ -141,6 +162,7 @@ message Update {
     BridgeUpdate bridge_update = 3;
     DeviceUpdate device_update = 4;
     CommandUpdate command_update = 5;
+    CommandEvent command_event = 6;
   }
 }
 
