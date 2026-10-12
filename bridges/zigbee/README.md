@@ -119,6 +119,15 @@ degrades anything else:
   light/switch/plug is sent one `/get` (spaced 200ms apart, best effort) to learn its real state;
   without it an idle bulb reads as off at 0% until it next changes by itself, which skews relative
   brightness commands and any policy reading the level. Battery sensors are never queried.
+- Commands to one device are ordered by a `bridge.CommandLane` (`service/bridge/commandlane.go`):
+  one at a time; a newer command supersedes older ones still waiting *and* the one in flight (the
+  older caller gets `ABORTED` at once, so nothing waits out a timeout); an on/off command is the
+  final word over pending brightness/colour commands (a late brightness reaching a bulb after an Off
+  turns it back on); and a command that waits more than 5s for its turn is dropped, not delivered
+  late. A command already on the wire can't be recalled, so a superseded command may still take
+  effect - the guarantee is that nothing older is sent after something newer. Consequence: repeated
+  *relative* steps (e.g. +10%) sent to a device that isn't confirming collapse, since each is
+  computed from the last confirmed level.
 - A write waits 8s for the device's echo (`writeTimeout`), deliberately below policyd's 15s command
   deadline so the caller gets the bridge's "did not confirm" error rather than a bare deadline. A
   timeout means "not confirmed", not "failed": the command may still take effect. Confirmations

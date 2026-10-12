@@ -128,33 +128,10 @@ type builtDevice struct {
 	friendlyName string
 	ieeeAddress  string
 
-	// cmdSlot serializes commands to this device, like mu does, but unlike a bare mutex a waiter
-	// can give up: see acquireCommand.
-	cmdOnce sync.Once
-	cmdSlot chan struct{}
-}
-
-// acquireCommand takes this device's command slot, waiting for any in-flight command to finish
-// first, and returns the func that releases it. It returns ctx's error instead if ctx ends while
-// waiting (or has ended by the time the slot is free).
-//
-// This is what keeps a slow device from poisoning its own queue. With a plain mutex, every
-// command queued behind a stuck one waited its turn regardless of its caller's deadline and then
-// published anyway - so one unresponsive bulb produced a train of stale commands, each costing a
-// full write timeout and each landing on the device long after the caller had given up.
-func (bd *builtDevice) acquireCommand(ctx context.Context) (func(), error) {
-	bd.cmdOnce.Do(func() { bd.cmdSlot = make(chan struct{}, 1) })
-
-	select {
-	case bd.cmdSlot <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	if err := ctx.Err(); err != nil {
-		<-bd.cmdSlot
-		return nil, err
-	}
-	return func() { <-bd.cmdSlot }, nil
+	// lane orders the commands sent to this device: one at a time, a newer command superseding
+	// older pending ones, a stale one dropped rather than delivered late. See
+	// bridge.CommandLane for why a slow device needs this.
+	lane bridge.CommandLane
 }
 
 // networkConn owns zigbee2mqtt device discovery (driven by the retained bridge/devices message),
@@ -582,7 +559,9 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 		return nil, bridge.ErrDeviceNotFound
 	}
 
-	release, err := bd.acquireCommand(ctx)
+	// ectx is cancelled if a newer command supersedes this one while it is waiting on the device,
+	// which frees this device's slot at once instead of after the write timeout.
+	ectx, release, err := bd.lane.Acquire(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -591,8 +570,8 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
 
-	if err := bd.builder.applyCommand(ctx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
-		return nil, err
+	if err := bd.builder.applyCommand(ectx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+		return nil, bridge.SupersededError(ectx, err)
 	}
 	bd.device.Version = computeVersion(bd.device)
 	return proto.Clone(bd.device).(*device.Device), nil
