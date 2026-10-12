@@ -131,6 +131,12 @@ degrades anything else:
   effect - the guarantee is that nothing older is sent after something newer. Consequence: repeated
   *relative* steps (e.g. +10%) sent to a device that isn't confirming collapse, since each is
   computed from the last confirmed level.
+- A command identical in effect to one already pending (the same On, the same absolute brightness,
+  the same colour) is not sent again: its caller joins the pending command and shares its outcome.
+  Captured live, a bulb that had gone quiet was sent nine identical On commands in six seconds -
+  one per Brighten press, each decided from a stale cached state - all of which it then flushed at
+  once, any of which could land after a later Off. Relative steps (+10%) never join: they would be
+  applied again.
 - A write waits 8s for the device's echo (`writeTimeout`), deliberately below policyd's 15s command
   deadline so the caller gets the bridge's "did not confirm" error rather than a bare deadline. A
   timeout means "not confirmed", not "failed": the command may still take effect. Confirmations

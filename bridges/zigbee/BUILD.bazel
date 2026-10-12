@@ -44,6 +44,7 @@ go_test(
         "fakemqtt_test.go",
         "hardening_test.go",
         "lane_config_test.go",
+        "lane_join_test.go",
         "mqtt_test.go",
         "network_test.go",
         "startup_query_test.go",

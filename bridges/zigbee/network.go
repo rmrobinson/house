@@ -552,7 +552,7 @@ func (nc *networkConn) handleAvailability(friendlyName string, payload []byte) {
 // optimistically-updated device - same contract as bridges/zwave/network.go's applyCommand. The
 // returned device is a clone taken while still holding bd's lock, so the caller can't race with a
 // concurrent state update mutating the same *device.Device.
-func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (dev *device.Device, err error) {
 	nc.mu.Lock()
 	bd, ok := nc.devices[cmd.DeviceId]
 	nc.mu.Unlock()
@@ -560,14 +560,32 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 		return nil, bridge.ErrDeviceNotFound
 	}
 
-	// ectx is cancelled if a newer command supersedes this one while it is waiting on the device,
-	// which frees this device's slot at once instead of after the write timeout.
-	ectx, release, err := bd.lane.Acquire(ctx, cmd)
+	lease, flight, err := bd.lane.Acquire(ctx, cmd)
 	if err != nil {
 		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err
 	}
-	defer release()
+
+	if flight != nil {
+		// An identical command is already on its way to this device. Sending it again can only
+		// lengthen the queue of a device that is already behind, so this caller waits for that
+		// command's outcome instead - and, if it succeeded, reports the state it left the device in.
+		nc.logger.Debug("command identical to one already pending; waiting on it instead of resending",
+			zap.String("device", bd.friendlyName), zap.String("command", string(bridge.ClassOf(cmd))))
+		if err := flight.Wait(ctx); err != nil {
+			nc.logDroppedCommand(bd.friendlyName, cmd, err)
+			return nil, err
+		}
+		bd.mu.Lock()
+		defer bd.mu.Unlock()
+		return proto.Clone(bd.device).(*device.Device), nil
+	}
+
+	// ectx is cancelled if a newer command supersedes this one while it is waiting on the device,
+	// which frees this device's slot at once instead of after the write timeout. Whatever this
+	// returns is passed on, via Release, to any caller that joined this command.
+	ectx := lease.Context()
+	defer func() { lease.Release(err) }()
 
 	bd.mu.Lock()
 	defer bd.mu.Unlock()

@@ -67,15 +67,23 @@ func TestSupersedes(t *testing.T) {
 type acquired struct {
 	ctx     context.Context
 	release func()
+	lease   *Lease
+	flight  *Flight
 	err     error
 }
 
 // acquireAsync starts Acquire on its own goroutine and returns the channel its result arrives on.
+// release releases the lease with a nil (successful) outcome.
 func acquireAsync(l *CommandLane, ctx context.Context, cmd *command.Command) <-chan acquired {
 	ch := make(chan acquired, 1)
 	go func() {
-		c, rel, err := l.Acquire(ctx, cmd)
-		ch <- acquired{c, rel, err}
+		ls, fl, err := l.Acquire(ctx, cmd)
+		a := acquired{lease: ls, flight: fl, err: err}
+		if ls != nil {
+			a.ctx = ls.Context()
+			a.release = func() { ls.Release(nil) }
+		}
+		ch <- a
 	}()
 	return ch
 }

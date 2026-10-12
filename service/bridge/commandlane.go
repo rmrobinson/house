@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/rmrobinson/house/api/command"
 )
 
@@ -22,20 +24,27 @@ const (
 	ClassColour CommandClass = "colour"
 )
 
+// detailsField returns which Command.details field cmd sets, or "" if none.
+func detailsField(cmd *command.Command) string {
+	m := cmd.ProtoReflect()
+	oneof := m.Descriptor().Oneofs().ByName("details")
+	if oneof == nil {
+		return ""
+	}
+	fd := m.WhichOneof(oneof)
+	if fd == nil {
+		return ""
+	}
+	return string(fd.Name())
+}
+
 // ClassOf returns cmd's class. The three classes above cover a light; every other command is its
 // own class, named after its Command.details field. Those are never superseded (see Supersedes),
 // but are kept distinct so one kind of command never queues behind, or cancels, another's rules.
 func ClassOf(cmd *command.Command) CommandClass {
-	m := cmd.ProtoReflect()
-	oneof := m.Descriptor().Oneofs().ByName("details")
-	if oneof == nil {
+	switch name := detailsField(cmd); name {
+	case "":
 		return "unknown"
-	}
-	fd := m.WhichOneof(oneof)
-	if fd == nil {
-		return "unknown"
-	}
-	switch name := string(fd.Name()); name {
 	case "on_off":
 		return ClassPower
 	case "brightness_absolute", "brightness_relative":
@@ -77,6 +86,29 @@ func replaceable(c CommandClass) bool {
 	return c == ClassPower || c == ClassLevel || c == ClassColour
 }
 
+// idempotent reports whether sending cmd twice is the same as sending it once: it sets an absolute
+// value (on/off, an absolute brightness, a colour) rather than stepping from the current one. A
+// relative brightness is NOT idempotent, so it is never treated as a repeat of an earlier one.
+func idempotent(cmd *command.Command) bool {
+	switch detailsField(cmd) {
+	case "on_off", "brightness_absolute", "colour":
+		return true
+	}
+	return false
+}
+
+// sameEffect reports whether a and b are both idempotent commands asking for exactly the same
+// thing, so that sending b after a would change nothing a had not already asked for.
+func sameEffect(a, b *command.Command) bool {
+	if !idempotent(a) || !idempotent(b) || detailsField(a) != detailsField(b) {
+		return false
+	}
+	ma, mb := a.ProtoReflect(), b.ProtoReflect()
+	oneof := ma.Descriptor().Oneofs().ByName("details")
+	fa, fb := ma.WhichOneof(oneof), mb.WhichOneof(oneof)
+	return proto.Equal(ma.Get(fa).Message().Interface(), mb.Get(fb).Message().Interface())
+}
+
 // DefaultCommandQueueWait is how long a command waits for its turn at a busy device before it is
 // dropped as stale, when a CommandLane doesn't set MaxWait.
 //
@@ -98,6 +130,10 @@ const DefaultCommandQueueWait = 10 * time.Second
 //   - a newer command supersedes older ones that are still waiting AND the one in flight (see
 //     Supersedes): the older caller gets ErrCommandSuperseded at once, so the slot frees and the
 //     newer command goes out immediately instead of after a timeout;
+//   - a command identical in effect to one already pending is not sent again: its caller joins the
+//     pending command and gets the same outcome (see Acquire). A slow device is already behind;
+//     repeating what it hasn't yet done only lengthens its queue, and gives an old copy another
+//     chance to land after a newer command;
 //   - a command that waits longer than MaxWait for its turn is dropped with ErrCommandStale, never
 //     delivered late;
 //   - a caller whose context ends while waiting is dropped without ever being sent.
@@ -116,23 +152,91 @@ type CommandLane struct {
 }
 
 type laneEntry struct {
+	cmd    *command.Command
 	class  CommandClass
+	ctx    context.Context
 	cancel context.CancelCauseFunc
+
+	// done is closed, with err set, when the command's outcome is known - however it ends: it
+	// completed, failed, was superseded, expired, or its caller gave up. Callers that joined it
+	// wait on done.
+	done     chan struct{}
+	err      error
+	resolver sync.Once
 }
 
-// Acquire waits for cmd's turn at the device. On success it returns a context to execute the
-// command with - cancelled if a newer command supersedes this one mid-flight, so execution should
-// stop waiting for the device when it ends - and a release func that must be called when the
-// command is done. On failure it returns ErrCommandSuperseded, ErrCommandStale, or ctx's error,
-// and nothing is held.
-func (l *CommandLane) Acquire(ctx context.Context, cmd *command.Command) (context.Context, func(), error) {
+func (e *laneEntry) resolve(err error) {
+	e.resolver.Do(func() {
+		e.err = err
+		close(e.done)
+	})
+}
+
+// Lease is the right to send one command to the device. Hold it until the command is done, then
+// call Release.
+type Lease struct {
+	ctx     context.Context
+	release func(err error)
+}
+
+// Context is the context to execute the command with. It is cancelled if a newer command
+// supersedes this one while it is in flight, so execution should stop waiting for the device when
+// it ends (and report the outcome through SupersededError).
+func (ls *Lease) Context() context.Context { return ls.ctx }
+
+// Release ends the lease, passing on the command's outcome (nil for success) to any callers that
+// joined it, and frees the device for the next command. It is safe to call more than once: only
+// the first call counts, so a deferred Release can't free a slot another command has since taken.
+func (ls *Lease) Release(err error) { ls.release(err) }
+
+// Flight is a command identical to the caller's that is already pending. The caller doesn't send
+// anything; it waits for that command's outcome.
+type Flight struct{ e *laneEntry }
+
+// Wait blocks until the command joined has an outcome and returns it (nil if it succeeded), or
+// returns ctx's error if ctx ends first. Giving up waiting doesn't affect the command joined.
+func (f *Flight) Wait(ctx context.Context) error {
+	select {
+	case <-f.e.done:
+		return f.e.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Acquire waits for cmd's turn at the device, and returns exactly one of:
+//
+//   - a Lease, when the caller should send cmd;
+//   - a Flight, when an identical-in-effect command is already pending and nothing needs sending:
+//     the caller waits on it instead. Only idempotent commands join (see idempotent), and only
+//     the newest pending command that would conflict with this one is a candidate - if that is
+//     something different (an Off, then another On), this command supersedes it as usual rather
+//     than joining an older, equal one behind it;
+//   - an error - ErrCommandSuperseded, ErrCommandStale, or ctx's - with nothing held.
+func (l *CommandLane) Acquire(ctx context.Context, cmd *command.Command) (*Lease, *Flight, error) {
 	l.once.Do(func() { l.slot = make(chan struct{}, 1) })
 
 	class := ClassOf(cmd)
-	ectx, cancel := context.WithCancelCause(ctx)
-	e := &laneEntry{class: class, cancel: cancel}
 
 	l.mu.Lock()
+	if idempotent(cmd) {
+		// The newest live entry this command would conflict with decides: join it only if it is
+		// the same request.
+		for i := len(l.entries) - 1; i >= 0; i-- {
+			old := l.entries[i]
+			if old.ctx.Err() != nil || !Supersedes(class, old.class) {
+				continue
+			}
+			if sameEffect(cmd, old.cmd) {
+				l.mu.Unlock()
+				return nil, &Flight{e: old}, nil
+			}
+			break
+		}
+	}
+
+	ectx, cancel := context.WithCancelCause(ctx)
+	e := &laneEntry{cmd: cmd, class: class, ctx: ectx, cancel: cancel, done: make(chan struct{})}
 	for _, old := range l.entries {
 		if Supersedes(class, old.class) {
 			old.cancel(ErrCommandSuperseded)
@@ -151,33 +255,34 @@ func (l *CommandLane) Acquire(ctx context.Context, cmd *command.Command) (contex
 	select {
 	case l.slot <- struct{}{}:
 	case <-ectx.Done():
-		l.drop(e)
-		return nil, nil, SupersededError(ectx, ectx.Err())
+		err := SupersededError(ectx, ectx.Err())
+		l.drop(e, err)
+		return nil, nil, err
 	case <-timer.C:
-		l.drop(e)
+		l.drop(e, ErrCommandStale)
 		return nil, nil, ErrCommandStale
 	}
 
 	// select picks at random among ready cases, so a command superseded or cancelled in the same
 	// instant it won the slot must still be turned away here.
 	if err := ectx.Err(); err != nil {
+		err = SupersededError(ectx, err)
 		<-l.slot
-		l.drop(e)
-		return nil, nil, SupersededError(ectx, err)
+		l.drop(e, err)
+		return nil, nil, err
 	}
 
-	// release is safe to call more than once (callers defer it): a second call must neither block
-	// on an empty slot nor free one that another command has since taken.
 	var once sync.Once
-	return ectx, func() {
+	return &Lease{ctx: ectx, release: func(err error) {
 		once.Do(func() {
-			l.drop(e)
+			l.drop(e, err)
 			<-l.slot
 		})
-	}, nil
+	}}, nil, nil
 }
 
-func (l *CommandLane) drop(e *laneEntry) {
+// drop removes e from the lane and records its outcome for anyone who joined it.
+func (l *CommandLane) drop(e *laneEntry, err error) {
 	l.mu.Lock()
 	for i, x := range l.entries {
 		if x == e {
@@ -186,13 +291,14 @@ func (l *CommandLane) drop(e *laneEntry) {
 		}
 	}
 	l.mu.Unlock()
+	e.resolve(err)
 	e.cancel(nil)
 }
 
-// SupersededError returns ErrCommandSuperseded if ctx (a context from CommandLane.Acquire) was
-// cancelled because a newer command replaced its command, and err otherwise. A bridge applies it
-// to whatever its command execution returned, since a command abandoned mid-flight surfaces there
-// as a bare context error.
+// SupersededError returns ErrCommandSuperseded if ctx (a Lease's context) was cancelled because a
+// newer command replaced its command, and err otherwise. A bridge applies it to whatever its
+// command execution returned, since a command abandoned mid-flight surfaces there as a bare
+// context error.
 func SupersededError(ctx context.Context, err error) error {
 	if errors.Is(context.Cause(ctx), ErrCommandSuperseded) {
 		return ErrCommandSuperseded
