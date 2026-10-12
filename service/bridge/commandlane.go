@@ -23,8 +23,8 @@ const (
 )
 
 // ClassOf returns cmd's class. The three classes above cover a light; every other command is its
-// own class, named after its Command.details field, so it is only ever replaced by another of
-// the same kind (a second "mode" command replaces the first, never a "mute").
+// own class, named after its Command.details field. Those are never superseded (see Supersedes),
+// but are kept distinct so one kind of command never queues behind, or cancels, another's rules.
 func ClassOf(cmd *command.Command) CommandClass {
 	m := cmd.ProtoReflect()
 	oneof := m.Descriptor().Oneofs().ByName("details")
@@ -51,19 +51,40 @@ func ClassOf(cmd *command.Command) CommandClass {
 // obsolete: a command replaces any older command of its own class, and turning a device on or off
 // is the final word over any brightness or colour change still pending.
 //
-// That last rule is the one that matters. A brightness or colour command reaching a bulb after an
-// Off turns it back on (zigbee2mqtt sets state ON along with a brightness), so a stale dim that
-// finally gets through a slow link after the user pressed Off leaves the light on.
+// Only commands that WHOLLY replace the previous one can be superseded: on/off, brightness and
+// colour each set a single value, so the newest is all that matters. Everything else is left
+// alone, even against its own kind. A Toggle, for instance, changes only the settings it names
+// (api/command/toggle.proto), so setting a purifier's child lock and then its LED are two
+// independent commands - dropping the first because the second arrived would silently lose it.
+// Such commands are still serialised and still bounded by MaxWait; they are just never cancelled.
+//
+// The on/off rule is the one that matters most. A brightness or colour command reaching a bulb
+// after an Off turns it back on (zigbee2mqtt sets state ON along with a brightness), so a stale
+// dim that finally gets through a slow link after the user pressed Off leaves the light on.
 func Supersedes(newer, older CommandClass) bool {
+	if !replaceable(older) {
+		return false
+	}
 	if newer == older {
 		return true
 	}
 	return newer == ClassPower && (older == ClassLevel || older == ClassColour)
 }
 
+// replaceable reports whether a command of class c sets one value outright, so a newer command
+// can stand in for it. See Supersedes.
+func replaceable(c CommandClass) bool {
+	return c == ClassPower || c == ClassLevel || c == ClassColour
+}
+
 // DefaultCommandQueueWait is how long a command waits for its turn at a busy device before it is
 // dropped as stale, when a CommandLane doesn't set MaxWait.
-const DefaultCommandQueueWait = 5 * time.Second
+//
+// It must exceed the longest a single command can legitimately hold the device - a bridge's write
+// timeout (bridges/zigbee waits up to 8s for a device to confirm) - or a command queued behind one
+// that is merely slow to time out would ALWAYS be dropped, however recent. At 10s a command
+// survives waiting out one such command, but not two in a row: past that the user has moved on.
+const DefaultCommandQueueWait = 10 * time.Second
 
 // CommandLane orders the commands sent to ONE device, for a bridge whose device can only do one
 // thing at a time and may be slow to confirm. Its zero value is ready to use.
@@ -145,9 +166,14 @@ func (l *CommandLane) Acquire(ctx context.Context, cmd *command.Command) (contex
 		return nil, nil, SupersededError(ectx, err)
 	}
 
+	// release is safe to call more than once (callers defer it): a second call must neither block
+	// on an empty slot nor free one that another command has since taken.
+	var once sync.Once
 	return ectx, func() {
-		l.drop(e)
-		<-l.slot
+		once.Do(func() {
+			l.drop(e)
+			<-l.slot
+		})
 	}, nil
 }
 

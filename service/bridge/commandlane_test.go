@@ -47,7 +47,9 @@ func TestSupersedes(t *testing.T) {
 	}{
 		{ClassLevel, ClassLevel, true},
 		{ClassPower, ClassPower, true},
-		{"mute", "mute", true},
+		// Partial or unrelated commands are never superseded, even by their own kind.
+		{"mute", "mute", false},
+		{"toggle", "toggle", false},
 		{ClassPower, ClassLevel, true},
 		{ClassPower, ClassColour, true},
 		// Brightness changes don't make an on/off obsolete, nor do unrelated commands.

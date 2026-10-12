@@ -36,6 +36,7 @@ go_test(
     size = "small",
     srcs = [
         "api_test.go",
+        "commandlane_partial_test.go",
         "commandlane_test.go",
         "pump_test.go",
         "service_test.go",

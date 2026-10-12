@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -563,6 +564,7 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	// which frees this device's slot at once instead of after the write timeout.
 	ectx, release, err := bd.lane.Acquire(ctx, cmd)
 	if err != nil {
+		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err
 	}
 	defer release()
@@ -571,10 +573,30 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	defer bd.mu.Unlock()
 
 	if err := bd.builder.applyCommand(ectx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
-		return nil, bridge.SupersededError(ectx, err)
+		err = bridge.SupersededError(ectx, err)
+		nc.logDroppedCommand(bd.friendlyName, cmd, err)
+		return nil, err
 	}
 	bd.device.Version = computeVersion(bd.device)
 	return proto.Clone(bd.device).(*device.Device), nil
+}
+
+// logDroppedCommand records a command that was superseded by a newer one, or expired waiting for
+// its turn (see bridge.CommandLane). Neither is an error in the bridge, but a person watching a
+// light that "didn't do what I pressed" needs to be able to see it happened - and, naming the
+// device, which one is struggling to keep up. Other errors are the caller's to report.
+func (nc *networkConn) logDroppedCommand(friendlyName string, cmd *command.Command, err error) {
+	var reason string
+	switch {
+	case errors.Is(err, bridge.ErrCommandSuperseded):
+		reason = "superseded by a newer command"
+	case errors.Is(err, bridge.ErrCommandStale):
+		reason = "expired waiting for the device to finish an earlier command"
+	default:
+		return
+	}
+	nc.logger.Info("command dropped: "+reason,
+		zap.String("device", friendlyName), zap.String("command", string(bridge.ClassOf(cmd))))
 }
 
 // lastSeenRefresh is the minimum advance in a device's reported last_seen before it is written

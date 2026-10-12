@@ -123,8 +123,11 @@ degrades anything else:
   one at a time; a newer command supersedes older ones still waiting *and* the one in flight (the
   older caller gets `ABORTED` at once, so nothing waits out a timeout); an on/off command is the
   final word over pending brightness/colour commands (a late brightness reaching a bulb after an Off
-  turns it back on); and a command that waits more than 5s for its turn is dropped, not delivered
-  late. A command already on the wire can't be recalled, so a superseded command may still take
+  turns it back on); and a command that waits more than 10s for its turn - longer than one 8s write
+  timeout, so it survives waiting out one slow command but not two - is dropped, not delivered
+  late. Only commands that wholly replace the last (on/off, brightness, colour) are ever
+  superseded: a partial update such as a fan's `Toggle` is queued behind the one in flight, never
+  cancelled, since the two may touch different settings. A command already on the wire can't be recalled, so a superseded command may still take
   effect - the guarantee is that nothing older is sent after something newer. Consequence: repeated
   *relative* steps (e.g. +10%) sent to a device that isn't confirming collapse, since each is
   computed from the last confirmed level.
