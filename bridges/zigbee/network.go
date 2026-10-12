@@ -590,7 +590,27 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
 
-	if err := bd.builder.applyCommand(ectx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+	// A builder updates the device to the state the command asks for, then sends it. That commanded
+	// state is published as soon as the command is accepted - when WriteState is about to send, via
+	// this hook - and not after the device confirms. A device that is slow to confirm (seconds, on a
+	// bad day) otherwise leaves the house believing the OLD state for all that time, so the next
+	// request, a toggle above all, decides from stale facts: three taps on a pair of lamps that were
+	// stalling all sent "on". If a report later contradicts the assumed state it replaces it, as
+	// any state report does.
+	before := proto.Clone(bd.device).(*device.Device)
+	sendCtx := withAcceptedHook(ectx, func() {
+		bd.device.Version = computeVersion(bd.device)
+		nc.svc.UpdateDevice(bd.device)
+	})
+
+	if err := bd.builder.applyCommand(sendCtx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+		// Only a command that never left this process is undone. One that was sent but not
+		// confirmed (a timeout, a newer command abandoning the wait) may still take effect, so the
+		// commanded state stands until the device's own report says otherwise.
+		if commandNotSent(err) {
+			bd.device = before
+			nc.svc.UpdateDevice(bd.device)
+		}
 		err = bridge.SupersededError(ectx, err)
 		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err

@@ -127,10 +127,24 @@ degrades anything else:
   timeout, so it survives waiting out one slow command but not two - is dropped, not delivered
   late. Only commands that wholly replace the last (on/off, brightness, colour) are ever
   superseded: a partial update such as a fan's `Toggle` is queued behind the one in flight, never
-  cancelled, since the two may touch different settings. A command already on the wire can't be recalled, so a superseded command may still take
-  effect - the guarantee is that nothing older is sent after something newer. Consequence: repeated
-  *relative* steps (e.g. +10%) sent to a device that isn't confirming collapse, since each is
-  computed from the last confirmed level.
+  cancelled, since the two may touch different settings. A command already on the wire can't be
+  recalled, so a superseded command may still take effect - the guarantee is that nothing older is
+  sent after something newer.
+- **The commanded state is published the moment a command is accepted**, not once the device
+  confirms. For on/off and brightness the bridge updates its copy of the device to what was asked
+  for, publishes that, and only then sends. A lamp that is slow to confirm (captured live: ~14s)
+  would otherwise leave the house believing the old state for all that time, so the next request -
+  a toggle above all - decided from stale facts: three taps on a pair of lamps all sent "on". Now
+  the second tap sees the first and turns them off. Consequences:
+  - repeated *relative* steps (e.g. +10%) add up even while the device is silent (+10, +10 is
+    +20), because each is computed from the commanded level, not the last confirmed one;
+  - the assumed state is not rolled back on a timeout or when a newer command abandons the wait -
+    the command was sent and may still take effect - and the device's own next report replaces it,
+    as any report does;
+  - it IS rolled back, and the correction published, if the command never left the process (the
+    broker rejected the publish, the payload couldn't be encoded, or the caller's deadline had
+    already passed);
+  - colour and fan commands still update the state only after the device confirms.
 - A command identical in effect to one already pending (the same On, the same absolute brightness,
   the same colour) is not sent again: its caller joins the pending command and shares its outcome.
   Captured live, a bulb that had gone quiet was sent nine identical On commands in six seconds -

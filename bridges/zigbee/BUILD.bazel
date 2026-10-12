@@ -47,6 +47,7 @@ go_test(
         "lane_join_test.go",
         "mqtt_test.go",
         "network_test.go",
+        "optimistic_state_test.go",
         "startup_query_test.go",
         "version_test.go",
     ],
@@ -54,6 +55,7 @@ go_test(
     deps = [
         "//api",
         "//api/command",
+        "//api/device",
         "//service/bridge",
         "@com_github_eclipse_paho_mqtt_golang//:paho_mqtt_golang",
         "@com_github_stretchr_testify//assert",
