@@ -21,6 +21,9 @@ var (
 	// ErrCommandTimeout is returned when a bridge writes a command to a device but doesn't
 	// observe the device confirm it within the bridge's own timeout.
 	ErrCommandTimeout = status.Error(codes.DeadlineExceeded, "device did not confirm command in time")
+	// ErrHistoryNotSupported is returned by GetDeviceHistory when the bridge's handler
+	// doesn't implement HistoryHandler.
+	ErrHistoryNotSupported = status.Error(codes.Unimplemented, "bridge does not support device history")
 	// ErrStreamFellBehind ends a StreamUpdates stream whose client stopped keeping up with
 	// updates (see Source.SendMessage). The client should reconnect to resync from a fresh
 	// initial snapshot.

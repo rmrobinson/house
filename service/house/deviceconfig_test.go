@@ -66,6 +66,10 @@ func (f *fakeBridgeServer) ExecuteCommandAsync(ctx context.Context, cmd *command
 	return &api2.ExecuteCommandAsyncResponse{}, nil
 }
 
+func (f *fakeBridgeServer) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.BridgeService_GetDeviceHistoryServer) error {
+	return nil
+}
+
 func (f *fakeBridgeServer) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {
 	for _, u := range f.updates {
 		if err := stream.Send(u); err != nil {
