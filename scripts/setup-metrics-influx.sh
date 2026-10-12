@@ -9,22 +9,30 @@
 # Safe to re-run: existing buckets, tokens and the task are reused or updated,
 # never duplicated.
 #
-# Run it with an operator / all-access token from any machine that has the
-# `influx` CLI and can reach the server - or inside the influxdb container:
+# It needs operator / all-access rights, from one of:
 #
-#   INFLUX_HOST=http://<influx-host>:8086 \
-#   INFLUX_TOKEN=<operator token> \
-#   scripts/setup-metrics-influx.sh
+#  * Inside the influxdb container (easiest). A container created with the
+#    official image's DOCKER_INFLUXDB_INIT_* variables already has a CLI config
+#    holding the admin token ('influx config list'), so nothing needs passing:
 #
-#   # or, from the Docker host:
-#   docker cp scripts/setup-metrics-influx.sh <container>:/tmp/
-#   docker exec -e INFLUX_TOKEN=<operator token> <container> bash /tmp/setup-metrics-influx.sh
+#      docker cp scripts/setup-metrics-influx.sh <container>:/tmp/
+#      docker exec -e INFLUX_ORG=falnet -e SECRETS_OUT=/tmp/metricsd.secrets.yaml \
+#        <container> bash /tmp/setup-metrics-influx.sh
+#      docker cp <container>:/tmp/metricsd.secrets.yaml ./
 #
-# The CLI reads INFLUX_HOST / INFLUX_TOKEN / INFLUX_ORG itself.
+#    (If the CLI there has no config, add -e INFLUX_TOKEN.)
+#
+#  * Any machine with the `influx` CLI that can reach the server:
+#
+#      INFLUX_HOST=http://<influx-host>:8086 INFLUX_TOKEN=<operator token> \
+#        scripts/setup-metrics-influx.sh
+#
+# The CLI reads INFLUX_HOST / INFLUX_TOKEN / INFLUX_ORG itself, and they take
+# precedence over its stored config.
 #
 # Environment:
-#   INFLUX_HOST          server URL (required, unless running on the server itself)
-#   INFLUX_TOKEN         operator / all-access token (required; used only here)
+#   INFLUX_HOST          server URL (default: the CLI config's, i.e. localhost in the container)
+#   INFLUX_TOKEN         operator / all-access token (default: the CLI config's; used only here)
 #   INFLUX_ORG           organization (default: falnet)
 #   METRICS_BUCKET       raw bucket (default: house)
 #   METRICS_RETENTION    raw retention (default: 720h = 30 days)
@@ -63,7 +71,6 @@ TASK_NAME="metricsd-downsample"
 die() { echo "error: $*" >&2; exit 1; }
 
 command -v influx >/dev/null 2>&1 || die "the influx CLI is not installed; run this inside the influxdb container instead (see the header of this script)"
-[ -n "${INFLUX_TOKEN:-}" ] || die "INFLUX_TOKEN (an operator/all-access token) is required"
 
 if [ -e "$SECRETS_OUT" ] && [ "${FORCE:-}" != "1" ]; then
   die "$SECRETS_OUT already exists; set FORCE=1 to overwrite or SECRETS_OUT to another path"
@@ -71,7 +78,8 @@ fi
 
 echo "==> checking connection"
 influx ping >/dev/null || die "cannot reach InfluxDB (INFLUX_HOST=${INFLUX_HOST:-<unset>})"
-influx org list --name "$ORG" --hide-headers >/dev/null || die "org '$ORG' not found or not visible to this token"
+influx bucket list --org "$ORG" --hide-headers >/dev/null 2>&1 \
+  || die "not authorized, or org '$ORG' not found. Set INFLUX_TOKEN to an operator/all-access token (or, inside the container, make sure 'influx config list' shows a config for it)"
 
 # --- buckets --------------------------------------------------------------
 bucket_id() {

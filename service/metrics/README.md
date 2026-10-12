@@ -9,6 +9,20 @@ nothing here needs cloud connectivity.
 metricsd needs a bucket and a token in an existing InfluxDB v2 before it will
 start. `scripts/setup-metrics-influx.sh` creates both, idempotently:
 
+Easiest is from inside the influxdb container, whose CLI is already
+authenticated if it was created with the image's `DOCKER_INFLUXDB_INIT_*`
+variables (check with `influx config list`):
+
+```sh
+docker cp scripts/setup-metrics-influx.sh <container>:/tmp/
+docker exec -e INFLUX_ORG=falnet -e SECRETS_OUT=/tmp/metricsd.secrets.yaml \
+  <container> bash /tmp/setup-metrics-influx.sh
+docker cp <container>:/tmp/metricsd.secrets.yaml ./metricsd.secrets.yaml
+docker exec <container> rm -f /tmp/metricsd.secrets.yaml /tmp/setup-metrics-influx.sh
+```
+
+Or from any machine with the `influx` CLI that can reach the server:
+
 ```sh
 INFLUX_HOST=http://<influx-host>:8086 \
 INFLUX_TOKEN=<operator token> \
@@ -16,9 +30,7 @@ INFLUX_ORG=falnet \
 scripts/setup-metrics-influx.sh
 ```
 
-(The `influx` CLI is required. If it isn't installed where you are, copy the
-script into the influxdb container and run it there with `docker exec`; the
-header of the script shows how.)
+The operator token is only used by the script; metricsd never sees it.
 
 It:
 
