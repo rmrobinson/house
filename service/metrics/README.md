@@ -22,20 +22,50 @@ header of the script shows how.)
 
 It:
 
-- creates bucket `house` with **30 day retention** and 24h shard groups
-  (`METRICS_BUCKET`, `METRICS_RETENTION`, `METRICS_SHARD_DURATION` override);
-- creates a token `metricsd` with **read and write on that bucket only** (read
-  is for the backfill watermark query), and proves the scoping by reading its
+- creates bucket **`house`** - raw state and commands, **30 day retention**;
+- creates bucket **`house_1h`** - hourly aggregates, **548 days (~1.5 years)**
+  retention, for year-over-year comparison;
+- creates a scheduled Flux task, **`metricsd-downsample`**, that rolls `house`
+  up into `house_1h` every hour (see below);
+- creates a token `metricsd` with **read and write on `house` only** (read is
+  for the backfill watermark query), and proves the scoping by reading its
   own bucket and being refused on another one;
-- writes the token to `./metricsd.secrets.yaml` (mode 600, refuses to
+- writes that token to `./metricsd.secrets.yaml` (mode 600, refuses to
   overwrite without `FORCE=1`). Place it beside `metricsd.yaml`; the config
   refers to it as `token: !secret influx_token`.
 
-InfluxDB v2 has no user-configurable compaction policy (that was v1's
-retention-policy model) - compaction is automatic. Retention and shard group
-duration are the only related settings, and they are what the script sets.
-The 30 day raw retention is also why the downsampled long-term bucket in the
-plan (`house_1h`, Phase 6) exists: raw points age out after a month.
+Everything is overridable by environment variable (see the script header),
+`DOWNSAMPLE=0` skips the aggregate bucket and task, and re-running is safe:
+existing buckets and tokens are reused and the task is updated in place.
+
+### How data ages
+
+InfluxDB v2 has no compaction policy to configure (that was v1's
+retention-policy model; compaction is automatic). What thins data out as it
+ages is the downsample task:
+
+| Age | Where | Resolution |
+|---|---|---|
+| 0 - 30 days | `house` | every point metricsd wrote (already deadband + heartbeat filtered) |
+| 0 - ~1.5 years | `house_1h` | one point per hour per series |
+
+Each hour the task re-aggregates the last 26h of `state` (hour-start
+timestamps):
+
+- numeric fields (floats, ints, enums) -> `agg=mean|min|max|last`, all as
+  floats, so every aggregate of a field shares one type;
+- bool fields -> `agg=last` only;
+- `command` points are copied unchanged, so they outlive the raw bucket;
+- tags are preserved, including `source`: live and backfilled points of one
+  device stay separate series rather than being averaged together.
+
+The 26h lookback is deliberate: backfilled history arrives with timestamps up
+to 24h old, which a last-hour-only task would never aggregate. Re-aggregating
+a window is idempotent.
+
+Query `house` for recent detail and `house_1h` for anything older than 30
+days. The `metricsd` token cannot read `house_1h`; point dashboards at their
+own read token.
 
 ## Overview
 
