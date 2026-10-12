@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -128,33 +129,10 @@ type builtDevice struct {
 	friendlyName string
 	ieeeAddress  string
 
-	// cmdSlot serializes commands to this device, like mu does, but unlike a bare mutex a waiter
-	// can give up: see acquireCommand.
-	cmdOnce sync.Once
-	cmdSlot chan struct{}
-}
-
-// acquireCommand takes this device's command slot, waiting for any in-flight command to finish
-// first, and returns the func that releases it. It returns ctx's error instead if ctx ends while
-// waiting (or has ended by the time the slot is free).
-//
-// This is what keeps a slow device from poisoning its own queue. With a plain mutex, every
-// command queued behind a stuck one waited its turn regardless of its caller's deadline and then
-// published anyway - so one unresponsive bulb produced a train of stale commands, each costing a
-// full write timeout and each landing on the device long after the caller had given up.
-func (bd *builtDevice) acquireCommand(ctx context.Context) (func(), error) {
-	bd.cmdOnce.Do(func() { bd.cmdSlot = make(chan struct{}, 1) })
-
-	select {
-	case bd.cmdSlot <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	if err := ctx.Err(); err != nil {
-		<-bd.cmdSlot
-		return nil, err
-	}
-	return func() { <-bd.cmdSlot }, nil
+	// lane orders the commands sent to this device: one at a time, a newer command superseding
+	// older pending ones, a stale one dropped rather than delivered late. See
+	// bridge.CommandLane for why a slow device needs this.
+	lane bridge.CommandLane
 }
 
 // networkConn owns zigbee2mqtt device discovery (driven by the retained bridge/devices message),
@@ -183,6 +161,14 @@ type networkConn struct {
 	friendlyNameToDeviceID map[string]string
 	ieeeToDeviceID         map[string]string
 	devices                map[string]*builtDevice
+
+	// queryMu guards the pending one-off state queries for newly discovered devices, and
+	// queryRunning (whether a goroutine is draining them); see requestInitialState. queryWG lets
+	// tests wait for that goroutine.
+	queryMu      sync.Mutex
+	queries      []initialQuery
+	queryRunning bool
+	queryWG      sync.WaitGroup
 }
 
 func newNetworkConn(logger *zap.Logger, svc *bridge.Service, zb *ZigbeeBridge, mc *mqttConn, cfg zigbeeConfig) *networkConn {
@@ -424,6 +410,75 @@ func (nc *networkConn) buildDevice(bd bridgeDevice) {
 	nc.zb.registerDevice(id, nc)
 	d.Version = computeVersion(d)
 	nc.svc.UpdateDevice(d)
+
+	if q, ok := builder.(stateQuerier); ok {
+		nc.requestInitialState(bd.FriendlyName, q.stateQuery())
+	}
+}
+
+// initialQueryInterval spaces the one-off state queries sent for newly discovered devices. A var
+// so tests can shrink it.
+var initialQueryInterval = 200 * time.Millisecond
+
+// initialQuery is one pending /get for a newly discovered device.
+type initialQuery struct {
+	friendlyName string
+	payload      map[string]any
+}
+
+// maxPendingInitialQueries bounds the queue of not-yet-sent state queries.
+const maxPendingInitialQueries = 256
+
+// requestInitialState queues a one-off "/get" for friendlyName, which makes zigbee2mqtt publish
+// the device's current state to its state topic (applied like any other report). See stateQuerier
+// for why. Queries are sent one at a time, initialQueryInterval apart, from a single goroutine:
+// a bridge restart discovers every device at once, and asking a few dozen devices at the same
+// moment is a burst on a Zigbee mesh that is already the slowest part of this system. Best
+// effort - a device that doesn't answer simply stays at its zero state until it next reports, as
+// before - so a full queue drops the request rather than blocking discovery.
+//
+// The goroutine exists only while there is something to send, so an idle bridge holds none.
+func (nc *networkConn) requestInitialState(friendlyName string, payload map[string]any) {
+	nc.queryMu.Lock()
+	if len(nc.queries) >= maxPendingInitialQueries {
+		nc.queryMu.Unlock()
+		nc.logger.Warn("initial state query queue is full; skipping", zap.String("friendly_name", friendlyName))
+		return
+	}
+	nc.queries = append(nc.queries, initialQuery{friendlyName: friendlyName, payload: payload})
+	start := !nc.queryRunning
+	nc.queryRunning = true
+	nc.queryMu.Unlock()
+
+	if start {
+		nc.queryWG.Add(1)
+		go nc.runInitialQueries()
+	}
+}
+
+func (nc *networkConn) runInitialQueries() {
+	defer nc.queryWG.Done()
+	for {
+		nc.queryMu.Lock()
+		if len(nc.queries) == 0 {
+			nc.queryRunning = false
+			nc.queryMu.Unlock()
+			return
+		}
+		q := nc.queries[0]
+		nc.queries = nc.queries[1:]
+		more := len(nc.queries) > 0
+		nc.queryMu.Unlock()
+
+		topic := nc.mqtt.stateTopic(q.friendlyName) + "/get"
+		if err := nc.mqtt.publish(topic, q.payload); err != nil {
+			nc.logger.Warn("unable to request initial device state",
+				zap.String("friendly_name", q.friendlyName), zap.Error(err))
+		}
+		if more {
+			time.Sleep(initialQueryInterval)
+		}
+	}
 }
 
 // classify maps a zigbee2mqtt device's exposes list to the deviceBuilder that owns it. Unlike
@@ -505,8 +560,11 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 		return nil, bridge.ErrDeviceNotFound
 	}
 
-	release, err := bd.acquireCommand(ctx)
+	// ectx is cancelled if a newer command supersedes this one while it is waiting on the device,
+	// which frees this device's slot at once instead of after the write timeout.
+	ectx, release, err := bd.lane.Acquire(ctx, cmd)
 	if err != nil {
+		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err
 	}
 	defer release()
@@ -514,11 +572,31 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
 
-	if err := bd.builder.applyCommand(ctx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+	if err := bd.builder.applyCommand(ectx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+		err = bridge.SupersededError(ectx, err)
+		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err
 	}
 	bd.device.Version = computeVersion(bd.device)
 	return proto.Clone(bd.device).(*device.Device), nil
+}
+
+// logDroppedCommand records a command that was superseded by a newer one, or expired waiting for
+// its turn (see bridge.CommandLane). Neither is an error in the bridge, but a person watching a
+// light that "didn't do what I pressed" needs to be able to see it happened - and, naming the
+// device, which one is struggling to keep up. Other errors are the caller's to report.
+func (nc *networkConn) logDroppedCommand(friendlyName string, cmd *command.Command, err error) {
+	var reason string
+	switch {
+	case errors.Is(err, bridge.ErrCommandSuperseded):
+		reason = "superseded by a newer command"
+	case errors.Is(err, bridge.ErrCommandStale):
+		reason = "expired waiting for the device to finish an earlier command"
+	default:
+		return
+	}
+	nc.logger.Info("command dropped: "+reason,
+		zap.String("device", friendlyName), zap.String("command", string(bridge.ClassOf(cmd))))
 }
 
 // lastSeenRefresh is the minimum advance in a device's reported last_seen before it is written

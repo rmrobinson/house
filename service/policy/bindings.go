@@ -31,6 +31,10 @@ var ErrNotImplemented = errors.New("policy: not implemented")
 // types read them to compute sunrise/sunset and calendar-date facts for the
 // house's own location; see LocationHomeAPI for a ready way to answer them
 // without a full house-state stream.
+//
+// An implementation must be safe for concurrent use: separate script runs
+// share one, and a single script's home.send calls it from several
+// goroutines at once, one per device.
 type HomeAPI interface {
 	// Device state
 	GetLight(id string) (bool, error)
@@ -140,7 +144,35 @@ func (t *bindingErrorTag) Error() string { return t.err.Error() }
 func raiseBindingError(L *lua.LState, err error) {
 	ud := L.NewUserData()
 	ud.Value = &bindingErrorTag{err: err}
+	L.SetMetatable(ud, bindingErrorMetatable(L))
 	L.Error(ud, 1)
+}
+
+// bindingErrorTypeName is the registry key for the metatable shared by every binding error value
+// in one Lua state.
+const bindingErrorTypeName = "policy.bindingError"
+
+// bindingErrorMetatable returns the metatable that makes a binding error readable from a script.
+// Without it, a script that catches a failing home.* call with pcall gets an opaque userdata and
+// tostring(err) prints only "userdata: 0x...", so the only thing it can report about the failure
+// is that one happened - not "device did not confirm command in time". runScript is unaffected:
+// it still identifies a binding failure through ud.Value (see asBindingError), never the string.
+func bindingErrorMetatable(L *lua.LState) *lua.LTable {
+	if mt, ok := L.GetTypeMetatable(bindingErrorTypeName).(*lua.LTable); ok {
+		return mt
+	}
+	mt := L.NewTypeMetatable(bindingErrorTypeName)
+	L.SetField(mt, "__tostring", L.NewFunction(func(L *lua.LState) int {
+		if ud, ok := L.Get(1).(*lua.LUserData); ok {
+			if tag, ok := ud.Value.(*bindingErrorTag); ok {
+				L.Push(lua.LString(tag.err.Error()))
+				return 1
+			}
+		}
+		L.Push(lua.LString("binding error"))
+		return 1
+	}))
+	return mt
 }
 
 // asBindingError returns the underlying error if err (as returned by
@@ -160,6 +192,55 @@ func asBindingError(err error) error {
 		return nil
 	}
 	return tag.err
+}
+
+// sendBinding builds the Lua function behind home.send (raise true) and home.trySend (raise false).
+// A malformed steps table always raises: that is a bug in the script, not a failed command.
+func sendBinding(api HomeAPI, fail func(*lua.LState, error, string, ...any), raise bool) lua.LGFunction {
+	name := "home.trySend"
+	if raise {
+		name = "home.send"
+	}
+	return func(L *lua.LState) int {
+		steps, err := parseSendSteps(luaToGo(L.CheckTable(1)))
+		if err != nil {
+			L.ArgError(1, err.Error())
+			return 0
+		}
+		results := runSendSteps(L.Context(), api, steps)
+		summary := summarizeSendFailures(api, steps, results)
+
+		if raise {
+			if summary != "" {
+				fail(L, errors.New(summary), "%s", name)
+				return 0
+			}
+			return 0
+		}
+
+		out := L.NewTable()
+		for i, r := range results {
+			t := L.NewTable()
+			t.RawSetString("ok", lua.LBool(r.OK))
+			if r.Skipped {
+				t.RawSetString("skipped", lua.LTrue)
+			}
+			if r.Superseded {
+				t.RawSetString("superseded", lua.LTrue)
+			}
+			if r.Err != nil {
+				t.RawSetString("error", lua.LString(r.Err.Error()))
+			}
+			out.RawSetInt(i+1, t)
+		}
+		L.Push(out)
+		if summary != "" {
+			L.Push(lua.LString(summary))
+		} else {
+			L.Push(lua.LNil)
+		}
+		return 2
+	}
 }
 
 // registerHomeTable installs the "home" global table backed by api on L,
@@ -192,6 +273,18 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 			}
 			return 0
 		},
+		// home.send(steps) commands several devices at once: steps is a list of
+		// {id=, op="setLight", on=} / {id=, op="setState", key=, value=} tables. A device's own
+		// steps run in order (and stop at its first failure); different devices run in parallel,
+		// so one slow device never delays the rest. Like every other home.* call it raises if a
+		// command fails - after every device has been tried, naming each device that failed - so
+		// a script that ignores the outcome can't silently log a success. A command a newer one
+		// to the same device superseded is not a failure.
+		"send": sendBinding(api, fail, true),
+		// home.trySend(steps) is home.send that never raises for a failed command. It returns a
+		// results list, one entry per step ({ok=, skipped=, superseded=, error=}), then a summary
+		// of the genuine failures (nil if none), for a script that wants to react itself.
+		"trySend": sendBinding(api, fail, false),
 		"getSensor": func(L *lua.LState) int {
 			id := L.CheckString(1)
 			v, err := api.GetSensor(id)

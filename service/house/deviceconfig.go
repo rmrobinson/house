@@ -171,6 +171,13 @@ func (o *DeviceConfigOverlay) ExecuteCommandAsync(ctx context.Context, cmd *comm
 	return o.inner.ExecuteCommandAsync(ctx, cmd)
 }
 
+// GetDeviceHistory relays inner's samples untouched: a HistorySample's
+// snapshot carries only recorded trait state, never a device name, so there
+// is nothing for the overlay to apply.
+func (o *DeviceConfigOverlay) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.BridgeService_GetDeviceHistoryServer) error {
+	return o.inner.GetDeviceHistory(req, stream)
+}
+
 // StreamUpdates relays inner's stream through overlayUpdateStream, which
 // overlays each outgoing Update's device(s) before it reaches the real
 // client - a live rename (UpdateDeviceConfig) is then visible on the very

@@ -29,14 +29,19 @@ type ButtonActionParams struct {
 // identical actions in a row (two double-taps) are still two pulses. The count is read fresh from
 // home state on each "device.updated.<id>" signal; Start takes a baseline of the current count
 // without treating it as an event, so a policy (re)registered after a press doesn't replay it, and
-// a bridge restart (count resets to zero, last_action empty) doesn't fire.
+// a bridge restart (count resets to zero, last_action empty) doesn't fire. The same goes for a
+// device policyd hasn't heard of yet when it starts: its first reading is the baseline.
 type ButtonActionCondition struct {
 	e        *Engine
 	deviceID string
 	actions  map[string]bool // nil: any action
 
-	mu    sync.Mutex
+	mu sync.Mutex
+	// last is the most recent event_count seen; seen reports whether last is a real reading yet.
+	// Until it is, no update can be called a new event: the first reading is whatever the device
+	// already had.
 	last  int64
+	seen  bool
 	ids   []string
 	value bool
 }
@@ -85,7 +90,7 @@ func (b *ButtonActionCondition) count() (int64, bool) {
 func (b *ButtonActionCondition) Start(ctx context.Context, onChange func(bool)) {
 	if n, ok := b.count(); ok {
 		b.mu.Lock()
-		b.last = n
+		b.last, b.seen = n, true
 		b.mu.Unlock()
 	}
 
@@ -116,9 +121,15 @@ func (b *ButtonActionCondition) onUpdate(onChange func(bool)) {
 	}
 
 	b.mu.Lock()
-	prev := b.last
-	b.last = n
+	prev, seen := b.last, b.seen
+	b.last, b.seen = n, true
 	b.mu.Unlock()
+	if !seen {
+		// The baseline read in Start failed - policyd registers persisted policies before the
+		// device cache is populated - so this is the first look at a device that may already have
+		// a history. Taking it as an event would replay its last action on every restart.
+		return
+	}
 	if n == prev {
 		return
 	}
