@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"tinygo.org/x/bluetooth"
 
@@ -21,12 +26,75 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
+const (
+	// historySampleInterval is the spacing of the samples inside each hourly history block the
+	// sensor reports.
+	historySampleInterval = 5 * time.Minute
+	// historyMaxWindow is how far back a single GetHistory call reaches. It matches the 24h
+	// window the airthings-btle Telegraf job has always requested.
+	historyMaxWindow = 24 * time.Hour
+	// historyTimeout bounds one BLE history download, matching the Telegraf job's 30s.
+	historyTimeout = 30 * time.Second
+)
+
+// sensorFinder is the part of airthings.Scanner the bridge uses, split out so tests can supply
+// sensors without Bluetooth hardware.
+type sensorFinder interface {
+	FindSensor(ctx context.Context, serialNumber int) (airthings.Sensor, error)
+}
+
+// historySnapshot builds the device carrying just the air readings a history sample records.
+// Battery and reachability aren't part of the sensor's history, so they're left unset.
+func historySnapshot(id string, vocPpb, co2Ppm, radonLT, radonST int32, temperatureC, pressureHpa, humidityPct float32) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Sensor{
+			Sensor: &device.Sensor{
+				AirQuality: &trait.AirQuality{
+					State: &trait.AirQuality_State{
+						VolatileOrganicCompoundsPpb: &vocPpb,
+						Co2Ppm:                      &co2Ppm,
+						RadonBqM3:                   &radonLT,
+						RadonShortTermBqM3:          &radonST,
+					},
+				},
+				AirProperties: &trait.AirProperties{
+					State: &trait.AirProperties_State{
+						TemperatureC:       temperatureC,
+						PressureHpa:        pressureHpa,
+						HumidityPercentage: humidityPct,
+					},
+				},
+			},
+		},
+	}
+}
+
+// historyToSamples expands the sensor's hourly history blocks into one sample per
+// historySampleInterval. A block's radon averages apply to all of its samples.
+func historyToSamples(deviceID string, blocks []airthings.HistoryMeasurement) []*api2.HistorySample {
+	samples := make([]*api2.HistorySample, 0, len(blocks)*12)
+	for _, hm := range blocks {
+		for i := 0; i < len(hm.Temperature); i++ {
+			samples = append(samples, &api2.HistorySample{
+				Time: timestamppb.New(hm.Timestamp.Add(time.Duration(i) * historySampleInterval)),
+				Snapshot: historySnapshot(deviceID,
+					int32(hm.VOCLevel[i]), int32(hm.CO2Level[i]),
+					int32(hm.RadonLongTermAvg), int32(hm.RadonShortTermAvg),
+					hm.Temperature[i], hm.RelativeAtmosphericPressure[i], hm.Humidity[i]),
+			})
+		}
+	}
+	return samples
+}
+
 func sensorToDevice(s airthings.Sensor) *device.Device {
 	modelName := "Wave Plus"
 	m := s.CurrentMeasurement()
 	vocLevel := int32(m.VOCLevel)
 	co2Level := int32(m.CO2Level)
 	radonLTAvg := int32(m.RadonLongTermAvg)
+	radonSTAvg := int32(m.RadonShortTermAvg)
 	return &device.Device{
 		Id:           fmt.Sprintf("%d", s.SerialNumber()),
 		ModelId:      "Wave Plus",
@@ -41,12 +109,17 @@ func sensorToDevice(s airthings.Sensor) *device.Device {
 			Sensor: &device.Sensor{
 				Metadata: &device.Sensor_Metadata{
 					OnBattery: true,
+					History: &device.Sensor_Metadata_History{
+						MaxWindow:      durationpb.New(historyMaxWindow),
+						SampleInterval: durationpb.New(historySampleInterval),
+					},
 				},
 				AirQuality: &trait.AirQuality{
 					State: &trait.AirQuality_State{
 						VolatileOrganicCompoundsPpb: &vocLevel,
 						Co2Ppm:                      &co2Level,
 						RadonBqM3:                   &radonLTAvg,
+						RadonShortTermBqM3:          &radonSTAvg,
 					},
 				},
 				AirProperties: &trait.AirProperties{
@@ -73,7 +146,7 @@ type AirthingsBridge struct {
 	svc    *bridge.Service
 	b      *api2.Bridge
 
-	scanner     *airthings.Scanner
+	scanner     sensorFinder
 	refreshLock sync.Mutex
 	ids         []int
 }
@@ -164,6 +237,61 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 		ab.svc.UpdateDevice(sensorToDevice(sensor))
 	}
 	return nil
+}
+
+// GetHistory implements bridge.HistoryHandler by downloading the sensor's on-board log over BLE.
+//
+// The sensor can only be asked for "the last N hours" - there is no way to ask for an older,
+// bounded window - so a since further back than historyMaxWindow is clamped to it, and anything
+// older is unrecoverable. One extra hour is requested beyond the window to cover the block still
+// being filled, otherwise a request exactly 24h wide would silently lose the oldest hour; callers
+// are expected to run more often than historyMaxWindow and rely on samples being idempotent.
+//
+// It holds refreshLock for the whole BLE session so it can't overlap Refresh on the one adapter.
+func (ab *AirthingsBridge) GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error) {
+	serial := 0
+	for _, id := range ab.ids {
+		if strconv.Itoa(id) == deviceID {
+			serial = id
+			break
+		}
+	}
+	if serial == 0 {
+		return nil, bridge.ErrDeviceNotFound
+	}
+
+	window := time.Since(since)
+	if since.IsZero() || window > historyMaxWindow {
+		if !since.IsZero() {
+			ab.logger.Warn("requested history is further back than the sensor can be asked for; clamping",
+				zap.String("device_id", deviceID),
+				zap.Time("since", since),
+				zap.Duration("max_window", historyMaxWindow))
+		}
+		window = historyMaxWindow
+	}
+	hours := int(math.Ceil(window.Hours())) + 1
+
+	ab.refreshLock.Lock()
+	defer ab.refreshLock.Unlock()
+
+	ctx, cancel := context.WithTimeout(ctx, historyTimeout)
+	defer cancel()
+
+	sensor, err := ab.scanner.FindSensor(ctx, serial)
+	if err != nil {
+		ab.logger.Error("unable to find sensor for history", zap.String("device_id", deviceID), zap.Error(err))
+		return nil, status.Errorf(codes.Unavailable, "unable to find sensor: %v", err)
+	}
+	defer sensor.Disconnect()
+
+	if err := sensor.RefreshHistory(ctx, hours); err != nil {
+		ab.logger.Error("unable to download sensor history",
+			zap.String("device_id", deviceID), zap.Int("hours", hours), zap.Error(err))
+		return nil, status.Errorf(codes.Unavailable, "unable to download history: %v", err)
+	}
+
+	return historyToSamples(deviceID, sensor.HistoricalMeasurements()), nil
 }
 
 // Run begins the process of polling the sensor and reporting back the state.

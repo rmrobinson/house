@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -41,6 +42,18 @@ type Handler interface {
 	// produces exactly one terminal CommandUpdate and its RPC response is always
 	// empty.
 	ProcessCommandAsync(ctx context.Context, cmd *command.Command) error
+}
+
+// HistoryHandler is an optional interface a Handler may also implement to serve
+// BridgeService.GetDeviceHistory. A bridge whose handler doesn't implement it
+// answers that RPC with ErrHistoryNotSupported. A bridge should only implement
+// it for devices that advertise Sensor.Metadata.history.
+type HistoryHandler interface {
+	// GetHistory returns the samples the device recorded in (since, until],
+	// in any order and possibly with samples outside that range: the API layer
+	// filters, sorts and caps what it returns to the caller. An unknown
+	// deviceID should be reported as ErrDeviceNotFound.
+	GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error)
 }
 
 // Service contains the relevant fields to allow management of devices on the bridge.
