@@ -23,6 +23,24 @@ const (
 	SourceBackfill = "backfill"
 )
 
+// Excludes lists state that is never recorded. It applies to device state
+// only: commands are always recorded.
+type Excludes struct {
+	// Details are Device.details oneof field names, e.g. "connected_device"
+	// (the omada bridge's network clients).
+	Details []string
+	// BridgeIDs excludes every device a bridge reports.
+	BridgeIDs []string
+	// DeviceIDs excludes individual devices.
+	DeviceIDs []string
+}
+
+// DefaultExcludes leaves out network clients (what the omada bridge reports),
+// which are numerous and, for now, noise.
+func DefaultExcludes() Excludes {
+	return Excludes{Details: []string{"connected_device"}}
+}
+
 // Service turns BridgeService updates into points on a Sink. HandleUpdate is
 // shaped for bridgeconn.Conn.Run's onUpdate callback: it does only in-memory
 // work (the Sink buffers), so it never back-pressures the stream.
@@ -32,12 +50,45 @@ type Service struct {
 	sampler *Sampler
 	rooms   RoomLookup
 	now     func() time.Time
+
+	excludeDetails map[string]bool
+	excludeBridges map[string]bool
+	excludeDevices map[string]bool
+}
+
+// SetExcludes replaces the exclusion lists. Call it before HandleUpdate is
+// in use; it is not safe to call concurrently with it.
+func (s *Service) SetExcludes(e Excludes) {
+	set := func(vs []string) map[string]bool {
+		m := make(map[string]bool, len(vs))
+		for _, v := range vs {
+			m[v] = true
+		}
+		return m
+	}
+	s.excludeDetails = set(e.Details)
+	s.excludeBridges = set(e.BridgeIDs)
+	s.excludeDevices = set(e.DeviceIDs)
+}
+
+func (s *Service) excluded(bridgeID string, d *apiDevice.Device) bool {
+	if s.excludeBridges[bridgeID] || s.excludeDevices[d.GetId()] {
+		return true
+	}
+	if len(s.excludeDetails) > 0 {
+		if _, name, ok := protoreflectutil.OneofMessage(d, "details"); ok && s.excludeDetails[string(name)] {
+			return true
+		}
+	}
+	return false
 }
 
 // NewService creates a Service. rooms may be nil, in which case room_id is
 // left off every point.
 func NewService(logger *zap.Logger, sink Sink, sampler *Sampler, rooms RoomLookup) *Service {
-	return &Service{logger: logger, sink: sink, sampler: sampler, rooms: rooms, now: time.Now}
+	s := &Service{logger: logger, sink: sink, sampler: sampler, rooms: rooms, now: time.Now}
+	s.SetExcludes(DefaultExcludes())
+	return s
 }
 
 // HandleUpdate processes one update from the bridge stream.
@@ -73,7 +124,7 @@ func (s *Service) HandleUpdate(u *api2.Update) {
 }
 
 func (s *Service) handleDevice(bridgeID string, d *apiDevice.Device, now time.Time) {
-	if d.GetId() == "" {
+	if d.GetId() == "" || s.excluded(bridgeID, d) {
 		return
 	}
 

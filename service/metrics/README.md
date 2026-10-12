@@ -33,6 +33,14 @@ Bucket `house`, two measurements:
 - `Command.origin` is advisory and unauthenticated; don't use it for access
   control.
 
+## Exclusions
+
+Network clients (what the omada bridge reports, as the `connected_device`
+detail) are not recorded by default: there are many and they are noise for
+now. `exclude.details` (device-kind names), `exclude.bridge_ids` and
+`exclude.device_ids` control this; `details: []` records them again.
+Exclusions apply to device state only; commands are always recorded.
+
 ## Sampling
 
 Live numeric values are thinned with a deadband plus heartbeat (see

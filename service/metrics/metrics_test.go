@@ -457,6 +457,47 @@ func TestFlattenSkipsNonFinite(t *testing.T) {
 	}
 }
 
+func TestServiceExcludes(t *testing.T) {
+	client := &apiDevice.Device{
+		Id:      "mac-1",
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Details: &apiDevice.Device_ConnectedDevice{ConnectedDevice: &apiDevice.ConnectedDevice{
+			NetworkPresence: &apiTrait.NetworkPresence{},
+		}},
+	}
+	update := func(d *apiDevice.Device, bridgeID string) *api2.Update {
+		return &api2.Update{
+			Action: api2.Update_CHANGED,
+			Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{Device: d, DeviceId: d.GetId(), BridgeId: bridgeID}},
+		}
+	}
+
+	// Network clients are excluded by default; other devices are not.
+	sink := &recordingSink{}
+	s := NewService(zaptest.NewLogger(t), sink, NewSampler(DefaultSampling()), nil)
+	s.HandleUpdate(update(client, "omada"))
+	assert.Empty(t, sink.points)
+	s.HandleUpdate(update(sensorDevice("s1", 600, 21), "b1"))
+	assert.NotEmpty(t, sink.points)
+
+	// An empty details list turns the default off.
+	sink = &recordingSink{}
+	s = NewService(zaptest.NewLogger(t), sink, NewSampler(DefaultSampling()), nil)
+	s.SetExcludes(Excludes{})
+	s.HandleUpdate(update(client, "omada"))
+	assert.NotEmpty(t, sink.points)
+
+	// By bridge and by device.
+	sink = &recordingSink{}
+	s = NewService(zaptest.NewLogger(t), sink, NewSampler(DefaultSampling()), nil)
+	s.SetExcludes(Excludes{BridgeIDs: []string{"b1"}, DeviceIDs: []string{"s3"}})
+	s.HandleUpdate(update(sensorDevice("s1", 600, 21), "b1"))
+	s.HandleUpdate(update(sensorDevice("s3", 600, 21), "b2"))
+	assert.Empty(t, sink.points)
+	s.HandleUpdate(update(sensorDevice("s2", 600, 21), "b2"))
+	assert.NotEmpty(t, sink.points)
+}
+
 func TestServiceRecordsReachability(t *testing.T) {
 	sink := &recordingSink{}
 	s := NewService(zaptest.NewLogger(t), sink, NewSampler(DefaultSampling()), nil)

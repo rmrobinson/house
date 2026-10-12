@@ -79,6 +79,16 @@ func main() {
 	rooms := metrics.NewRoomResolver(logger)
 	svc := metrics.NewService(logger, writer, metrics.NewSampler(sampling), rooms)
 
+	// Each list overrides its default only when set, so "details: []" turns
+	// the default network-client exclusion off.
+	excludes := metrics.DefaultExcludes()
+	if viper.IsSet("metricsd.exclude.details") {
+		excludes.Details = viper.GetStringSlice("metricsd.exclude.details")
+	}
+	excludes.BridgeIDs = viper.GetStringSlice("metricsd.exclude.bridge_ids")
+	excludes.DeviceIDs = viper.GetStringSlice("metricsd.exclude.device_ids")
+	svc.SetExcludes(excludes)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

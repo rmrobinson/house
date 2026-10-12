@@ -20,6 +20,14 @@ metricsd:
     # dropped (and counted) rather than slowing the update stream.
     max_buffered: 100000
 
+  # State that is never recorded (commands always are). Network clients -
+  # what the omada bridge reports, as the connected_device detail - are
+  # excluded by default as noise; set `details: []` to record them.
+  exclude:
+    details: [connected_device]   # Device.details oneof field names
+    bridge_ids: []
+    device_ids: []
+
   # Live values are thinned before writing: a field is written when it is
   # first seen, moves by at least its deadband from the last *written*
   # value, or has gone `heartbeat` unwritten (so a gap means "no data", not
