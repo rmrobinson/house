@@ -30,10 +30,11 @@ const (
 	// historySampleInterval is the spacing of the samples inside each hourly history block the
 	// sensor reports.
 	historySampleInterval = 5 * time.Minute
-	// historyMaxWindow is how far back a single GetHistory call reaches. It matches the 24h
-	// window the airthings-btle Telegraf job has always requested.
+	// historyMaxWindow is how far back a single GetHistory call reaches. 24h is the window
+	// that has been exercised against real sensors; the protocol itself may allow more.
 	historyMaxWindow = 24 * time.Hour
-	// historyTimeout bounds one BLE history download, matching the Telegraf job's 30s.
+	// historyTimeout bounds one BLE history download, after which the sensor is considered
+	// unresponsive and the bridge releases the adapter.
 	historyTimeout = 30 * time.Second
 )
 
