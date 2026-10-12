@@ -4,6 +4,41 @@ Records device state changes and commands from house into InfluxDB v2. It is
 the only process that talks to Influx; `house` itself stays storage-free, and
 nothing here needs cloud connectivity.
 
+## Setup (do this first)
+
+metricsd needs a bucket and a token in an existing InfluxDB v2 before it will
+start. `scripts/setup-metrics-influx.sh` creates both, idempotently:
+
+```sh
+INFLUX_HOST=http://<influx-host>:8086 \
+INFLUX_TOKEN=<operator token> \
+INFLUX_ORG=falnet \
+scripts/setup-metrics-influx.sh
+```
+
+(The `influx` CLI is required. If it isn't installed where you are, copy the
+script into the influxdb container and run it there with `docker exec`; the
+header of the script shows how.)
+
+It:
+
+- creates bucket `house` with **30 day retention** and 24h shard groups
+  (`METRICS_BUCKET`, `METRICS_RETENTION`, `METRICS_SHARD_DURATION` override);
+- creates a token `metricsd` with **read and write on that bucket only** (read
+  is for the backfill watermark query), and proves the scoping by reading its
+  own bucket and being refused on another one;
+- writes the token to `./metricsd.secrets.yaml` (mode 600, refuses to
+  overwrite without `FORCE=1`). Place it beside `metricsd.yaml`; the config
+  refers to it as `token: !secret influx_token`.
+
+InfluxDB v2 has no user-configurable compaction policy (that was v1's
+retention-policy model) - compaction is automatic. Retention and shard group
+duration are the only related settings, and they are what the script sets.
+The 30 day raw retention is also why the downsampled long-term bucket in the
+plan (`house_1h`, Phase 6) exists: raw points age out after a month.
+
+## Overview
+
 `metricsd` connects to `housed` (the facade-embedding process) and consumes:
 
 - `BridgeService.StreamUpdates` — device state, plus `CommandEvent`s for every
@@ -102,5 +137,5 @@ Config is `metricsd.yaml` in `/etc/house`, `$HOME/.config/house` or `.`; see
 `cmd/metricsd/metricsd.example.yaml`. The Influx token is read from a sibling
 `metricsd.secrets.yaml` via a `!secret influx_token` reference.
 
-The bucket (and its 30-day retention) must exist before metricsd starts; it
+The bucket and token must exist before metricsd starts (see Setup above); it
 does not create buckets.

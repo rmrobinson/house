@@ -10,7 +10,7 @@ metricsd:
 
   influx:
     url: http://influxdb.example.com:8086
-    org: house
+    org: falnet
     bucket: house
     # Keep the token out of the tracked file: resolved from a sibling
     # metricsd.secrets.yaml, same "!secret" convention as other services.
