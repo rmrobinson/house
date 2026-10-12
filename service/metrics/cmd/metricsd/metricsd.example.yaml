@@ -43,6 +43,7 @@ metricsd:
       radon_short_term_bq_m3: 5
       power_w: 1
       capacity_remaining_pct: 1
+      playback_position_s: 30
 
   # Optional: mutual TLS to house, same keys as viewerui.tls.*. Leave blank
   # for plaintext gRPC.

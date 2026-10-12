@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"math"
 	"strings"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -101,7 +102,11 @@ func collectLeaves(prefix string, m protoreflect.Message, out *[]Leaf) {
 		case protoreflect.Uint32Kind, protoreflect.Fixed32Kind, protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
 			*out = append(*out, Leaf{Name: name, Continuous: true, Value: FieldValue{Kind: KindInt, Int: int64(m.Get(f).Uint())}})
 		case protoreflect.FloatKind, protoreflect.DoubleKind:
-			*out = append(*out, Leaf{Name: name, Continuous: true, Value: FieldValue{Kind: KindFloat, Float: m.Get(f).Float()}})
+			// A NaN/Inf reading is "no measurement"; it would also poison the
+			// sampler's last-written value, since NaN compares false to everything.
+			if v := m.Get(f).Float(); !math.IsNaN(v) && !math.IsInf(v, 0) {
+				*out = append(*out, Leaf{Name: name, Continuous: true, Value: FieldValue{Kind: KindFloat, Float: v}})
+			}
 		}
 	}
 }

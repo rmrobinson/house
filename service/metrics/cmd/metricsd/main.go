@@ -82,7 +82,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go writer.Run(ctx)
+	// writerDone lets shutdown wait for the writer's final flush; exiting as
+	// soon as the stream loop returns would cut it off.
+	writerDone := make(chan struct{})
+	go func() {
+		defer close(writerDone)
+		writer.Run(ctx)
+	}()
 
 	houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
 	if err != nil {
@@ -98,6 +104,7 @@ func main() {
 
 	conn := bridgeconn.New(logger, houseAddr, tlsCfg)
 	conn.Run(ctx, svc.HandleUpdate, nil)
+	<-writerDone
 
 	logger.Info("shutting down",
 		zap.Int64("points_written", writer.Written()),

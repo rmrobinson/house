@@ -77,8 +77,17 @@ func (s *Service) handleDevice(bridgeID string, d *apiDevice.Device, now time.Ti
 		return
 	}
 
+	traits := Flatten(d)
+	// Reachability lives on Device.Address rather than in a trait, but a
+	// device dropping offline is exactly what a history of it should show.
+	if d.GetAddress() != nil {
+		traits = append(traits, TraitState{Trait: "reachability", Leaves: []Leaf{
+			{Name: "is_reachable", Value: FieldValue{Kind: KindBool, Bool: d.GetAddress().GetIsReachable()}},
+		}})
+	}
+
 	var points []Point
-	for _, ts := range Flatten(d) {
+	for _, ts := range traits {
 		leaves := s.sampler.Filter(d.GetId(), ts.Trait, ts.Leaves, now)
 		if len(leaves) == 0 {
 			continue

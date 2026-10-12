@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -290,6 +291,9 @@ type influxStub struct {
 	status  int
 	lines   []string
 	request *http.Request
+	// rejectSubstr, if set, makes the stub 400 any batch containing it, the
+	// way Influx rejects a whole batch for one malformed line.
+	rejectSubstr string
 }
 
 func (i *influxStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +303,10 @@ func (i *influxStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.request = r
 	if i.status != 0 && i.status/100 != 2 {
 		w.WriteHeader(i.status)
+		return
+	}
+	if i.rejectSubstr != "" && strings.Contains(string(body), i.rejectSubstr) {
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	i.lines = append(i.lines, strings.Split(string(body), "\n")...)
@@ -388,6 +396,89 @@ func TestInfluxWriterDropsRejectedBatch(t *testing.T) {
 	w.Flush(context.Background())
 	assert.Equal(t, 0, w.Pending(), "a rejected batch would be rejected forever")
 	assert.Equal(t, int64(2), w.Dropped())
+}
+
+func TestInfluxWriterIsolatesBadPoint(t *testing.T) {
+	stub := &influxStub{rejectSubstr: "bad"}
+	srv := httptest.NewServer(stub)
+	defer srv.Close()
+
+	w := newWriter(t, srv.URL, 0)
+	bad := testPoint(3)
+	bad.Tags["device_id"] = "bad"
+	w.Write(testPoint(1), testPoint(2), bad, testPoint(4), testPoint(5))
+	w.Flush(context.Background())
+
+	// Only the one malformed point is lost, not its whole batch.
+	assert.Equal(t, 0, w.Pending())
+	assert.Equal(t, int64(1), w.Dropped())
+	assert.Equal(t, int64(4), w.Written())
+	assert.Len(t, stub.sortedLines(), 4)
+}
+
+func TestInfluxWriterKeepsDataOnAuthFailure(t *testing.T) {
+	stub := &influxStub{status: http.StatusUnauthorized}
+	srv := httptest.NewServer(stub)
+	defer srv.Close()
+
+	// A bad token is a config problem; the data is deliverable once fixed.
+	w := newWriter(t, srv.URL, 0)
+	w.Write(testPoint(1), testPoint(2))
+	w.Flush(context.Background())
+	assert.Equal(t, 2, w.Pending())
+	assert.Zero(t, w.Dropped())
+}
+
+func TestPointLineOmitsNonFinite(t *testing.T) {
+	p := Point{
+		Measurement: "state",
+		Tags:        map[string]string{"n": "a\nb"},
+		Fields: map[string]FieldValue{
+			"nan": {Kind: KindFloat, Float: math.NaN()},
+			"inf": {Kind: KindFloat, Float: math.Inf(1)},
+			"ok":  {Kind: KindFloat, Float: 1},
+			"s":   {Kind: KindString, Str: "x\ny"},
+		},
+		Time: time.Unix(1, 0),
+	}
+	assert.Equal(t, `state,n=a\ b ok=1,s="x y" 1000000000`, p.Line())
+
+	p.Fields = map[string]FieldValue{"nan": {Kind: KindFloat, Float: math.NaN()}}
+	assert.Equal(t, "", p.Line(), "a point with no encodable field is not written")
+}
+
+func TestFlattenSkipsNonFinite(t *testing.T) {
+	d := sensorDevice("s1", 600, float32(math.NaN()))
+	for _, ts := range Flatten(d) {
+		if ts.Trait == "air_properties" {
+			assert.NotContains(t, leafMap(ts), "temperature_c")
+			assert.Contains(t, leafMap(ts), "pressure_hpa")
+		}
+	}
+}
+
+func TestServiceRecordsReachability(t *testing.T) {
+	sink := &recordingSink{}
+	s := NewService(zaptest.NewLogger(t), sink, NewSampler(DefaultSampling()), nil)
+
+	d := &apiDevice.Device{Id: "d1", Address: &apiDevice.Device_Address{IsReachable: false}}
+	update := func(reachable bool) *api2.Update {
+		d.Address.IsReachable = reachable
+		return &api2.Update{
+			Action: api2.Update_CHANGED,
+			Update: &api2.Update_DeviceUpdate{DeviceUpdate: &api2.DeviceUpdate{Device: d, DeviceId: "d1", BridgeId: "b1"}},
+		}
+	}
+
+	s.HandleUpdate(update(false))
+	require.Len(t, sink.points, 1)
+	assert.Equal(t, "reachability", sink.points[0].Tags["trait"])
+	assert.Equal(t, FieldValue{Kind: KindBool, Bool: false}, sink.points[0].Fields["is_reachable"])
+
+	s.HandleUpdate(update(false))
+	assert.Len(t, sink.points, 1, "unchanged")
+	s.HandleUpdate(update(true))
+	assert.Len(t, sink.points, 2)
 }
 
 func TestInfluxWriterBoundedBuffer(t *testing.T) {

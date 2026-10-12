@@ -159,51 +159,77 @@ func (w *InfluxWriter) Flush(ctx context.Context) {
 		w.buf = w.buf[n:]
 		w.mu.Unlock()
 
-		retry, err := w.send(ctx, batch)
-		if err == nil {
-			w.written.Add(int64(len(batch)))
-			continue
-		}
-
-		if retry {
-			w.logger.Warn("influx write failed, will retry", zap.Error(err), zap.Int("points", len(batch)))
+		if retry := w.deliver(ctx, batch); len(retry) > 0 {
 			w.mu.Lock()
-			w.buf = append(batch, w.buf...)
+			w.buf = append(retry, w.buf...)
 			w.trimLocked()
 			w.mu.Unlock()
 			return
 		}
-
-		// A request Influx rejected outright (malformed line, unauthorized
-		// bucket) would be rejected again forever and wedge the queue.
-		w.logger.Error("influx rejected write, dropping batch", zap.Error(err), zap.Int("points", len(batch)))
-		w.dropped.Add(int64(len(batch)))
 	}
 }
 
-// send reports whether a failure is worth retrying.
-func (w *InfluxWriter) send(ctx context.Context, lines []string) (retry bool, err error) {
+// deliver sends lines and returns those that should be retried later.
+//
+// A batch Influx rejects as malformed is bisected until the offending line(s)
+// are isolated and dropped: Influx rejects a whole batch for one bad line, and
+// retrying it verbatim would wedge the queue forever.
+func (w *InfluxWriter) deliver(ctx context.Context, lines []string) (retry []string) {
+	res, err := w.send(ctx, lines)
+	switch res {
+	case sendOK:
+		w.written.Add(int64(len(lines)))
+		return nil
+	case sendRetry:
+		w.logger.Warn("influx write failed, will retry", zap.Error(err), zap.Int("points", len(lines)))
+		return lines
+	}
+
+	if len(lines) == 1 {
+		w.logger.Error("influx rejected point, dropping it", zap.Error(err), zap.String("line", lines[0]))
+		w.dropped.Add(1)
+		return nil
+	}
+	mid := len(lines) / 2
+	return append(w.deliver(ctx, lines[:mid]), w.deliver(ctx, lines[mid:])...)
+}
+
+type sendResult int
+
+const (
+	sendOK sendResult = iota
+	// sendRetry covers outages, throttling and anything that looks like a
+	// configuration problem (bad token or bucket): keep the data, since fixing
+	// the config makes it deliverable and the bounded buffer caps the cost.
+	sendRetry
+	// sendRejected means this payload itself is the problem.
+	sendRejected
+)
+
+func (w *InfluxWriter) send(ctx context.Context, lines []string) (sendResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.writeURL, strings.NewReader(strings.Join(lines, "\n")))
 	if err != nil {
-		return false, err
+		return sendRejected, err
 	}
 	req.Header.Set("Authorization", "Token "+w.cfg.Token)
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return true, err
+		return sendRetry, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode/100 == 2 {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return false, nil
+		return sendOK, nil
 	}
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	err = fmt.Errorf("influx returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	// 4xx means our request is wrong, except throttling/timeouts.
-	permanent := resp.StatusCode/100 == 4 && resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode != http.StatusRequestTimeout
-	return !permanent, err
+	switch resp.StatusCode {
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return sendRejected, err
+	}
+	return sendRetry, err
 }

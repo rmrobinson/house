@@ -241,6 +241,10 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 
 	if err := checkVersion(d, req); err != nil {
 		logger.Info("stale command version received", zap.String("command_version", req.GetVersion()), zap.String("device_version", d.GetVersion()))
+		// Recorded, like the async path's CompleteCommand does: a version
+		// conflict means two writers raced and is worth seeing in history.
+		failure, _ := status.FromError(err)
+		a.svc.publishCommandEvent(req, failure, "")
 		return nil, err
 	}
 

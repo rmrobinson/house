@@ -560,6 +560,9 @@ func TestExecuteCommand_StaleVersionRejectedBeforeDispatch(t *testing.T) {
 	current.Version = "v2"
 	svc.UpdateDevice(current)
 
+	sink := svc.updates.NewSink()
+	defer sink.Close()
+
 	d, err := svc.API().ExecuteCommand(context.Background(), &command.Command{
 		DeviceId: "d1",
 		Version:  "v1", // stale
@@ -568,6 +571,11 @@ func TestExecuteCommand_StaleVersionRejectedBeforeDispatch(t *testing.T) {
 	assert.Nil(t, d)
 	assert.ErrorIs(t, err, ErrVersionMismatch)
 	assert.False(t, dispatched, "handler must not be called when the version check fails")
+
+	// A conflict is recorded, matching the async path.
+	ev := (<-sink.Messages()).(*api2.Update).GetCommandEvent()
+	require.NotNil(t, ev)
+	assert.Equal(t, int32(codes.FailedPrecondition), ev.GetResult().GetCode())
 }
 
 func TestExecuteCommandAsync_StaleVersionReportedAsCommandUpdate(t *testing.T) {

@@ -50,6 +50,8 @@ func DefaultSampling() SamplingConfig {
 			"radon_short_term_bq_m3":         5,
 			"power_w":                        1,
 			"capacity_remaining_pct":         1,
+			// Drifts on every tick of normal playback.
+			"playback_position_s": 30,
 		},
 	}
 }

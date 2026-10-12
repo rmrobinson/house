@@ -4,6 +4,7 @@
 package metrics
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,10 +54,13 @@ type Point struct {
 
 // Influx line protocol escapes differ by position (measurement, tag
 // key/value and field key, string field value).
+//
+// Newlines are replaced with spaces everywhere: one terminates a line, and a
+// single malformed line makes Influx reject its whole batch.
 var (
-	measurementEscaper = strings.NewReplacer(",", `\,`, " ", `\ `)
-	keyEscaper         = strings.NewReplacer(",", `\,`, "=", `\=`, " ", `\ `)
-	stringEscaper      = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	measurementEscaper = strings.NewReplacer(",", `\,`, " ", `\ `, "\n", `\ `, "\r", `\ `)
+	keyEscaper         = strings.NewReplacer(",", `\,`, "=", `\=`, " ", `\ `, "\n", `\ `, "\r", `\ `)
+	stringEscaper      = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ", "\r", " ")
 )
 
 // Line encodes p as line protocol (nanosecond precision), or "" if p has no
@@ -64,9 +68,19 @@ var (
 // sorted key order so the output is deterministic. Tags with empty values are
 // omitted, since line protocol rejects them.
 func (p Point) Line() string {
-	if len(p.Fields) == 0 {
+	// Non-finite floats have no line-protocol encoding and Influx rejects the
+	// whole batch containing one, so they are left out.
+	fieldKeys := make([]string, 0, len(p.Fields))
+	for k, v := range p.Fields {
+		if v.Kind == KindFloat && (math.IsNaN(v.Float) || math.IsInf(v.Float, 0)) {
+			continue
+		}
+		fieldKeys = append(fieldKeys, k)
+	}
+	if len(fieldKeys) == 0 {
 		return ""
 	}
+	sort.Strings(fieldKeys)
 
 	var b strings.Builder
 	b.WriteString(measurementEscaper.Replace(p.Measurement))
@@ -86,11 +100,6 @@ func (p Point) Line() string {
 	}
 
 	b.WriteByte(' ')
-	fieldKeys := make([]string, 0, len(p.Fields))
-	for k := range p.Fields {
-		fieldKeys = append(fieldKeys, k)
-	}
-	sort.Strings(fieldKeys)
 	for i, k := range fieldKeys {
 		if i > 0 {
 			b.WriteByte(',')
