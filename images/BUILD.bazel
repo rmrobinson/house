@@ -126,3 +126,8 @@ bridge_image(
     name = "notificationd",
     binary = "//service/notification/cmd/notificationd",
 )
+
+bridge_image(
+    name = "metricsd",
+    binary = "//service/metrics/cmd/metricsd",
+)
