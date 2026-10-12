@@ -115,9 +115,14 @@ degrades anything else:
   `action` arriving mid-command is counted, not lost.
 - Commands to one device queue, and a queued command whose caller has given up is dropped before it
   is published, so an unresponsive device never accumulates stale commands.
-- A write waits 8s for the device's echo (`writeTimeout`), above policyd's 15s command deadline
-  being the outer bound. A timeout means "not confirmed", not "failed": the command may still take
-  effect. Confirmations slower than 2s and timeouts are logged, naming the device.
+- zigbee2mqtt does not retain device state, so on startup each newly discovered *mains-powered*
+  light/switch/plug is sent one `/get` (spaced 200ms apart, best effort) to learn its real state;
+  without it an idle bulb reads as off at 0% until it next changes by itself, which skews relative
+  brightness commands and any policy reading the level. Battery sensors are never queried.
+- A write waits 8s for the device's echo (`writeTimeout`), deliberately below policyd's 15s command
+  deadline so the caller gets the bridge's "did not confirm" error rather than a bare deadline. A
+  timeout means "not confirmed", not "failed": the command may still take effect. Confirmations
+  slower than 2s and timeouts are logged, naming the device.
 
   **`illuminance_lux` is preferred over `illuminance`** - confirmed against a real Philips Hue
   motion sensor (9290012607) whose exposes explicitly document `"illuminance"` as "Raw measured

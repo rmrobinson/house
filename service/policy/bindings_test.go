@@ -136,6 +136,27 @@ func TestBindingsErrorSurfacesToScript(t *testing.T) {
 	assert.NoError(t, err, "script pcalls the failing binding, so DoString itself should succeed")
 }
 
+// A script that pcalls a failing binding must be able to read WHY it failed (e.g. to put the
+// cause in its own error), not just that it did - tostring on the caught value used to give
+// "userdata: 0x...".
+func TestBindingsCaughtErrorIsReadableViaTostring(t *testing.T) {
+	home := newFakeHomeAPI()
+	home.sensorErr = assert.AnError
+
+	err := runScriptForTest(t, home, `
+		local ok, e = pcall(function() return home.getSensor("temp.kitchen") end)
+		assert(ok == false)
+		local msg = tostring(e)
+		assert(not string.find(msg, "userdata"), "unreadable error: " .. msg)
+		assert(string.find(msg, "assert.AnError"), "cause missing from: " .. msg)
+		error("wrapped: " .. msg)
+	`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "wrapped:")
+	assert.Contains(t, err.Error(), assert.AnError.Error())
+	assert.Nil(t, asBindingError(err), "the script's own error() is still its own, not a binding error")
+}
+
 func TestBindingsUnrecoveredErrorIsIdentifiableAsBindingError(t *testing.T) {
 	home := newFakeHomeAPI()
 	home.sensorErr = assert.AnError

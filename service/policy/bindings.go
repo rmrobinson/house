@@ -140,7 +140,35 @@ func (t *bindingErrorTag) Error() string { return t.err.Error() }
 func raiseBindingError(L *lua.LState, err error) {
 	ud := L.NewUserData()
 	ud.Value = &bindingErrorTag{err: err}
+	L.SetMetatable(ud, bindingErrorMetatable(L))
 	L.Error(ud, 1)
+}
+
+// bindingErrorTypeName is the registry key for the metatable shared by every binding error value
+// in one Lua state.
+const bindingErrorTypeName = "policy.bindingError"
+
+// bindingErrorMetatable returns the metatable that makes a binding error readable from a script.
+// Without it, a script that catches a failing home.* call with pcall gets an opaque userdata and
+// tostring(err) prints only "userdata: 0x...", so the only thing it can report about the failure
+// is that one happened - not "device did not confirm command in time". runScript is unaffected:
+// it still identifies a binding failure through ud.Value (see asBindingError), never the string.
+func bindingErrorMetatable(L *lua.LState) *lua.LTable {
+	if mt, ok := L.GetTypeMetatable(bindingErrorTypeName).(*lua.LTable); ok {
+		return mt
+	}
+	mt := L.NewTypeMetatable(bindingErrorTypeName)
+	L.SetField(mt, "__tostring", L.NewFunction(func(L *lua.LState) int {
+		if ud, ok := L.Get(1).(*lua.LUserData); ok {
+			if tag, ok := ud.Value.(*bindingErrorTag); ok {
+				L.Push(lua.LString(tag.err.Error()))
+				return 1
+			}
+		}
+		L.Push(lua.LString("binding error"))
+		return 1
+	}))
+	return mt
 }
 
 // asBindingError returns the underlying error if err (as returned by
