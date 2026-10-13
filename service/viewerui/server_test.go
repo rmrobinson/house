@@ -454,7 +454,7 @@ func TestEventsMediaUpdateSkipsNoopButRefreshesOnChange(t *testing.T) {
 			t.Fatal("no SSE message for unchanged update")
 		}
 	}
-	assert.Contains(t, gotUnchanged, `id="device-`+playing.GetId()+`"`, "the device row itself still refreshes")
+	assert.Contains(t, gotUnchanged, `id="device-`+domID(playing.GetId())+`"`, "the device row itself still refreshes")
 	assert.NotContains(t, gotUnchanged, `id="room-nowplaying-r1"`, "unchanged media signature must not re-push now playing")
 	assert.NotContains(t, gotUnchanged, `afterbegin:#event-log"><div>Kitchen Speaker:`, "unchanged media signature must not re-log an event")
 
@@ -628,6 +628,36 @@ func TestRoomDetailShowsAirQualityTilesOnlyWhenReported(t *testing.T) {
 	assert.NotContains(t, body, ">Radon<")
 }
 
+func TestDomIDEscapesWhatSelectorsCannotHold(t *testing.T) {
+	assert.Equal(t, "zigbee-0017880100b56fa7", domID("zigbee-0017880100b56fa7"), "already-safe IDs are untouched")
+	assert.Equal(t, "54a91131-fc19-4d13-b46f-18b36772f531_3a2", domID("54a91131-fc19-4d13-b46f-18b36772f531:2"))
+	assert.Equal(t, "a_5fb", domID("a_b"), "underscore is the escape character, so it is escaped too")
+	assert.NotEqual(t, domID("a:b"), domID("a_3ab"), "distinct IDs never collide")
+	assert.Equal(t, "10_2e0_2e0_2e1", domID("10.0.0.1"))
+}
+
+// A bridge whose device IDs contain ":" (monop-amp: "<bridge-uuid>:2") made
+// every control on its rows throw in htmx - "#device-...:2" is not a valid
+// selector - so nothing could be commanded from the UI.
+func TestDeviceRowWithColonInIDHasSelectorSafeIDsAndTargets(t *testing.T) {
+	d := lamp(false)
+	d.Id = "54a91131-fc19-4d13-b46f-18b36772f531:2"
+	view := deviceToView(d)
+
+	var row, oob strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&row, "device_row", view))
+	require.NoError(t, fragments.ExecuteTemplate(&oob, "device_row_oob", view))
+
+	const safe = "device-54a91131-fc19-4d13-b46f-18b36772f531_3a2"
+	assert.Contains(t, row.String(), `<tr id="`+safe+`"`)
+	assert.Contains(t, row.String(), `hx-target="#`+safe+`"`, "the control targets the row by its safe id")
+	assert.Contains(t, oob.String(), `id="`+safe+`" hx-swap-oob="true"`, "live pushes match the same id")
+	assert.Contains(t, row.String(), `hx-post="/devices/54a91131-fc19-4d13-b46f-18b36772f531:2/commands"`,
+		"the command URL keeps the real device ID")
+	assert.NotContains(t, row.String()+oob.String(), `#device-54a91131-fc19-4d13-b46f-18b36772f531:2`)
+	assert.NotContains(t, row.String()+oob.String(), `id="device-54a91131-fc19-4d13-b46f-18b36772f531:2"`)
+}
+
 func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
 	var sb strings.Builder
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row_oob", deviceToView(cam())))
@@ -733,7 +763,7 @@ func TestDeviceRowRendersMediaControlsGatedOnSkipCapability(t *testing.T) {
 
 	assert.Contains(t, body, `[ || ]`, "playing shows the pause icon")
 	assert.Contains(t, body, `hx-vals='{"playback": "pause"}'`)
-	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
+	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen_20Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
 	assert.Contains(t, body, ` disabled aria-label="Kitchen Speaker next"`, "can_skip_forward false disables next")
 	assert.NotContains(t, body, ` disabled aria-label="Kitchen Speaker previous"`, "can_skip_backward true enables previous")
 	assert.Contains(t, body, `class="volume" name="volume" min="0" max="16" step="1" value="7"`)
