@@ -191,7 +191,13 @@ func (w *InfluxWriter) deliver(ctx context.Context, lines []string) (retry []str
 		return nil
 	}
 	mid := len(lines) / 2
-	return append(w.deliver(ctx, lines[:mid]), w.deliver(ctx, lines[mid:])...)
+	// A fresh slice, not append onto the first half's result: that result may
+	// alias lines[:mid] and appending would write into the caller's array.
+	first := w.deliver(ctx, lines[:mid])
+	second := w.deliver(ctx, lines[mid:])
+	retry = make([]string, 0, len(first)+len(second))
+	retry = append(retry, first...)
+	return append(retry, second...)
 }
 
 type sendResult int

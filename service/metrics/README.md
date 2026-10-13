@@ -109,6 +109,11 @@ Bucket `house`, two measurements:
   before a rename or room move keep the old values.
 - `Command.origin` is advisory and unauthenticated; don't use it for access
   control.
+- A `command` point exists only if the bridge that executed the command runs
+  code that emits `CommandEvent`: each bridge publishes its own events, and
+  housed only relays them. Until a bridge is rebuilt its commands are simply
+  absent, while its state is recorded regardless. A command rejected before it
+  reaches a bridge's handler (unknown device, malformed) is not recorded.
 
 ## History backfill
 
