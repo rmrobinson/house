@@ -1,0 +1,73 @@
+metricsd:
+  # Address of the housed process: metricsd reads its BridgeService
+  # StreamUpdates (state changes and command events) and HouseService
+  # ListDeviceLinks (device -> room tags). Read-only; no commands are issued.
+  house_addr: housed.example.com:17000
+
+  # How often device->room links are re-read. A device moved between rooms
+  # keeps its old room tag on points already written.
+  room_refresh_interval: 5m
+
+  influx:
+    url: http://influxdb.example.com:8086
+    org: falnet
+    bucket: house
+    # Keep the token out of the tracked file: resolved from a sibling
+    # metricsd.secrets.yaml, same "!secret" convention as other services.
+    token: !secret influx_token
+    flush_interval: 5s
+    # Points held while Influx is unreachable. Past this the oldest are
+    # dropped (and counted) rather than slowing the update stream.
+    max_buffered: 100000
+
+  # Devices that record their own history (Airthings BLE sensors) are asked
+  # for it on this schedule and the result written as source=backfill, so
+  # the bridge can poll them rarely. Resumes from the newest backfilled
+  # sample already in Influx. Keep interval well under the device's
+  # max_window (24h for Airthings) or samples age out before collection.
+  backfill:
+    enabled: true
+    interval: 12h
+    initial_delay: 1m
+    timeout: 3m
+
+  # State that is never recorded (commands always are). Network clients -
+  # what the omada bridge reports, as the connected_device detail - are
+  # excluded by default as noise; set `details: []` to record them.
+  exclude:
+    details: [connected_device]   # Device.details oneof field names
+    bridge_ids: []
+    device_ids: []
+
+  # Live values are thinned before writing: a field is written when it is
+  # first seen, moves by at least its deadband from the last *written*
+  # value, or has gone `heartbeat` unwritten (so a gap means "no data", not
+  # "no change"). Bools/enums are written on any change. Backfilled history
+  # and commands are never filtered. Every key below is optional; the values
+  # shown are the built-in defaults.
+  sampling:
+    mode: deadband        # or: none (write every live value)
+    heartbeat: 5m
+    default_deadband: 0   # numeric fields with no entry below: any change
+    # Keyed by proto leaf name, or "<trait>.<leaf>" to scope to one trait
+    # (which wins over the bare leaf name).
+    deadband:
+      temperature_c: 0.1
+      temperature.value: 0.1
+      humidity_percentage: 1
+      pressure_hpa: 1
+      co2_ppm: 10
+      volatile_organic_compounds_ppb: 10
+      radon_bq_m3: 5
+      radon_short_term_bq_m3: 5
+      power_w: 1
+      capacity_remaining_pct: 1
+      playback_position_s: 30
+
+  # Optional: mutual TLS to house, same keys as viewerui.tls.*. Leave blank
+  # for plaintext gRPC.
+  tls:
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    server_name: ""

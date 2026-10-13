@@ -43,6 +43,13 @@ import (
 // that commands two devices in turn can still finish.
 const commandTimeout = 15 * time.Second
 
+// commandOrigin is stamped on every command this adapter issues so it can be
+// told apart from UI-driven commands on the bridge update stream. It names the
+// daemon, not the individual policy: HomeAPI calls carry no policy identity
+// today, so a per-policy "policy:<id>" origin would need that plumbed through
+// policy.HomeAPI first.
+const commandOrigin = "policyd"
+
 // ErrNotReady is returned by SetLight and SetState - which must reach the
 // connected endpoint to execute a command - when called before Start has
 // run or while the connection to addr is down. GetLight and GetLastKnown
@@ -320,6 +327,8 @@ func (a *Adapter) runCommand(cmd *command.Command) error {
 
 	cmdCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
+
+	cmd.Origin = commandOrigin
 
 	d, err := client.ExecuteCommand(cmdCtx, cmd)
 	if err != nil {

@@ -38,6 +38,7 @@ go_test(
     embed = [":facade"],
     deps = [
         "//api",
+        "//api/command",
         "//api/device",
         "//service/bridge",
         "//service/lib/grpcutil",
