@@ -167,11 +167,12 @@ func (onOffBuilder) applyCommand(ctx context.Context, m *mqttConn, friendlyName 
 	if on {
 		state = zigbeeStateOn
 	}
-	if err := m.WriteState(ctx, friendlyName, map[string]any{"state": state}); err != nil {
-		return err
-	}
+	// The commanded state goes on the device BEFORE the write, and is published the moment the
+	// command is accepted (see networkConn.applyCommand), not once the device confirms - so a
+	// second request that arrives while this one is still in flight decides from what was asked
+	// for, not from a state that is seconds behind.
 	d.GetGeneric().OnOff.State.IsOn = on
-	return nil
+	return m.WriteState(ctx, friendlyName, map[string]any{"state": state})
 }
 
 // --- Light ---
@@ -336,26 +337,26 @@ func (lb lightBuilder) applyCommand(ctx context.Context, m *mqttConn, friendlyNa
 		if on {
 			state = zigbeeStateOn
 		}
-		if err := m.WriteState(ctx, friendlyName, map[string]any{"state": state}); err != nil {
-			return err
-		}
+		// Commanded state first, published on acceptance - see onOffBuilder.applyCommand.
 		l.OnOff.State.IsOn = on
 		zeroPowerIfOff(l)
-		return nil
+		return m.WriteState(ctx, friendlyName, map[string]any{"state": state})
 
 	case cmd.GetBrightnessAbsolute() != nil || cmd.GetBrightnessRelative() != nil:
 		if l.Brightness == nil {
 			return bridge.ErrUnsupportedCommand
 		}
+		// pct is resolved from the level BEFORE it is overwritten below: a relative step is
+		// "current level + delta", and reading it after the update would apply the delta twice.
+		// Because the level is now the commanded one rather than the last confirmed one, two +10%
+		// steps sent while the first is still unconfirmed add up to +20%, as the person pressing
+		// expected, instead of both being computed from the same stale level.
 		pct := resolveBrightnessPercent(cmd, l.Brightness.State.Level)
 		brightness := percentToBrightness(pct, lb.brightnessMax)
-		if err := m.WriteState(ctx, friendlyName, map[string]any{"brightness": brightness}); err != nil {
-			return err
-		}
 		l.Brightness.State.Level = pct
 		l.OnOff.State.IsOn = pct > 0
 		zeroPowerIfOff(l)
-		return nil
+		return m.WriteState(ctx, friendlyName, map[string]any{"brightness": brightness})
 
 	case cmd.GetColour() != nil:
 		return applyColourCommand(ctx, m, friendlyName, l, cmd.GetColour())
