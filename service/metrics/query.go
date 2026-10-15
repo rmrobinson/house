@@ -24,10 +24,11 @@ type WatermarkStore interface {
 // on disk, means a restarted or relocated metricsd resumes exactly where the
 // data says it left off.
 type InfluxQuerier struct {
-	queryURL string
-	bucket   string
-	token    string
-	client   *http.Client
+	queryURL     string
+	bucket       string
+	rollupBucket string
+	token        string
+	client       *http.Client
 }
 
 // NewInfluxQuerier creates a querier from the same config the writer uses.
@@ -39,13 +40,18 @@ func NewInfluxQuerier(cfg InfluxConfig) (*InfluxQuerier, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	rollup := cfg.RollupBucket
+	if rollup == "" {
+		rollup = DefaultRollupBucket
+	}
 	q := url.Values{}
 	q.Set("org", cfg.Org)
 	return &InfluxQuerier{
-		queryURL: strings.TrimRight(cfg.URL, "/") + "/api/v2/query?" + q.Encode(),
-		bucket:   cfg.Bucket,
-		token:    cfg.Token,
-		client:   client,
+		queryURL:     strings.TrimRight(cfg.URL, "/") + "/api/v2/query?" + q.Encode(),
+		bucket:       cfg.Bucket,
+		rollupBucket: rollup,
+		token:        cfg.Token,
+		client:       client,
 	}, nil
 }
 

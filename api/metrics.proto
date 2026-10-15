@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package faltung.house.api;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/rmrobinson/house/api";
+
+// GetSeriesRequest asks for one numeric attribute of one device over a time
+// range, thinned to at most max_points for charting.
+message GetSeriesRequest {
+  string device_id = 1;
+  // attribute names the value as "<trait>.<leaf>" - the trait's field name on
+  // the device message followed by the leaf's name within its trait state,
+  // with no leading device-kind segment. This is the same key convention as
+  // the policy engine's GetState, e.g. "air_quality.co2_ppm" or
+  // "air_properties.temperature_c". A nested leaf keeps its own dots
+  // ("light.colour.hue"): only the first dot separates trait from leaf.
+  string attribute = 2;
+  // start is required.
+  google.protobuf.Timestamp start = 3;
+  // end defaults to now when unset.
+  google.protobuf.Timestamp end = 4;
+  // max_points bounds the number of points returned; the series is
+  // downsampled (mean per window) to fit. Zero means a server default, and
+  // the server caps it.
+  int32 max_points = 5;
+}
+
+message SeriesPoint {
+  google.protobuf.Timestamp time = 1;
+  double value = 2;
+}
+
+message GetSeriesResponse {
+  // points are in ascending time order. Empty (not an error) when the device
+  // has no recorded values for the attribute in the range - including when
+  // the attribute isn't numeric.
+  repeated SeriesPoint points = 1;
+  // resolution is the width of the window each point averages over. Ranges
+  // that reach back into the long-term (hourly) store can't be finer than
+  // one hour regardless of max_points.
+  google.protobuf.Duration resolution = 2;
+}
+
+// MetricsService serves recorded device history. It is read-only; writes go
+// through metricsd's own consumption of the update stream.
+service MetricsService {
+  rpc GetSeries(GetSeriesRequest) returns (GetSeriesResponse) {}
+}

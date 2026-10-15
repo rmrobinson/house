@@ -26,6 +26,9 @@ type InfluxConfig struct {
 	Org    string
 	Bucket string
 	Token  string
+	// RollupBucket is the long-term hourly bucket the downsample task fills;
+	// only the series querier reads it. Default "house_1h".
+	RollupBucket string
 
 	// FlushInterval is how often buffered points are sent. Default 5s.
 	FlushInterval time.Duration

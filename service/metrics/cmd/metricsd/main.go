@@ -10,12 +10,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
@@ -32,6 +36,8 @@ func main() {
 
 	viper.SetConfigType("yaml")
 	viper.SetDefault("metricsd.room_refresh_interval", "5m")
+	viper.SetDefault("metricsd.listen_port", 17050)
+	viper.SetDefault("metricsd.influx.rollup_bucket", metrics.DefaultRollupBucket)
 	viper.SetDefault("metricsd.influx.flush_interval", "5s")
 	viper.SetDefault("metricsd.influx.max_buffered", 100000)
 	viper.SetDefault("metricsd.backfill.enabled", true)
@@ -124,6 +130,10 @@ func main() {
 			return nil
 		})
 
+	if err := serveSeries(ctx, logger, influxCfg); err != nil {
+		logger.Fatal("unable to serve metrics API", zap.Error(err))
+	}
+
 	logger.Info("recording house metrics",
 		zap.String("house_addr", houseAddr),
 		zap.String("sampling_mode", string(sampling.Mode)),
@@ -151,6 +161,73 @@ func main() {
 	logger.Info("shutting down",
 		zap.Int64("points_written", writer.Written()),
 		zap.Int64("points_dropped", writer.Dropped()))
+}
+
+// serveSeries starts the MetricsService gRPC server in the background and
+// stops it when ctx ends. Reads use metricsd.influx.read_token when set (it
+// must be able to read both the raw and rollup buckets); otherwise the write
+// token is tried, which only reaches the raw bucket.
+func serveSeries(ctx context.Context, logger *zap.Logger, influxCfg metrics.InfluxConfig) error {
+	readCfg := influxCfg
+	readCfg.RollupBucket = viper.GetString("metricsd.influx.rollup_bucket")
+	if t := viper.GetString("metricsd.influx.read_token"); t != "" {
+		readCfg.Token = t
+	}
+	querier, err := metrics.NewInfluxQuerier(readCfg)
+	if err != nil {
+		return err
+	}
+
+	// Serving TLS reuses metricsd.tls.*: the same cert authenticates the
+	// dial to house and this listener. Clients are verified against
+	// client_ca_file, falling back to ca_file (one CA signs every service).
+	// Without TLS the API is unauthenticated, so it is only reachable from
+	// this host.
+	host := "127.0.0.1"
+	var opts []grpc.ServerOption
+	if certFile := viper.GetString("metricsd.tls.cert_file"); certFile != "" {
+		host = ""
+		caFile := viper.GetString("metricsd.tls.client_ca_file")
+		if caFile == "" {
+			caFile = viper.GetString("metricsd.tls.ca_file")
+		}
+		if caFile == "" {
+			return fmt.Errorf("metricsd.tls.cert_file is set; metricsd.tls.client_ca_file (or ca_file) is required to verify clients")
+		}
+		creds, err := grpcutil.ServerTLS(grpcutil.ServerTLSConfig{
+			CertFile:     certFile,
+			KeyFile:      viper.GetString("metricsd.tls.key_file"),
+			ClientCAFile: caFile,
+		})
+		if err != nil {
+			return fmt.Errorf("configure server TLS: %w", err)
+		}
+		opts = append(opts, creds)
+	}
+
+	port := viper.GetInt("metricsd.listen_port")
+	if host != "" {
+		logger.Warn("metricsd.tls.cert_file is unset; serving the metrics API unauthenticated on loopback only",
+			zap.Int("port", port))
+	}
+	lis, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return fmt.Errorf("listen on port %d: %w", port, err)
+	}
+
+	srv := grpc.NewServer(opts...)
+	api2.RegisterMetricsServiceServer(srv, metrics.NewServer(logger, querier))
+	go func() {
+		<-ctx.Done()
+		srv.GracefulStop()
+	}()
+	go func() {
+		logger.Info("serving metrics API", zap.String("address", lis.Addr().String()))
+		if err := srv.Serve(lis); err != nil {
+			logger.Error("metrics API server error", zap.Error(err))
+		}
+	}()
+	return nil
 }
 
 // samplingConfig layers metricsd.sampling.* over the plan's defaults, so a
