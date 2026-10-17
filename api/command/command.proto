@@ -78,5 +78,6 @@ message Command {
     faltung.house.api.command.SkipBackward skip_backward = 128;
     faltung.house.api.command.Input input = 129;
     faltung.house.api.command.AudioOutput audio_output = 130;
+    faltung.house.api.command.PlayMedia play_media = 131;
   }
 }

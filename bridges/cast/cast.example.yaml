@@ -39,5 +39,18 @@ cast:
   # Optional: proxies album/show art so dashboard clients never fetch a
   # remote CDN directly. Omit both to leave art URLs pointing at the
   # original upstream (Google/app CDN) address instead.
-  art_base_url: "http://192.168.1.50:17012" # this bridge's own LAN address
-  art_listen_port: 17012
+  art_base_url: "http://192.168.1.50:17023" # this bridge's own LAN address
+  art_listen_port: 17023 # defaults: bridge 17021, media 17022, art 17023
+
+  # Optional: serves the files in this directory over plain HTTP at
+  # http://<this host>:<media_listen_port>/<file>, so a PlayMedia command's
+  # content_url can point at a copy on the LAN. The speaker fetches the URL
+  # itself, so once playback has started (and with repeat on) it keeps going
+  # through an internet outage. Starting playback with the internet already
+  # down also worked on a Google Home Mini (the media receiver app may have
+  # been cached on the device; a cold start after long idle is unverified).
+  # Omit media_dir to not serve anything. media_listen_port must differ from
+  # bridge.listen_port and art_listen_port (the bridge refuses to start
+  # otherwise), and from any other service on the same host.
+  media_dir: ""
+  media_listen_port: 17022

@@ -52,6 +52,7 @@ type castSession interface {
 	SetVolumeLevel(ctx context.Context, level float64) error
 	SetMuted(ctx context.Context, muted bool) error
 	LaunchApp(ctx context.Context, appID string) error
+	LoadMedia(ctx context.Context, req castctrl.LoadRequest) error
 }
 
 // castDevice is one configured device's static identity plus its live

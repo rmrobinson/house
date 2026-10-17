@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/device"
@@ -52,7 +53,10 @@ func (s *fakeHouseServer) SetHouseMode(ctx context.Context, req *api2.SetHouseMo
 		return nil, s.setErr
 	}
 	s.building.State.Mode = req.GetMode()
-	return s.building, nil
+	// A clone, not s.building itself: gRPC marshals the response after this
+	// returns (and the lock is released), while another handler may be
+	// marshaling or mutating the same building.
+	return proto.Clone(s.building).(*api2.Building), nil
 }
 
 // linkDevice records deviceID as linked to a room named roomName, creating
@@ -94,7 +98,13 @@ func (s *fakeHouseServer) ListRooms(req *api2.ListRoomsRequest, stream api2.Hous
 func (s *fakeHouseServer) StreamHouseUpdates(req *api2.StreamHouseUpdatesRequest, stream api2.HouseService_StreamHouseUpdatesServer) error {
 	s.mu.Lock()
 	err := s.streamErr
-	building := s.building
+	// Cloned under the lock: stream.Send marshals the update's State after the
+	// lock is released, so sharing s.building's State would race with
+	// SetHouseMode mutating it.
+	var building *api2.Building
+	if s.building != nil {
+		building = proto.Clone(s.building).(*api2.Building)
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return err
@@ -274,6 +284,16 @@ func TestAdapterSetHouseStateModeCallsSetHouseMode(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	a.Start(ctx, engine)
+
+	// Wait for the stream's initial snapshot ("away") to be applied before
+	// changing the mode. The fake stream sends only that one snapshot, so if
+	// it landed after SetHouseState had cached the SetHouseMode response it
+	// would regress the cache to "away" (production publishes a follow-up
+	// update after a mode change, which converges; this fake does not).
+	require.Eventually(t, func() bool {
+		mode, err := a.GetHouseState("mode")
+		return err == nil && mode == "away"
+	}, 2*time.Second, 10*time.Millisecond, "the stream's first BuildingUpdate should be applied")
 
 	require.NoError(t, a.SetHouseState("mode", "home"))
 

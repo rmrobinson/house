@@ -32,9 +32,14 @@ const (
 	TypeReceiverStatus = "RECEIVER_STATUS"
 	TypeSetVolume      = "SET_VOLUME"
 	TypeLaunch         = "LAUNCH"
+	// TypeLaunchStatus is the progress message a device sends while an app
+	// launches. Its "status" is a string (e.g. "USER_REQUESTED"), not the
+	// object RECEIVER_STATUS carries, and it can reuse LAUNCH's requestId.
+	TypeLaunchStatus = "LAUNCH_STATUS"
 
 	TypeMediaStatus = "MEDIA_STATUS"
 	TypeLoad        = "LOAD"
+	TypeQueueLoad   = "QUEUE_LOAD"
 	TypePlay        = "PLAY"
 	TypePause       = "PAUSE"
 	TypeStop        = "STOP"
@@ -50,6 +55,11 @@ const (
 	TypeLoadFailed     = "LOAD_FAILED"
 	TypeLaunchError    = "LAUNCH_ERROR"
 )
+
+// DefaultMediaReceiverAppID is the receiver app ID of Google's Default Media
+// Receiver, which plays any URL it is sent a LOAD for with no custom app
+// behind it. LoadMedia launches it when the running app isn't already it.
+const DefaultMediaReceiverAppID = "CC1AD845"
 
 // supportedMediaCommands bitmask values, per
 // developers.google.com/cast/docs/media/messages.

@@ -11,6 +11,7 @@ go_library(
         "history.go",
         "mute.go",
         "onoff.go",
+        "playmedia.go",
         "temperature.go",
         "thermostatmode.go",
         "time.go",
