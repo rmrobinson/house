@@ -1,7 +1,8 @@
 metricsd:
   # Address of the housed process: metricsd reads its BridgeService
   # StreamUpdates (state changes and command events) and HouseService
-  # ListDeviceLinks (device -> room tags). Read-only; no commands are issued.
+  # ListBuildings/ListRooms (device -> room tags and the room name in each
+  # device_label). Read-only; no commands are issued.
   house_addr: housed.example.com:17000
 
   # How often device->room links are re-read. A device moved between rooms

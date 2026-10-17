@@ -32,6 +32,7 @@ go_test(
     srcs = [
         "backfill_test.go",
         "metrics_test.go",
+        "rooms_test.go",
     ],
     embed = [":metrics"],
     deps = [

@@ -86,8 +86,10 @@ separate read-only `metricsd-grafana` token for dashboards, and
 
 - `BridgeService.StreamUpdates` — device state, plus `CommandEvent`s for every
   command a bridge processed (see `api/bridge.proto`).
-- `HouseService.ListDeviceLinks` — refreshed every `room_refresh_interval` to
-  tag points with their room.
+- `HouseService.ListBuildings` / `ListRooms` — scanned every
+  `room_refresh_interval` to tag points with their room. This is the same
+  lookup the policy engine's `home.getDeviceRoom` uses, done once for every
+  device per refresh.
 
 It issues no commands and writes nothing back to house.
 
@@ -97,7 +99,7 @@ Bucket `house`, two measurements:
 
 | Measurement | Tags | Fields |
 |---|---|---|
-| `state` | `bridge_id`, `device_id`, `device_name`, `room_id`, `trait`, `source` (`live`) | one field per numeric/bool/enum leaf of the trait's `State`, e.g. `co2_ppm`, `temperature_c`, `power_w` |
+| `state` | `bridge_id`, `device_id`, `device_name`, `device_label`, `room_id`, `trait`, `source` (`live`) | one field per numeric/bool/enum leaf of the trait's `State`, e.g. `co2_ppm`, `temperature_c`, `power_w` |
 | `command` | `bridge_id`, `device_id`, `command_type`, `origin` | `outcome` (gRPC code), `detail` (JSON command body), `command_id`, `resulting_version` |
 
 - One `state` point per trait per update, tagged `trait=air_quality`,
@@ -106,8 +108,16 @@ Bucket `house`, two measurements:
 - Strings, lists, timestamps and trait `Attributes` are not written; a
   sensor's `Metadata` is skipped as bookkeeping.
 - Bools are written as booleans, enums as their integer value.
-- `device_name` and `room_id` are resolved at write time; points written
-  before a rename or room move keep the old values.
+- `device_label` is the name to show on a chart: the device's name followed
+  by its room in parentheses, e.g. `Airthings Wave Plus (Office)` - the same
+  form the policy engine's notifications use. Device names alone aren't
+  unique (two Wave Plus sensors are both "Airthings Wave Plus"), so group
+  charts by `device_id`/`device_label`, not `device_name`. A device in no room
+  is just its name, and one with no name falls back to its ID. `device_name`
+  is still written unchanged.
+- `device_name`, `device_label` and `room_id` are resolved at write time;
+  points written before a rename or room move - and all points written
+  before `device_label` existed - keep the old values (or have none).
 - `Command.origin` is advisory and unauthenticated; don't use it for access
   control.
 - A `command` point exists only if the bridge that executed the command runs
