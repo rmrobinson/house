@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -43,7 +44,31 @@ const (
 	historyAttempts = 3
 	// historyRetryDelay lets the adapter and the sensor settle between attempts.
 	historyRetryDelay = 2 * time.Second
+
+	// scanTimeout bounds how long Refresh listens for one sensor to advertise. A sensor that is
+	// out of range is simply never heard, so without a bound it would hold the whole refresh (and
+	// refreshLock, which GetHistory also needs) until it happened to be.
+	scanTimeout = 30 * time.Second
+	// readTimeout bounds connecting to a found sensor and reading its current values.
+	readTimeout = 30 * time.Second
+	// refreshAttempts is how many times Refresh tries one sensor before moving on to the next. A
+	// missed refresh is otherwise a whole refresh_interval of lost data.
+	refreshAttempts = 2
 )
+
+// retryable reports whether a failed BLE attempt is worth repeating straight away. A timeout is not:
+// it has already cost the full window, and the next refresh is the better time to try again.
+func retryable(err error) bool {
+	return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
+}
+
+// withTimeout bounds ctx by d, where zero means no extra bound.
+func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, d)
+}
 
 // sensorFinder is the part of airthings.Scanner the bridge uses, split out so tests can supply
 // sensors without Bluetooth hardware.
@@ -158,8 +183,11 @@ type AirthingsBridge struct {
 	refreshLock sync.Mutex
 	ids         []int
 
-	// retryDelay is the pause between GetHistory attempts.
+	// retryDelay is the pause between retry attempts.
 	retryDelay time.Duration
+	// scanTimeout and readTimeout bound one sensor's scan and read in Refresh; zero is unbounded.
+	scanTimeout time.Duration
+	readTimeout time.Duration
 }
 
 // NewAirthingsBridge creates a new bridge to a collection Airthings sensors
@@ -195,7 +223,9 @@ func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, btAdapter *blue
 		ids:     sensorIDs,
 		b:       b,
 
-		retryDelay: historyRetryDelay,
+		retryDelay:  historyRetryDelay,
+		scanTimeout: scanTimeout,
+		readTimeout: readTimeout,
 	}
 
 	return ab
@@ -233,26 +263,68 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 	defer ab.refreshLock.Unlock()
 
 	for _, id := range ab.ids {
-		ab.logger.Debug("scanning for sensor", zap.Int("sensor_id", id))
-		sensor, err := ab.scanner.FindSensor(ctx, id)
+		// A sensor that can't be read is skipped, not fatal: the others still get refreshed.
+		sensor, err := ab.refreshSensor(ctx, id)
 		if err != nil {
-			ab.logger.Error("unable to find sensor",
-				zap.Error(err))
-			continue
-		}
-		// Disconnect on every path: a connection left open after a failed refresh holds the one
-		// adapter and makes the next session (live or history) fail to connect.
-		err = sensor.Refresh(ctx)
-		sensor.Disconnect()
-		if err != nil {
-			ab.logger.Error("unable to refresh sensor",
-				zap.Error(err))
+			ab.logger.Error("unable to refresh sensor", zap.Int("sensor_id", id), zap.Error(err))
 			continue
 		}
 
 		ab.svc.UpdateDevice(sensorToDevice(sensor))
 	}
 	return nil
+}
+
+// refreshSensor finds and reads one sensor, retrying a failed connect or read (but not a timeout)
+// up to refreshAttempts times. The returned sensor has already been disconnected. The caller must
+// hold refreshLock.
+func (ab *AirthingsBridge) refreshSensor(ctx context.Context, id int) (airthings.Sensor, error) {
+	var lastErr error
+	for attempt := 1; attempt <= refreshAttempts; attempt++ {
+		sensor, err := ab.readSensor(ctx, id)
+		if err == nil {
+			return sensor, nil
+		}
+		lastErr = err
+
+		if attempt == refreshAttempts || ctx.Err() != nil || !retryable(err) {
+			break
+		}
+		ab.logger.Warn("sensor refresh failed, retrying",
+			zap.Int("sensor_id", id), zap.Int("attempt", attempt),
+			zap.Int("attempts", refreshAttempts), zap.Error(err))
+
+		select {
+		case <-time.After(ab.retryDelay):
+		case <-ctx.Done():
+		}
+	}
+	return nil, lastErr
+}
+
+// readSensor makes one attempt to find a sensor and read its current values, always releasing the
+// connection afterwards. The scan and the read each have their own bound so a sensor that is out of
+// range, or stalls mid-read, can't hold up the rest of the refresh.
+func (ab *AirthingsBridge) readSensor(ctx context.Context, id int) (airthings.Sensor, error) {
+	ab.logger.Debug("scanning for sensor", zap.Int("sensor_id", id))
+
+	scanCtx, cancelScan := withTimeout(ctx, ab.scanTimeout)
+	sensor, err := ab.scanner.FindSensor(scanCtx, id)
+	cancelScan()
+	if err != nil {
+		return nil, fmt.Errorf("unable to find sensor: %w", err)
+	}
+
+	// Disconnect on every path: a connection left open after a failed refresh holds the one
+	// adapter and makes the next session (live or history) fail to connect.
+	readCtx, cancelRead := withTimeout(ctx, ab.readTimeout)
+	defer cancelRead()
+	err = sensor.Refresh(readCtx)
+	sensor.Disconnect()
+	if err != nil {
+		return nil, fmt.Errorf("unable to read sensor: %w", err)
+	}
+	return sensor, nil
 }
 
 // GetHistory implements bridge.HistoryHandler by downloading the sensor's on-board log over BLE.
@@ -268,6 +340,7 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 // A failed download (the sensor not found, or the connection dropping mid-transfer) is retried up
 // to historyAttempts times, each with its own historyTimeout. Only if every attempt fails does the
 // caller see Unavailable, so a single flaky connect doesn't leave a hole in the backfilled history.
+// An attempt that times out is not retried, since it has already spent its whole window.
 func (ab *AirthingsBridge) GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error) {
 	serial := 0
 	for _, id := range ab.ids {
@@ -303,7 +376,7 @@ func (ab *AirthingsBridge) GetHistory(ctx context.Context, deviceID string, sinc
 		}
 		lastErr = err
 
-		if attempt == historyAttempts || ctx.Err() != nil {
+		if attempt == historyAttempts || ctx.Err() != nil || !retryable(err) {
 			break
 		}
 		ab.logger.Warn("sensor history download failed, retrying",
