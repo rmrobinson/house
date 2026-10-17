@@ -76,8 +76,9 @@ to 24h old, which a last-hour-only task would never aggregate. Re-aggregating
 a window is idempotent.
 
 Query `house` for recent detail and `house_1h` for anything older than 30
-days. The `metricsd` token cannot read `house_1h`; point dashboards at their
-own read token.
+days. The `metricsd` token cannot read `house_1h`; the setup script creates a
+separate read-only `metricsd-grafana` token for dashboards, and
+[`grafana/`](grafana/README.md) holds a ready-made dashboard that uses it.
 
 ## Overview
 

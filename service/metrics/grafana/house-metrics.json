@@ -1,0 +1,194 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_INFLUXDB",
+      "label": "House InfluxDB (Flux)",
+      "description": "InfluxDB v2 datasource using the Flux query language, with a token that can read the house and house_1h buckets",
+      "type": "datasource",
+      "pluginId": "influxdb",
+      "pluginName": "InfluxDB"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "influxdb", "name": "InfluxDB", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" }
+  ],
+  "uid": "house-metrics",
+  "title": "House metrics",
+  "description": "Device state and commands recorded by metricsd. Short ranges read the raw 'house' bucket; ranges reaching back more than 28 days read the hourly 'house_1h' rollup.",
+  "tags": ["house", "metricsd"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "label": "Device",
+        "type": "query",
+        "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"house\", tag: \"device_name\", start: -30d)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Temperature",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "celsius", "decimals": 1, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["min", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_properties\" and r._field == \"temperature_c\")\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Humidity",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "humidity", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["min", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_properties\" and r._field == \"humidity_percentage\")\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "CO2",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ppm", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["min", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_quality\" and r._field == \"co2_ppm\")\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "VOC",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ppb", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["min", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_quality\" and r._field == \"volatile_organic_compounds_ppb\")\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Radon (long-term and short-term)",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "suffix: Bq/m³", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_quality\" and (r._field == \"radon_bq_m3\" or r._field == \"radon_short_term_bq_m3\"))\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\", \"_field\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\", \"_field\"])"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Power",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "watt", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and ((r.trait == \"power\" and r._field == \"power_w\") or (r.trait == \"power_consumption\" and r._field == \"power_usage_w\")))\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Battery remaining",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["min", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "asc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"battery\" and r._field == \"capacity_remaining_pct\")\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> filter(fn: (r) => r.device_name =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_name\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_name\"])"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Commands by origin",
+      "description": "Commands bridges processed, counted per window. Empty origin means the caller didn't set one.",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"command\" and r._field == \"outcome\")\n  |> group(columns: [\"origin\"])\n  |> aggregateWindow(every: window, fn: count, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"origin\"])"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Recent commands",
+      "description": "Newest 50 commands in the selected range. outcome is a gRPC status code (0 = OK).",
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
+      "fieldConfig": { "defaults": { "custom": { "filterable": true } }, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Time", "desc": true }] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"command\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> group()\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 50)\n  |> drop(columns: [\"_start\", \"_stop\", \"_measurement\", \"command_id\", \"resulting_version\"])"
+        }
+      ]
+    }
+  ]
+}

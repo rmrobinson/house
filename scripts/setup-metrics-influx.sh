@@ -41,6 +41,8 @@
 #   DOWNSAMPLE_RETENTION aggregate retention (default: 13152h = 548 days)
 #   DOWNSAMPLE_LOOKBACK  how far back each hourly run re-aggregates (default: 26h)
 #   SECRETS_OUT          where to write metricsd's token (default: ./metricsd.secrets.yaml)
+#   GRAFANA_TOKEN_OUT    where to write the read-only Grafana token (default: ./grafana.token)
+#   GRAFANA_TOKEN_DESC   that token's description (default: metricsd-grafana)
 #   FORCE=1              overwrite SECRETS_OUT if it already exists
 #
 # About "compaction": InfluxDB v2 has no user-configurable compaction policy
@@ -63,9 +65,14 @@ AGG="${DOWNSAMPLE_BUCKET:-house_1h}"
 AGG_RETENTION="${DOWNSAMPLE_RETENTION:-13152h}"
 LOOKBACK="${DOWNSAMPLE_LOOKBACK:-26h}"
 SECRETS_OUT="${SECRETS_OUT:-./metricsd.secrets.yaml}"
+GRAFANA_TOKEN_OUT="${GRAFANA_TOKEN_OUT:-./grafana.token}"
 
 METRICSD_TOKEN_DESC="metricsd"
 DOWNSAMPLE_TOKEN_DESC="metricsd-downsample"
+# Not plain "grafana": that description is likely already taken by whatever
+# token an existing Grafana datasource uses, and reusing it would hand this
+# script a token with the wrong scope.
+GRAFANA_TOKEN_DESC="${GRAFANA_TOKEN_DESC:-metricsd-grafana}"
 TASK_NAME="metricsd-downsample"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -74,6 +81,9 @@ command -v influx >/dev/null 2>&1 || die "the influx CLI is not installed; run t
 
 if [ -e "$SECRETS_OUT" ] && [ "${FORCE:-}" != "1" ]; then
   die "$SECRETS_OUT already exists; set FORCE=1 to overwrite or SECRETS_OUT to another path"
+fi
+if [ -e "$GRAFANA_TOKEN_OUT" ] && [ "${FORCE:-}" != "1" ]; then
+  die "$GRAFANA_TOKEN_OUT already exists; set FORCE=1 to overwrite or GRAFANA_TOKEN_OUT to another path"
 fi
 
 echo "==> checking connection"
@@ -110,11 +120,21 @@ fi
 
 # --- tokens ---------------------------------------------------------------
 # existing_token <description>: prints the token, or nothing.
+#
+# Reads the CLI's table output (ID, Description, Token, ...), the same way
+# the task lookup below does, rather than scraping --json: each JSON auth
+# object nests permission objects after the description, so a brace-free
+# regex over it never matches.
 existing_token() {
-  influx auth list --org "$ORG" --json 2>/dev/null \
-    | tr -d '\n' \
-    | grep -o '{[^{}]*"description": *"'"$1"'"[^{}]*}' \
-    | grep -o '"token": *"[^"]*"' | head -1 | sed 's/.*: *"\(.*\)"/\1/' || true
+  influx auth list --org "$ORG" --hide-headers 2>/dev/null \
+    | awk -v d="$1" '$2 == d {print $3; exit}' || true
+}
+
+# token_exists <description>: true if any token has this description,
+# whether or not its value could be read.
+token_exists() {
+  influx auth list --org "$ORG" --hide-headers 2>/dev/null \
+    | awk -v d="$1" '$2 == d {found = 1} END {exit !found}'
 }
 
 # create_token <description> <influx auth create permission flags...>
@@ -122,6 +142,10 @@ ensure_token() {
   local desc="$1"; shift
   local tok
   tok="$(existing_token "$desc")"
+  if [ -z "$tok" ] && token_exists "$desc"; then
+    # Never create a second token with the same description.
+    die "a token described '$desc' already exists but its value could not be read; delete it ('influx auth list', 'influx auth delete --id <id>') and re-run, or fix the lookup"
+  fi
   if [ -z "$tok" ]; then
     echo "==> creating token '$desc'" >&2
     tok="$(influx auth create --org "$ORG" --description "$desc" "$@" --json \
@@ -135,6 +159,14 @@ ensure_token() {
 
 # metricsd: read (backfill watermark query) and write on the raw bucket only.
 METRICSD_TOKEN="$(ensure_token "$METRICSD_TOKEN_DESC" --read-bucket "$RAW_ID" --write-bucket "$RAW_ID")"
+
+# grafana: read-only on both buckets (house for recent detail, house_1h for
+# long ranges), so a leaked dashboard token can't alter data.
+if [ -n "$AGG_ID" ]; then
+  GRAFANA_TOKEN="$(ensure_token "$GRAFANA_TOKEN_DESC" --read-bucket "$RAW_ID" --read-bucket "$AGG_ID")"
+else
+  GRAFANA_TOKEN="$(ensure_token "$GRAFANA_TOKEN_DESC" --read-bucket "$RAW_ID")"
+fi
 
 # --- downsample task ------------------------------------------------------
 if [ "$DOWNSAMPLE" = "1" ]; then
@@ -231,10 +263,28 @@ else
   echo "    ok: read on '$RAW' allowed (no other bucket to test refusal against)"
 fi
 
+# The Grafana token must be able to read and must be refused a write.
+echo "==> verifying the grafana token"
+INFLUX_TOKEN="$GRAFANA_TOKEN" influx query --org "$ORG" \
+  "from(bucket: \"$RAW\") |> range(start: -1m) |> limit(n: 1)" >/dev/null 2>&1 \
+  || die "the grafana token cannot read bucket '$RAW'"
+if [ -n "$AGG_ID" ]; then
+  INFLUX_TOKEN="$GRAFANA_TOKEN" influx query --org "$ORG" \
+    "from(bucket: \"$AGG\") |> range(start: -1m) |> limit(n: 1)" >/dev/null 2>&1 \
+    || die "the grafana token cannot read bucket '$AGG'"
+fi
+if INFLUX_TOKEN="$GRAFANA_TOKEN" influx write --org "$ORG" --bucket "$RAW" \
+    "grafana_token_probe ok=1i" >/dev/null 2>&1; then
+  die "the grafana token can WRITE to '$RAW' - it must be read-only"
+fi
+echo "    ok: read allowed, write refused"
+
 # --- output ---------------------------------------------------------------
 umask 077
 printf 'influx_token: %s\n' "$METRICSD_TOKEN" > "$SECRETS_OUT"
 chmod 600 "$SECRETS_OUT"
+printf '%s\n' "$GRAFANA_TOKEN" > "$GRAFANA_TOKEN_OUT"
+chmod 600 "$GRAFANA_TOKEN_OUT"
 
 cat <<EOF
 
@@ -249,6 +299,7 @@ EOF
 fi
 cat <<EOF
   metricsd token:    written to $SECRETS_OUT (mode 600) - keep it out of git
+  grafana token:     written to $GRAFANA_TOKEN_OUT (mode 600), read-only on $RAW${AGG_ID:+ and $AGG}
 
 In metricsd.yaml:
 
