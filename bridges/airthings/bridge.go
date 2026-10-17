@@ -36,6 +36,13 @@ const (
 	// historyTimeout bounds one BLE history download, after which the sensor is considered
 	// unresponsive and the bridge releases the adapter.
 	historyTimeout = 30 * time.Second
+	// historyAttempts is how many times GetHistory tries a download before giving up. A BLE
+	// connect to a sensor at the edge of range, or right after another session, fails often enough
+	// ("Disconnected early") that one attempt is not a reliable backfill; the failures are quick,
+	// so a few tries still fit well inside the caller's own deadline.
+	historyAttempts = 3
+	// historyRetryDelay lets the adapter and the sensor settle between attempts.
+	historyRetryDelay = 2 * time.Second
 )
 
 // sensorFinder is the part of airthings.Scanner the bridge uses, split out so tests can supply
@@ -150,6 +157,9 @@ type AirthingsBridge struct {
 	scanner     sensorFinder
 	refreshLock sync.Mutex
 	ids         []int
+
+	// retryDelay is the pause between GetHistory attempts.
+	retryDelay time.Duration
 }
 
 // NewAirthingsBridge creates a new bridge to a collection Airthings sensors
@@ -184,6 +194,8 @@ func NewAirthingsBridge(logger *zap.Logger, svc *bridge.Service, btAdapter *blue
 		scanner: airthings.NewScanner(btAdapter),
 		ids:     sensorIDs,
 		b:       b,
+
+		retryDelay: historyRetryDelay,
 	}
 
 	return ab
@@ -228,12 +240,15 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 				zap.Error(err))
 			continue
 		}
-		if err = sensor.Refresh(ctx); err != nil {
+		// Disconnect on every path: a connection left open after a failed refresh holds the one
+		// adapter and makes the next session (live or history) fail to connect.
+		err = sensor.Refresh(ctx)
+		sensor.Disconnect()
+		if err != nil {
 			ab.logger.Error("unable to refresh sensor",
 				zap.Error(err))
 			continue
 		}
-		sensor.Disconnect()
 
 		ab.svc.UpdateDevice(sensorToDevice(sensor))
 	}
@@ -249,6 +264,10 @@ func (ab *AirthingsBridge) Refresh(ctx context.Context) error {
 // are expected to run more often than historyMaxWindow and rely on samples being idempotent.
 //
 // It holds refreshLock for the whole BLE session so it can't overlap Refresh on the one adapter.
+//
+// A failed download (the sensor not found, or the connection dropping mid-transfer) is retried up
+// to historyAttempts times, each with its own historyTimeout. Only if every attempt fails does the
+// caller see Unavailable, so a single flaky connect doesn't leave a hole in the backfilled history.
 func (ab *AirthingsBridge) GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error) {
 	serial := 0
 	for _, id := range ab.ids {
@@ -276,20 +295,46 @@ func (ab *AirthingsBridge) GetHistory(ctx context.Context, deviceID string, sinc
 	ab.refreshLock.Lock()
 	defer ab.refreshLock.Unlock()
 
+	var lastErr error
+	for attempt := 1; attempt <= historyAttempts; attempt++ {
+		samples, err := ab.downloadHistory(ctx, deviceID, serial, hours)
+		if err == nil {
+			return samples, nil
+		}
+		lastErr = err
+
+		if attempt == historyAttempts || ctx.Err() != nil {
+			break
+		}
+		ab.logger.Warn("sensor history download failed, retrying",
+			zap.String("device_id", deviceID), zap.Int("attempt", attempt),
+			zap.Int("attempts", historyAttempts), zap.Error(err))
+
+		select {
+		case <-time.After(ab.retryDelay):
+		case <-ctx.Done():
+		}
+	}
+
+	ab.logger.Error("unable to download sensor history",
+		zap.String("device_id", deviceID), zap.Int("hours", hours), zap.Error(lastErr))
+	return nil, status.Error(codes.Unavailable, lastErr.Error())
+}
+
+// downloadHistory makes one attempt to find the sensor and read its on-board log, always releasing
+// the connection afterwards. The caller must hold refreshLock.
+func (ab *AirthingsBridge) downloadHistory(ctx context.Context, deviceID string, serial, hours int) ([]*api2.HistorySample, error) {
 	ctx, cancel := context.WithTimeout(ctx, historyTimeout)
 	defer cancel()
 
 	sensor, err := ab.scanner.FindSensor(ctx, serial)
 	if err != nil {
-		ab.logger.Error("unable to find sensor for history", zap.String("device_id", deviceID), zap.Error(err))
-		return nil, status.Errorf(codes.Unavailable, "unable to find sensor: %v", err)
+		return nil, fmt.Errorf("unable to find sensor: %w", err)
 	}
 	defer sensor.Disconnect()
 
 	if err := sensor.RefreshHistory(ctx, hours); err != nil {
-		ab.logger.Error("unable to download sensor history",
-			zap.String("device_id", deviceID), zap.Int("hours", hours), zap.Error(err))
-		return nil, status.Errorf(codes.Unavailable, "unable to download history: %v", err)
+		return nil, fmt.Errorf("unable to download history: %w", err)
 	}
 
 	return historyToSamples(deviceID, sensor.HistoricalMeasurements()), nil
