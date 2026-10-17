@@ -30,6 +30,13 @@ type fakeSensor struct {
 	historyErr     error
 	requestedHours int
 	disconnected   bool
+
+	// historyFailures makes the first N RefreshHistory calls fail (a flaky connection that recovers);
+	// refreshErr fails Refresh. The counters record how the bridge drove the sensor.
+	historyFailures int
+	refreshErr      error
+	historyCalls    int
+	disconnects     int
 }
 
 func (f *fakeSensor) SerialNumber() int                         { return f.serialNumber }
@@ -40,10 +47,17 @@ func (f *fakeSensor) CurrentMeasurement() airthings.Measurement { return f.measu
 func (f *fakeSensor) HistoricalMeasurements() []airthings.HistoryMeasurement {
 	return f.history
 }
-func (f *fakeSensor) Disconnect()                         { f.disconnected = true }
-func (f *fakeSensor) Refresh(ctx context.Context) error { return nil }
+func (f *fakeSensor) Disconnect() {
+	f.disconnected = true
+	f.disconnects++
+}
+func (f *fakeSensor) Refresh(ctx context.Context) error { return f.refreshErr }
 func (f *fakeSensor) RefreshHistory(ctx context.Context, hours int) error {
 	f.requestedHours = hours
+	f.historyCalls++
+	if f.historyCalls <= f.historyFailures {
+		return errors.New("failed to connect: Disconnected early")
+	}
 	return f.historyErr
 }
 func (f *fakeSensor) GetDeviceProfile() ([]airthings.DeviceProfile, error) { return nil, nil }
@@ -52,11 +66,19 @@ func (f *fakeSensor) GetDeviceProfile() ([]airthings.DeviceProfile, error) { ret
 type fakeFinder struct {
 	sensors map[int]*fakeSensor
 	err     error
+
+	// failFirst makes the first N FindSensor calls fail, then succeed.
+	failFirst int
+	calls     int
 }
 
 func (f *fakeFinder) FindSensor(ctx context.Context, serialNumber int) (airthings.Sensor, error) {
+	f.calls++
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.calls <= f.failFirst {
+		return nil, errors.New("scan timed out")
 	}
 	return f.sensors[serialNumber], nil
 }
@@ -131,13 +153,60 @@ func TestGetHistory_DownloadFailureIsUnavailableAndStillDisconnects(t *testing.T
 	_, err := ab.GetHistory(context.Background(), "42", time.Now().Add(-time.Hour), time.Now())
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	assert.True(t, sensor.disconnected)
+	// Every attempt is made, and every connection released.
+	assert.Equal(t, historyAttempts, sensor.historyCalls)
+	assert.Equal(t, historyAttempts, sensor.disconnects)
 }
 
 func TestGetHistory_SensorNotFoundIsUnavailable(t *testing.T) {
-	ab := newHistoryTestBridge(t, &fakeFinder{err: errors.New("scan timed out")}, 42)
+	finder := &fakeFinder{err: errors.New("scan timed out")}
+	ab := newHistoryTestBridge(t, finder, 42)
 
 	_, err := ab.GetHistory(context.Background(), "42", time.Time{}, time.Now())
 	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Equal(t, historyAttempts, finder.calls)
+}
+
+func TestGetHistory_RetriesFlakyDownloadUntilItSucceeds(t *testing.T) {
+	sensor := &fakeSensor{serialNumber: 42, historyFailures: historyAttempts - 1}
+	ab := newHistoryTestBridge(t, &fakeFinder{sensors: map[int]*fakeSensor{42: sensor}}, 42)
+
+	_, err := ab.GetHistory(context.Background(), "42", time.Now().Add(-time.Hour), time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, historyAttempts, sensor.historyCalls)
+	// Each attempt's connection, failed or not, is released.
+	assert.Equal(t, historyAttempts, sensor.disconnects)
+}
+
+func TestGetHistory_RetriesSensorNotFoundUntilItIsFound(t *testing.T) {
+	sensor := &fakeSensor{serialNumber: 42}
+	finder := &fakeFinder{sensors: map[int]*fakeSensor{42: sensor}, failFirst: historyAttempts - 1}
+	ab := newHistoryTestBridge(t, finder, 42)
+
+	_, err := ab.GetHistory(context.Background(), "42", time.Now().Add(-time.Hour), time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, historyAttempts, finder.calls)
+	assert.Equal(t, 1, sensor.historyCalls)
+}
+
+func TestGetHistory_StopsRetryingOnceTheCallerGivesUp(t *testing.T) {
+	sensor := &fakeSensor{serialNumber: 42, historyErr: errors.New("notification timeout")}
+	ab := newHistoryTestBridge(t, &fakeFinder{sensors: map[int]*fakeSensor{42: sensor}}, 42)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := ab.GetHistory(ctx, "42", time.Now().Add(-time.Hour), time.Now())
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Equal(t, 1, sensor.historyCalls)
+}
+
+func TestRefresh_DisconnectsEvenWhenTheRefreshFails(t *testing.T) {
+	sensor := &fakeSensor{serialNumber: 42, refreshErr: errors.New("read failed")}
+	ab := newHistoryTestBridge(t, &fakeFinder{sensors: map[int]*fakeSensor{42: sensor}}, 42)
+
+	require.NoError(t, ab.Refresh(context.Background()))
+	assert.Equal(t, 1, sensor.disconnects)
 }
 
 func TestSensorToDevice_AdvertisesHistoryAndShortTermRadon(t *testing.T) {
