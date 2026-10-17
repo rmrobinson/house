@@ -113,6 +113,12 @@ func (cs *ChargerState) toDevice() *device.Device {
 		}
 	}
 
+	// The charger's API reports volts and amps but no wattage, so derive it. grid_v is the full
+	// line-to-line voltage (~240V split-phase) and the charge current is carried on whichever
+	// phase field(s) the install uses (see the sum below), so V*I is the power drawn. An EV's
+	// onboard charger runs at close to unity power factor, so this tracks real power closely.
+	wallCurrentA := cs.vitals.CurrentAAmps + cs.vitals.CurrentBAmps + cs.vitals.CurrentCAmps
+
 	return &device.Device{
 		Id:           cs.version.SerialNumber,
 		ModelId:      cs.version.PartNumber,
@@ -142,7 +148,8 @@ func (cs *ChargerState) toDevice() *device.Device {
 						// The charge current rides on whichever phase(s) the install uses - e.g. only
 						// currentB_a on a split-phase feed - so sum them rather than reading one.
 						// Neutral is excluded: it's the return, not extra draw.
-						CurrentA: cs.vitals.CurrentAAmps + cs.vitals.CurrentBAmps + cs.vitals.CurrentCAmps,
+						CurrentA: wallCurrentA,
+						PowerW:   cs.vitals.GridVoltage * wallCurrentA,
 					},
 				},
 				ExteriorConditions: &trait.AirProperties{
