@@ -117,7 +117,15 @@ func (cs *ChargerState) toDevice() *device.Device {
 	// line-to-line voltage (~240V split-phase) and the charge current is carried on whichever
 	// phase field(s) the install uses (see the sum below), so V*I is the power drawn. An EV's
 	// onboard charger runs at close to unity power factor, so this tracks real power closely.
+	//
+	// Only while the contactor is closed: with it open nothing reaches the car (the load-side
+	// voltages read ~0V) yet the current sensor still reports a constant ~0.2A offset, which V*I
+	// would turn into a phantom ~50W for as long as the charger sits idle.
 	wallCurrentA := cs.vitals.CurrentAAmps + cs.vitals.CurrentBAmps + cs.vitals.CurrentCAmps
+	var wallPowerW float64
+	if cs.vitals.ContactorClosed {
+		wallPowerW = cs.vitals.GridVoltage * wallCurrentA
+	}
 
 	return &device.Device{
 		Id:           cs.version.SerialNumber,
@@ -149,7 +157,7 @@ func (cs *ChargerState) toDevice() *device.Device {
 						// currentB_a on a split-phase feed - so sum them rather than reading one.
 						// Neutral is excluded: it's the return, not extra draw.
 						CurrentA: wallCurrentA,
-						PowerW:   cs.vitals.GridVoltage * wallCurrentA,
+						PowerW:   wallPowerW,
 					},
 				},
 				ExteriorConditions: &trait.AirProperties{
