@@ -48,8 +48,8 @@ go_library(
 go_test(
     name = "policy_test",
     srcs = [
+        "any_device_condition_test.go",
         "attribute_conditions_test.go",
-        "battery_report_test.go",
         "bindings_test.go",
         "bus_test.go",
         "button_conditions_test.go",
@@ -66,16 +66,11 @@ go_test(
         "send_test.go",
         "store_test.go",
         "sun_test.go",
-        "ups_water_policies_test.go",
     ],
     embed = [":policy"],
     embedsrcs = [
-        "scripts/battery_report.lua",
         "scripts/sys_occupancy.lua",
         "scripts/sys_power_restore.lua",
-        "scripts/ups_low_battery.lua",
-        "scripts/ups_on_battery.lua",
-        "scripts/water_detected.lua",
     ],
     deps = [
         "//api",

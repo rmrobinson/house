@@ -580,6 +580,35 @@ func TestAdapter_SetState_MapField(t *testing.T) {
 	assert.Equal(t, map[string]bool{"child_lock": true}, cmds[0].GetToggle().GetSettings())
 }
 
+// A volume_absolute + play_media pair (the shape a "start this stream at this
+// level" policy sends) through the real protoreflection path: string fields,
+// a bool, and an int32 volume level.
+func TestAdapter_SetState_PlayMediaAndVolumeAbsolute(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("speaker-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("speaker-1", "volume_absolute", map[string]any{
+		"level": float64(25),
+	}))
+	require.NoError(t, adapter.SetState("speaker-1", "play_media", map[string]any{
+		"content_url":  "http://media-host:17022/rain.mp3",
+		"content_type": "audio/mpeg",
+		"title":        "Rain",
+		"repeat":       true,
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 2)
+	assert.EqualValues(t, 25, cmds[0].GetVolumeAbsolute().GetLevel())
+
+	pm := cmds[1].GetPlayMedia()
+	require.NotNil(t, pm)
+	assert.Equal(t, "http://media-host:17022/rain.mp3", pm.GetContentUrl())
+	assert.Equal(t, "audio/mpeg", pm.GetContentType())
+	assert.Equal(t, "Rain", pm.GetTitle())
+	assert.True(t, pm.GetRepeat())
+}
+
 func TestAdapter_SetState_UnknownCommand(t *testing.T) {
 	srv := &fakeBridgeServer{}
 	adapter, _ := newStartedAdapter(t, srv)

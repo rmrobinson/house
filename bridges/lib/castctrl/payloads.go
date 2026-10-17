@@ -188,3 +188,33 @@ type queueUpdatePayload struct {
 	MediaSessionID int    `json:"mediaSessionId"`
 	Jump           int    `json:"jump"`
 }
+
+// loadMedia is the media object carried by LOAD and by each QUEUE_LOAD item.
+type loadMedia struct {
+	ContentID   string         `json:"contentId"`
+	ContentType string         `json:"contentType"`
+	StreamType  string         `json:"streamType"`
+	Metadata    *MediaMetadata `json:"metadata,omitempty"`
+}
+
+type loadPayload struct {
+	Type      string    `json:"type"`
+	RequestID uint32    `json:"requestId"`
+	Media     loadMedia `json:"media"`
+	Autoplay  bool      `json:"autoplay"`
+}
+
+type queueItem struct {
+	Media    loadMedia `json:"media"`
+	Autoplay bool      `json:"autoplay"`
+}
+
+// queueLoadPayload starts a queue, which is the only way to ask the Default
+// Media Receiver to loop: LOAD itself has no repeat flag.
+type queueLoadPayload struct {
+	Type       string      `json:"type"`
+	RequestID  uint32      `json:"requestId"`
+	Items      []queueItem `json:"items"`
+	StartIndex int         `json:"startIndex"`
+	RepeatMode string      `json:"repeatMode"`
+}
