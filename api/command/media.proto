@@ -36,3 +36,27 @@ message SkipForward {}
 // SkipBackward returns to the previous item in the device's playback queue.
 // Only meaningful when trait.Media.Attributes.can_skip_backward is true.
 message SkipBackward {}
+
+// PlayMedia starts playing the audio or video at content_url, replacing
+// whatever the device is currently playing. Unlike Playback, which acts on
+// media the device already has, this tells the device what to play, so it
+// works on a device that is idle.
+message PlayMedia {
+  // Absolute http(s) URL of the media to play. Required. The device fetches
+  // it directly, so it must be reachable from the device itself.
+  string content_url = 1;
+
+  // MIME type of the media at content_url (e.g. "audio/mpeg" for mp3).
+  // Required: the Cast bridge rejects a command without it.
+  string content_type = 2;
+
+  // Optional display metadata shown on devices with a screen or in a
+  // companion app.
+  string title = 3;
+  string artist = 4;
+  string image_url = 5;
+
+  // If true the device loops this media until told to stop, rather than
+  // stopping once it has played through once.
+  bool repeat = 6;
+}

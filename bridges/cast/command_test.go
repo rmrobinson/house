@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,7 @@ type fakeSession struct {
 	volumeCalls                         []float64
 	muteCalls                           []bool
 	launchCalls                         []string
+	loadCalls                           []castctrl.LoadRequest
 
 	err error // returned by every method, if set
 }
@@ -81,6 +84,11 @@ func (f *fakeSession) SetMuted(ctx context.Context, muted bool) error {
 
 func (f *fakeSession) LaunchApp(ctx context.Context, appID string) error {
 	f.launchCalls = append(f.launchCalls, appID)
+	return f.err
+}
+
+func (f *fakeSession) LoadMedia(ctx context.Context, req castctrl.LoadRequest) error {
+	f.loadCalls = append(f.loadCalls, req)
 	return f.err
 }
 
@@ -185,6 +193,56 @@ func TestDispatchCommand_AppLaunch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"233637DE"}, f.launchCalls)
+}
+
+func TestDispatchCommand_PlayMedia(t *testing.T) {
+	f := &fakeSession{}
+	cd := &castDevice{session: f}
+	err := dispatchCommand(context.Background(), cd, &command.Command{
+		Details: &command.Command_PlayMedia{PlayMedia: &command.PlayMedia{
+			ContentUrl:  "https://storage.googleapis.com/relaxation-sounds/thunderstorm_3600.mp3",
+			ContentType: "audio/mp3",
+			Title:       "Thunderstorm sounds",
+			Repeat:      true,
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []castctrl.LoadRequest{{
+		ContentURL:  "https://storage.googleapis.com/relaxation-sounds/thunderstorm_3600.mp3",
+		ContentType: "audio/mp3",
+		Title:       "Thunderstorm sounds",
+		Repeat:      true,
+	}}, f.loadCalls)
+}
+
+func TestDispatchCommand_PlayMedia_Invalid(t *testing.T) {
+	for name, pm := range map[string]*command.PlayMedia{
+		"empty url":                  {ContentType: "audio/mp3"},
+		"relative url":               {ContentUrl: "/a.mp3", ContentType: "audio/mp3"},
+		"non-http url":               {ContentUrl: "file:///a.mp3", ContentType: "audio/mp3"},
+		"no content type":            {ContentUrl: "https://example.com/a.mp3"},
+		"credentials in content url": {ContentUrl: "http://user:pw@example.com/a.mp3", ContentType: "audio/mp3"},
+		"bad image url":              {ContentUrl: "https://example.com/a.mp3", ContentType: "audio/mp3", ImageUrl: "ftp://example.com/a.png"},
+		"overlong title":             {ContentUrl: "https://example.com/a.mp3", ContentType: "audio/mp3", Title: strings.Repeat("x", maxMetadataLen+1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeSession{}
+			err := dispatchCommand(context.Background(), &castDevice{session: f}, &command.Command{
+				Details: &command.Command_PlayMedia{PlayMedia: pm},
+			})
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Empty(t, f.loadCalls, "an invalid command must never reach the device")
+		})
+	}
+}
+
+func TestCommandDeadline_PlayMedia(t *testing.T) {
+	cd := &castDevice{session: &fakeSession{}}
+	got := commandDeadline(cd, &command.Command{Details: &command.Command_PlayMedia{PlayMedia: &command.PlayMedia{}}})
+	assert.Equal(t, playMediaTimeout, got)
+	// policyd gives up on a command after 15s (service/policy/bridgehome); the
+	// bridge must finish first or a script sees a failure for a success.
+	assert.Less(t, playMediaTimeout, 15*time.Second)
 }
 
 func TestDispatchCommand_VolumeAbsolute_Attenuation_SingleCall(t *testing.T) {

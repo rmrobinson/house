@@ -124,6 +124,15 @@ type Session struct {
 	app            ReceiverApplication
 	hasMedia       bool
 	media          MediaStatus
+
+	// launchSeq counts launch failures the device reported outside any
+	// request we were waiting on (a LAUNCH_ERROR can arrive that way when the
+	// reply slot was already used by a LAUNCH_STATUS), and launchErr is the
+	// latest. LoadMedia snapshots launchSeq before launching so it can tell a
+	// failure of its own launch from an old one, and give up at once instead
+	// of waiting out its deadline.
+	launchSeq uint64
+	launchErr error
 }
 
 // NewSession creates a Session for the device at addr ("host:port"). The
@@ -225,6 +234,24 @@ func (s *Session) refreshReceiverStatus() {
 // "now there is one" or "now there isn't") means the app session changed and
 // the app-level connection must be re-established, not just re-queried.
 func (s *Session) applyReceiverStatus(msg *CastMessage) {
+	// The receiver namespace carries more than RECEIVER_STATUS. Decoding
+	// anything else as one would see an empty status and wipe the cached app
+	// and volume, so everything but RECEIVER_STATUS is dealt with here.
+	var e errorPayload
+	if err := json.Unmarshal([]byte(msg.GetPayloadUtf8()), &e); err == nil {
+		switch e.Type {
+		case TypeLaunchStatus:
+			s.logger.Debug("app launch in progress")
+			return
+		case TypeLaunchError:
+			s.recordLaunchFailure(asRejection(msg))
+			return
+		case TypeInvalidRequest, TypeLoadFailed:
+			s.logger.Warn("receiver rejected a request", zap.String("type", e.Type), zap.String("reason", e.Reason))
+			return
+		}
+	}
+
 	var payload receiverStatusPayload
 	if err := json.Unmarshal([]byte(msg.GetPayloadUtf8()), &payload); err != nil {
 		s.logger.Warn("unable to decode receiver status", zap.Error(err))
@@ -259,6 +286,16 @@ func (s *Session) applyReceiverStatus(msg *CastMessage) {
 	}
 
 	s.notify()
+}
+
+// recordLaunchFailure remembers err as the latest launch failure, for any
+// LoadMedia waiting on a launch to notice.
+func (s *Session) recordLaunchFailure(err error) {
+	s.logger.Warn("app launch failed", zap.Error(err))
+	s.mu.Lock()
+	s.launchSeq++
+	s.launchErr = err
+	s.mu.Unlock()
 }
 
 func (s *Session) connectApp(oldTransportID, newTransportID string) {
@@ -628,3 +665,131 @@ func (s *Session) QueueNext(ctx context.Context) error { return s.sendQueueJump(
 
 // QueuePrevious returns to the previous item in the active queue.
 func (s *Session) QueuePrevious(ctx context.Context) error { return s.sendQueueJump(ctx, -1) }
+
+// LoadRequest describes media for LoadMedia to start playing.
+type LoadRequest struct {
+	ContentURL  string
+	ContentType string
+	Title       string
+	Artist      string
+	ImageURL    string
+	// Repeat loops the media until something stops it.
+	Repeat bool
+}
+
+// appPollInterval is how often awaitApp rechecks the session.
+const appPollInterval = 25 * time.Millisecond
+
+// connectedToAppLocked reports whether the session is connected to appID's
+// current app session. Having appID as the reported app isn't enough: on a
+// switch from another app, applyReceiverStatus records the new app before
+// connectApp has moved appTransportID over, and a command sent in that window
+// would go to the old app's connection. Requires s.mu.
+func (s *Session) connectedToAppLocked(appID string) bool {
+	return s.state == StateAppConnected &&
+		s.app.AppID == appID &&
+		s.appTransportID != "" &&
+		s.appTransportID == s.app.TransportID
+}
+
+// awaitApp returns the transportId of appID once the session is connected to
+// it, waiting until ctx ends if it isn't yet. launchSeq is s.launchSeq from
+// before the launch being waited on: if the device reports a launch failure
+// since then, awaitApp returns it straight away.
+//
+// A LAUNCH reply can come back before the app has a transportId, in which
+// case the connection only happens when the receiver's follow-up push
+// arrives. Failing straight away would turn that ordinary lag into an error
+// for a launch that is about to succeed.
+func (s *Session) awaitApp(ctx context.Context, appID string, launchSeq uint64) (string, error) {
+	t := time.NewTicker(appPollInterval)
+	defer t.Stop()
+	for {
+		s.mu.Lock()
+		failed := s.launchSeq != launchSeq
+		launchErr := s.launchErr
+		ok := s.connectedToAppLocked(appID)
+		transportID := s.appTransportID
+		s.mu.Unlock()
+		if failed {
+			return "", launchErr
+		}
+		if ok {
+			return transportID, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			// Keep the context's error in the chain so a timeout is reported
+			// as one, not as the device having no app.
+			return "", fmt.Errorf("%w: %w", ErrNoActiveApp, ctx.Err())
+		case <-t.C:
+		}
+	}
+}
+
+// LoadMedia plays req on the device, replacing whatever it was playing, and
+// works whether or not anything is currently running.
+//
+// A LOAD has to be addressed to a running app, so unless the Default Media
+// Receiver is already the foreground app this launches it first (which also
+// ends any other app). Launching and loading are two round trips, so ctx
+// needs room for both.
+func (s *Session) LoadMedia(ctx context.Context, req LoadRequest) error {
+	s.mu.Lock()
+	connected := s.state == StateReceiverConnected || s.state == StateAppConnected
+	ready := s.connectedToAppLocked(DefaultMediaReceiverAppID)
+	launchSeq := s.launchSeq
+	s.mu.Unlock()
+	if !connected {
+		return ErrNotReceiverConnected
+	}
+
+	if !ready {
+		if err := s.LaunchApp(ctx, DefaultMediaReceiverAppID); err != nil {
+			return err
+		}
+	}
+
+	transportID, err := s.awaitApp(ctx, DefaultMediaReceiverAppID, launchSeq)
+	if err != nil {
+		return err
+	}
+
+	media := loadMedia{
+		ContentID:   req.ContentURL,
+		ContentType: req.ContentType,
+		StreamType:  "BUFFERED",
+	}
+	if req.Title != "" || req.Artist != "" || req.ImageURL != "" {
+		md := &MediaMetadata{MetadataType: 3, Title: req.Title, Artist: req.Artist}
+		if req.ImageURL != "" {
+			md.Images = []struct {
+				URL string `json:"url"`
+			}{{URL: req.ImageURL}}
+		}
+		media.Metadata = md
+	}
+
+	id := s.conn.NextRequestID()
+	var payload any = &loadPayload{Type: TypeLoad, RequestID: id, Media: media, Autoplay: true}
+	if req.Repeat {
+		payload = &queueLoadPayload{
+			Type:       TypeQueueLoad,
+			RequestID:  id,
+			Items:      []queueItem{{Media: media, Autoplay: true}},
+			RepeatMode: "REPEAT_SINGLE",
+		}
+	}
+
+	resp, err := s.conn.SendRequest(ctx, NamespaceMedia, SenderID, transportID, id, payload)
+	if err != nil {
+		return err
+	}
+	if err := asRejection(resp); err != nil {
+		return err
+	}
+
+	s.applyMediaStatus(transportID, resp)
+	return nil
+}

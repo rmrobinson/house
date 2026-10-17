@@ -168,6 +168,19 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			want: true,
 		},
 		{
+			// PlayMedia names what to play, so it must be accepted by an idle
+			// player with no can_* attributes set at all.
+			name: "media player play media supported with bare media trait",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_MediaPlayer{
+					MediaPlayer: &device.MediaPlayer{Media: &trait.Media{}},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_PlayMedia{PlayMedia: &command.PlayMedia{ContentUrl: "https://example.com/a.mp3"}}},
+			want: true,
+		},
+		{
 			name: "television skip forward not supported when attribute unset",
 			d:    televisionDevice("d1"),
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},

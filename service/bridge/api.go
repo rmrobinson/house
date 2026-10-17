@@ -191,7 +191,12 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 // mediaSupportsCommand reports whether req is a playback-family command
 // media actually supports. Playback/Seek are accepted unconditionally once a
 // Media trait is present, matching every other branch's granularity in
-// deviceSupportsCommand; SkipForward/SkipBackward are additionally gated on
+// deviceSupportsCommand, and so is PlayMedia: it says what to play rather than
+// acting on media already loaded, so it must work on an idle device whose
+// can_* attributes are all unset. That also means a device whose bridge can't
+// start arbitrary content passes this check and is rejected by the bridge
+// itself, and a bridge that can (cast) will end whatever app is running to
+// start it. SkipForward/SkipBackward are additionally gated on
 // their own can_skip_forward/can_skip_backward attribute, since - unlike
 // pause or seek - plenty of devices (anything without an active queue) don't
 // support track navigation at all, and the one bridge implementing it today
@@ -199,7 +204,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 // hardware - see bridges/cast/README.md - so a request shouldn't reach it
 // for a device that never claimed to support it.
 func mediaSupportsCommand(media *trait.Media, req *command.Command) bool {
-	if req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil {
+	if req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetPlayMedia() != nil {
 		return true
 	} else if req.GetSkipForward() != nil {
 		return media.GetAttributes().GetCanSkipForward()
