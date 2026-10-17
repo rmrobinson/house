@@ -4,7 +4,7 @@
 // what is written and metricsd.example.yaml for the config shape.
 //
 // Everything is read-only against house: it consumes StreamUpdates and
-// ListDeviceLinks and issues no commands.
+// ListBuildings/ListRooms and issues no commands.
 package main
 
 import (

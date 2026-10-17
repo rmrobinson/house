@@ -188,7 +188,8 @@ func TestBackfillWithoutWatermarkStartsAtMaxWindow(t *testing.T) {
 	assert.Equal(t, "state", p.Measurement)
 	assert.Equal(t, map[string]string{
 		"bridge_id": "b1", "device_id": "s1", "device_name": "Office sensor",
-		"room_id": "room-1", "trait": "air_quality", "source": "backfill",
+		"device_label": "Office sensor (Study)",
+		"room_id":      "room-1", "trait": "air_quality", "source": "backfill",
 	}, p.Tags)
 	assert.True(t, t1.Equal(p.Time))
 	assert.Equal(t, FieldValue{Kind: KindInt, Int: 500}, p.Fields["co2_ppm"])
