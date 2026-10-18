@@ -79,6 +79,7 @@ Query `house` for recent detail and `house_1h` for anything older than 30
 days. The `metricsd` token cannot read `house_1h`; the setup script creates a
 separate read-only `metricsd-grafana` token for dashboards, and
 [`grafana/`](grafana/README.md) holds a ready-made dashboard that uses it.
+The same token works for `metricsd.influx.read_token`.
 
 ## Overview
 
@@ -197,3 +198,37 @@ Config is `metricsd.yaml` in `/etc/house`, `$HOME/.config/house` or `.`; see
 
 The bucket and token must exist before metricsd starts (see Setup above); it
 does not create buckets.
+
+## Reading history back: `MetricsService.GetSeries`
+
+metricsd also serves `api/metrics.proto` on `metricsd.listen_port` (default
+17050), so other services never hold an Influx token or write Flux:
+
+```sh
+grpcurl -cert ... -key ... -cacert ... \
+  -d '{"device_id":"<id>","attribute":"air_quality.co2_ppm",
+       "start":"2026-10-13T00:00:00Z","max_points":144}' \
+  metricsd.example.com:17050 faltung.house.api.MetricsService/GetSeries
+```
+
+- `attribute` is `<trait>.<leaf>` (the `trait` tag and Influx field key), the
+  same key convention as the policy engine's `GetState`.
+- The series is the mean per window, capped at `max_points` (default 120,
+  max 1000). `resolution` in the response is the window actually used.
+- A range starting more than 28 days ago is read from `house_1h` (hourly
+  means, so `resolution` is at least 1h); anything newer comes from `house`.
+  The rollup lags the present by about an hour, so such a range has no data
+  for its most recent ~1h05m.
+- Points are stamped at the start of their window in both buckets.
+- Bool and enum leaves come back as 0/1 / the enum number (a bool's rollup
+  value is the last of the hour); whether to chart them is the caller's call.
+- No data (including a non-numeric attribute) is an empty `points`, not an
+  error. A store failure is `Unavailable`.
+
+The API serves with the `metricsd.tls.*` cert and requires client certs. If
+`metricsd.tls.cert_file` is unset it is unauthenticated, so it listens on
+loopback only (with a warning at startup).
+
+The API uses `metricsd.influx.read_token`, which must read **both** buckets -
+the `metricsd-grafana` token from the setup script does. Without it the write
+token is used and ranges older than 28 days fail.
