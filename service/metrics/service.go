@@ -128,12 +128,13 @@ func (s *Service) HistoryPoints(h HistoryDevice, sample *api2.HistorySample) []P
 		points = append(points, Point{
 			Measurement: StateMeasurement,
 			Tags: map[string]string{
-				"bridge_id":   h.BridgeID,
-				"device_id":   h.DeviceID,
-				"device_name": h.Name,
-				"room_id":     s.roomID(h.DeviceID),
-				"trait":       ts.Trait,
-				"source":      SourceBackfill,
+				"bridge_id":    h.BridgeID,
+				"device_id":    h.DeviceID,
+				"device_name":  h.Name,
+				"device_label": s.deviceLabel(h.DeviceID, h.Name),
+				"room_id":      s.roomID(h.DeviceID),
+				"trait":        ts.Trait,
+				"source":       SourceBackfill,
 			},
 			Fields: fields,
 			Time:   at,
@@ -241,12 +242,13 @@ func (s *Service) handleDevice(bridgeID string, d *apiDevice.Device, now time.Ti
 		points = append(points, Point{
 			Measurement: StateMeasurement,
 			Tags: map[string]string{
-				"bridge_id":   bridgeID,
-				"device_id":   d.GetId(),
-				"device_name": d.GetConfig().GetName(),
-				"room_id":     s.roomID(d.GetId()),
-				"trait":       ts.Trait,
-				"source":      SourceLive,
+				"bridge_id":    bridgeID,
+				"device_id":    d.GetId(),
+				"device_name":  d.GetConfig().GetName(),
+				"device_label": s.deviceLabel(d.GetId(), d.GetConfig().GetName()),
+				"room_id":      s.roomID(d.GetId()),
+				"trait":        ts.Trait,
+				"source":       SourceLive,
 			},
 			Fields: fields,
 			Time:   now,
@@ -309,4 +311,25 @@ func (s *Service) roomID(deviceID string) string {
 		return ""
 	}
 	return s.rooms.RoomID(deviceID)
+}
+
+// deviceLabel is the name a person should see for a device on a chart, built
+// the way the policy engine's notifications build it: the device's name
+// followed by its room in parentheses, e.g. "Airthings Wave Plus (Office)".
+// Device names alone aren't unique - two Wave Plus sensors are both just
+// "Airthings Wave Plus" - so the room is what tells them apart. A device with
+// no room gets its bare name, and one with no name falls back to its ID, as
+// the policy engine's GetDeviceName does.
+func (s *Service) deviceLabel(deviceID, deviceName string) string {
+	name := deviceName
+	if name == "" {
+		name = deviceID
+	}
+	if s.rooms == nil {
+		return name
+	}
+	if room := s.rooms.RoomName(deviceID); room != "" {
+		return name + " (" + room + ")"
+	}
+	return name
 }

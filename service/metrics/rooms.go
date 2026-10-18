@@ -17,28 +17,43 @@ import (
 type RoomLookup interface {
 	// RoomID returns the room ID for deviceID, or "" if it isn't linked.
 	RoomID(deviceID string) string
+	// RoomName returns the display name of the room deviceID is linked into,
+	// or "" if it isn't linked.
+	RoomName(deviceID string) string
 }
 
-// RoomResolver keeps a device->room map from HouseService.ListDeviceLinks,
+type roomRef struct {
+	id   string
+	name string
+}
+
+// RoomResolver keeps a device->room map built from HouseService.ListRooms,
 // refreshed on an interval. Points keep whatever room was current when they
-// were written; moving a device doesn't rewrite history.
+// were written; moving a device or renaming a room doesn't rewrite history.
 type RoomResolver struct {
 	logger *zap.Logger
 
 	mu    sync.RWMutex
-	rooms map[string]string
+	rooms map[string]roomRef
 }
 
 // NewRoomResolver creates an empty resolver; call Run to populate it.
 func NewRoomResolver(logger *zap.Logger) *RoomResolver {
-	return &RoomResolver{logger: logger, rooms: make(map[string]string)}
+	return &RoomResolver{logger: logger, rooms: make(map[string]roomRef)}
 }
 
 // RoomID implements RoomLookup.
 func (r *RoomResolver) RoomID(deviceID string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.rooms[deviceID]
+	return r.rooms[deviceID].id
+}
+
+// RoomName implements RoomLookup.
+func (r *RoomResolver) RoomName(deviceID string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.rooms[deviceID].name
 }
 
 // Run refreshes immediately and then every interval until ctx is done. A
@@ -58,22 +73,48 @@ func (r *RoomResolver) Run(ctx context.Context, client api2.HouseServiceClient, 
 	}
 }
 
+// refresh maps every linked device to its room by scanning each building's
+// ListRooms. This is the lookup the policy engine's home.getDeviceRoom uses
+// (see policy/housestate's GetDeviceRoom), done once for all devices per
+// refresh instead of once per query. ListRooms resolves a room's linked
+// devices server-side, and lists a linked device the bridge can't currently
+// report as an ID-only stub, so every link is seen.
 func (r *RoomResolver) refresh(ctx context.Context, client api2.HouseServiceClient) error {
-	stream, err := client.ListDeviceLinks(ctx, &api2.ListDeviceLinksRequest{})
+	buildings, err := client.ListBuildings(ctx, &api2.ListBuildingsRequest{})
 	if err != nil {
-		return fmt.Errorf("list device links: %w", err)
+		return fmt.Errorf("list buildings: %w", err)
 	}
-
-	rooms := make(map[string]string)
+	var buildingIDs []string
 	for {
-		link, err := stream.Recv()
+		b, err := buildings.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("recv device link: %w", err)
+			return fmt.Errorf("recv building: %w", err)
 		}
-		rooms[link.GetDeviceId()] = link.GetRoomId()
+		buildingIDs = append(buildingIDs, b.GetId())
+	}
+
+	rooms := make(map[string]roomRef)
+	for _, id := range buildingIDs {
+		id := id
+		stream, err := client.ListRooms(ctx, &api2.ListRoomsRequest{BuildingId: &id})
+		if err != nil {
+			return fmt.Errorf("list rooms for building %s: %w", id, err)
+		}
+		for {
+			room, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("recv room for building %s: %w", id, err)
+			}
+			for _, d := range room.GetDevices() {
+				rooms[d.GetId()] = roomRef{id: room.GetId(), name: room.GetConfig().GetName()}
+			}
+		}
 	}
 
 	r.mu.Lock()

@@ -40,6 +40,7 @@ go_test(
     embed = [":airthings_lib"],
     target_compatible_with = ["@platforms//os:linux"],
     deps = [
+        "//api",
         "//service/bridge",
         "@com_github_rmrobinson_airthings_btle//:airthings-btle",
         "@com_github_stretchr_testify//assert",
