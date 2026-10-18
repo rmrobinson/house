@@ -32,6 +32,7 @@ as `adminui.tls.*`.
 | `GET /rooms/{id}/camera/{device_id}` | `<video>` + inline WHEP negotiation against `Camera.media_stream.state.url` |
 | `POST /devices/{id}/commands` | `on=true\|false` (OnOff) or `brightness=0-100` (BrightnessAbsolute, the dimmer slider) → `ExecuteCommand` → swaps the device row. Requires the `HX-Request` header (CSRF guard); other values are a 400 |
 | `GET /devices/{id}/sparklines` | Charts for the device's numeric readings over `?range=24h\|7d\|30d` (default 24h); 404 unless `metrics_addr` is set, 400 for another range |
+| `GET /buildings/{id}/overview/trends` | The overview's TRENDS box: whole-house charts over `?range=24h\|7d\|30d` (default 24h); 404 unless `metrics_addr` is set, 400 for another range |
 | `GET /buildings/{id}/events` | SSE: `HouseService.StreamHouseUpdates` (occupancy dots, open room's grid, event log) + `BridgeService.StreamUpdates` (device rows) |
 
 ## Overview and exterior-motion popup
@@ -92,6 +93,33 @@ Unset, the row isn't rendered and `/devices/{id}/sparklines` is a 404.
   this connection (`tls.server_name` names housed); empty uses the host in
   `metrics_addr`, which on h031 means mapping `metricsd.h031.house.internal` to
   loopback via `extra_hosts`, as for housed.
+
+### Overview trends
+
+With `metrics_addr` set, the overview gets a TRENDS box between the CLIMATE and
+MEDIA boxes: interior temperature and humidity (mean), CO2 / VOC / radon (worst
+sensor), house power, and one power chart per EV charger, with the same 24h / 7d /
+30d toggle.
+
+- **Rebuilt, not read.** housed's room aggregation keeps no history, so each
+  chart is built from the member devices' recorded series, merged by metricsd
+  (`GetSeries` `device_ids` + `combine`: MEAN, MAX or SUM). It follows the same
+  devices as its tile but not housed's per-room strategies, so the two are close
+  rather than identical; the box says so.
+- **Which devices.** Derived from the live snapshot on the server, never from
+  the request. Climate charts use devices outside exterior floors that report
+  the metric; house power sums every device recording `power.power_w`,
+  `wall_power.power_w` or (for a sensor with no Power trait)
+  `power_consumption.power_usage_w`. A SUM splits across requests past
+  metricsd's 64-device cap; a MEAN is capped at 64. Temperature only covers
+  sensors that record `air_properties.temperature_c`.
+- **Not in the live push.** The overview body is two swap targets
+  (`#overview`, `#overview-rest`) with TRENDS between them, so the SSE
+  re-render never resets the charts or the chosen range. The box loads on page
+  load and is cached per series for 60s.
+- **Gaps.** A SUM understates a window where a device has no point, and a chart
+  whose history can't be read shows "history unavailable" instead of a partial
+  total.
 
 ## Notes
 

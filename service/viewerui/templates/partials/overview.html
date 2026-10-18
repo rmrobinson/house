@@ -1,5 +1,8 @@
-{{/* overview_body: house tiles, thermostats, per-floor motion. */}}
-{{define "overview_body"}}<div class="box">
+{{/* The overview body is two swap targets with the TRENDS box between them:
+overview_top (house, status, climate) and overview_rest (media, EV charger,
+motion). TRENDS lives outside both so a live re-render doesn't reset its
+charts; see overview_trends.go. */}}
+{{define "overview_top"}}<div class="box">
   <div class="box-title">HOUSE</div>
   <div class="stats">{{range .Tiles}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}</div>
 </div>
@@ -13,8 +16,9 @@
   <div class="stats">{{range .Interior}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}{{range .Thermostats}}<div class="stat"><div class="label">{{.Name}}</div><div class="val">{{.Setpoint}}</div><div class="dim note">set point · now {{.Current}}{{if .Mode}} · {{.Mode}}{{end}}{{if .Hold}} · hold{{end}}</div></div>{{end}}</div>
   <div class="sub-title">Exterior</div>
   <div class="stats">{{range .Exterior}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}</div>
-</div>
-<div class="box">
+</div>{{end}}
+
+{{define "overview_rest"}}<div class="box">
   <div class="box-title">MEDIA PLAYING</div>
   <div class="stats">{{range .Media}}<div class="stat"><div class="label">{{.Name}}{{if .Room}} · {{.Room}}{{end}}</div><div class="val">{{.Summary}}</div></div>
   {{else}}<div class="pad dim">Nothing playing.</div>{{end}}</div>
@@ -31,7 +35,15 @@
   {{else}}<li class="pad dim">No floors.</li>{{end}}</ul>
 </div>{{end}}
 
-{{define "overview_oob"}}<div id="overview" hx-swap-oob="innerHTML">{{template "overview_body" .}}</div>{{end}}
+{{define "overview_oob"}}<div id="overview" hx-swap-oob="innerHTML">{{template "overview_top" .}}</div><div id="overview-rest" hx-swap-oob="innerHTML">{{template "overview_rest" .}}</div>{{end}}
+
+{{/* overview_trends is the TRENDS box's contents: loaded by htmx on page load
+and re-requested by the range buttons, never part of the SSE push. */}}
+{{define "overview_trends"}}<div class="box-title">TRENDS</div>
+<div class="pad"><span class="spark-range">{{range .Ranges}}<button class="action{{if .Active}} on{{end}}" aria-pressed="{{if .Active}}true{{else}}false{{end}}" hx-get="{{.Href}}" hx-target="#trends" hx-swap="innerHTML" hx-disabled-elt="this">{{.Key}}</button>{{end}}</span>
+<span class="dim">rebuilt from device history - close to, not identical to, the tiles above</span></div>
+<div class="trends">{{range .Charts}}<div class="trend"><div class="label">{{.Label}}</div>{{if .Note}}<div class="dim">{{.Note}}</div>{{else}}<div class="val">{{.Value}} <span class="dim">{{.Unit}}</span></div><svg class="spark" viewBox="0 0 120 24" preserveAspectRatio="none" role="img" aria-label="{{.Label}}, {{.Min}} to {{.Max}} {{.Unit}}"><polyline fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" points="{{.Points}}"/></svg><div class="dim note">{{.Min}}–{{.Max}} · {{.Hint}}</div>{{end}}</div>
+{{else}}<div class="pad dim">No history to chart yet.</div>{{end}}</div>{{end}}
 
 {{define "exterior_state_oob"}}<div id="exterior-state" hidden data-active="{{.Active}}" hx-swap-oob="true"></div>{{end}}
 

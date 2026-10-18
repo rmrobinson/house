@@ -1,11 +1,13 @@
 {{define "content"}}
 <h1>{{.Name}} <a class="dim" href="/buildings/{{.ID}}">[ FLOORS &amp; ROOMS ]</a></h1>
 {{/* Live updates arrive as hx-swap-oob fragments (overview.go's
-handleOverviewEvents): the whole #overview body, the exterior-activity flag
+handleOverviewEvents): the #overview and #overview-rest bodies (TRENDS sits between them and is not pushed), the exterior-activity flag
 the popup's auto-close reads, and the camera popup itself. */}}
 <div hidden hx-ext="sse" sse-connect="/buildings/{{.ID}}/overview/events" sse-swap="message" hx-swap="none"></div>
 <div id="exterior-state" hidden data-active="{{.Overview.ExteriorActive}}"></div>
-<div id="overview">{{template "overview_body" .Overview}}</div>
+<div id="overview">{{template "overview_top" .Overview}}</div>
+{{if .Trends}}<div class="box" id="trends" hx-get="/buildings/{{.ID}}/overview/trends" hx-trigger="load" hx-swap="innerHTML"><div class="box-title">TRENDS</div><div class="pad dim">loading…</div></div>{{end}}
+<div id="overview-rest">{{template "overview_rest" .Overview}}</div>
 <div id="popup-slot"></div>
 <script>
 // Motion popup. The server drops a new #popup-slot (which fetches the cameras)
