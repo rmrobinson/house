@@ -1,5 +1,5 @@
 {{define "content"}}
-<h1>{{.Name}}</h1>
+<h1>{{.Name}} <a class="dim" href="/buildings/{{.ID}}/overview">[ OVERVIEW ]</a></h1>
 {{/* The SSE extension only listens on elements with sse-swap; each message is
 a set of hx-swap-oob fragments (sse.go), so the element itself swaps nothing. */}}
 <div hidden hx-ext="sse" sse-connect="/buildings/{{.ID}}/events" sse-swap="message" hx-swap="none"></div>

@@ -84,6 +84,22 @@ func main() {
 		s.iceServersJSON = string(j)
 	}
 
+	// Optional exterior weather: weather-server's WeatherService. Plaintext
+	// gRPC by default, or TLS against the system roots when weather_tls is set
+	// (the nginx front on :443); weather_psk matches its WEATHER_PSK if it has one.
+	if weatherAddr := viper.GetString("viewerui.weather_addr"); weatherAddr != "" {
+		dial := grpcutil.DialInsecure
+		if viper.GetBool("viewerui.weather_tls") {
+			dial = grpcutil.DialSystemTLS
+		}
+		conn, err := dial(weatherAddr)
+		if err != nil {
+			logger.Fatal("unable to dial weather server", zap.String("addr", weatherAddr), zap.Error(err))
+		}
+		defer conn.Close()
+		s.weather = startWeatherFeed(ctx, logger, conn, viper.GetString("viewerui.weather_psk"))
+	}
+
 	port := viper.GetInt("viewerui.listen_port")
 	logger.Info("serving viewer ui", zap.Int("port", port))
 	srv := &http.Server{

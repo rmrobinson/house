@@ -25,6 +25,8 @@ go_library(
         "migrations/000006_add_building_mode.up.sql",
         "migrations/000007_add_device_config.down.sql",
         "migrations/000007_add_device_config.up.sql",
+        "migrations/000008_add_floor_exterior.down.sql",
+        "migrations/000008_add_floor_exterior.up.sql",
     ],
     importpath = "github.com/rmrobinson/house/service/house/db",
     visibility = ["//visibility:public"],

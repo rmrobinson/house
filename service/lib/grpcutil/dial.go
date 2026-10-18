@@ -19,6 +19,13 @@ func DialInsecure(addr string) (*grpc.ClientConn, error) {
 	return grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
+// DialSystemTLS dials addr over TLS verified against the system root CAs -
+// for a public-facing server (e.g. behind an nginx or Caddy with an ACME
+// cert), as opposed to DialTLS's mutual TLS against this house's own CA.
+func DialSystemTLS(addr string) (*grpc.ClientConn, error) {
+	return grpc.Dial(addr, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})))
+}
+
 // ClientTLSConfig names the on-disk cert/key/CA files a gRPC client should
 // use to dial over mutual TLS. Like ServerTLSConfig, the cert/key are
 // re-read from disk on every handshake so a renewal sidecar can rotate them

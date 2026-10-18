@@ -10,8 +10,8 @@ import (
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
-// handleRoot sends you straight to your building when there's only one (the
-// common case), else lists them.
+// handleRoot sends you straight to your building's overview when there's only
+// one (the common case), else lists them.
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	buildings, err := houseview.ListBuildings(r.Context(), s.house)
 	if err != nil {
@@ -19,7 +19,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(buildings) == 1 {
-		http.Redirect(w, r, "/buildings/"+buildings[0].GetId(), http.StatusSeeOther)
+		http.Redirect(w, r, "/buildings/"+buildings[0].GetId()+"/overview", http.StatusSeeOther)
 		return
 	}
 	type row struct{ ID, Name string }

@@ -12,6 +12,7 @@
       <input type="hidden" name="version" value="{{.Floor.Version}}">
       <label>Name <input type="text" name="name" value="{{.Floor.Name}}" required></label>
       <label>Sort order <input type="number" name="sort_order" value="{{.Floor.SortOrder}}"></label>
+      <label><input type="checkbox" name="exterior" value="true" {{if .Floor.Exterior}}checked{{end}}> Exterior (outdoor area)</label>
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Save</button>

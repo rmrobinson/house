@@ -42,6 +42,7 @@ func domID(id string) string {
 // (same approach as adminui's templates.go).
 var pages = map[string]*template.Template{
 	"buildings": mustParsePage("templates/buildings.html"),
+	"overview":  mustParsePage("templates/overview.html", "templates/partials/overview.html"),
 	"building": mustParsePage("templates/building.html",
 		"templates/partials/floor_panel.html", "templates/partials/room_detail.html", "templates/partials/device_row.html"),
 }
