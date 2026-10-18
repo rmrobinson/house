@@ -13,6 +13,9 @@ viewerui:
   # only needed if that server runs with WEATHER_PSK.
   weather_addr: ""      # e.g. "weather.ktc1.net.faltung.ca:443"
   weather_tls: false
+  # CA that signed the weather server's certificate; empty = system roots. The
+  # house CA (e.g. tls.ca_file) if it is signed by the internal CA.
+  weather_ca_file: ""
   weather_psk: ""
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
