@@ -31,6 +31,7 @@ as `adminui.tls.*`.
 | `GET /rooms/{id}` | htmx detail pane: Properties grid, devices, VIEW CAMERA if a Camera is linked (a direct browser hit redirects to the full page) |
 | `GET /rooms/{id}/camera/{device_id}` | `<video>` + inline WHEP negotiation against `Camera.media_stream.state.url` |
 | `POST /devices/{id}/commands` | `on=true\|false` (OnOff) or `brightness=0-100` (BrightnessAbsolute, the dimmer slider) → `ExecuteCommand` → swaps the device row. Requires the `HX-Request` header (CSRF guard); other values are a 400 |
+| `GET /devices/{id}/sparklines` | Charts for the device's numeric readings over `?range=24h\|7d\|30d` (default 24h); 404 unless `metrics_addr` is set, 400 for another range |
 | `GET /buildings/{id}/events` | SSE: `HouseService.StreamHouseUpdates` (occupancy dots, open room's grid, event log) + `BridgeService.StreamUpdates` (device rows) |
 
 ## Overview and exterior-motion popup
@@ -63,6 +64,34 @@ as `adminui.tls.*`.
   server has `WEATHER_PSK`); unset, or a reading older than 15 minutes, shows one
   placeholder tile saying why. The proto is vendored at
   `api/weather/v1/weather.proto` - weather-server stays the source of truth.
+
+## Reading history (sparklines)
+
+Set `viewerui.metrics_addr` to metricsd's `MetricsService` (its `listen_port`,
+17050 by default) and each device with numeric readings gets a third row under
+its readings row: one small chart per reading, with a 24h / 7d / 30d toggle.
+Unset, the row isn't rendered and `/devices/{id}/sparklines` is a 404.
+
+- **Which readings.** Only numeric ones (`houseview.Reading.Metric` is set:
+  temperature, humidity, CO2, power, battery %, ...); text and bool readings
+  have none. The metric to read is derived from the device on the server, never
+  from the request.
+- **Lazy and cached.** The row loads once when it scrolls into view
+  (`hx-trigger="intersect once"`, so a hidden DETAILS row costs nothing), one
+  request per device. Each `(device, metric, range)` is cached for 60s; failed
+  lookups are not cached. A chart whose history can't be read says so rather
+  than failing the row.
+- **Not in the live push.** The SSE push swaps only the device row and readings
+  cell, so a push never resets the range you picked.
+- **Time axis.** Each chart spans the whole window, so a metric recorded for
+  only a few hours sits at the right edge instead of stretching to fill it. 30d
+  reads the hourly rollup, which lags by about an hour and only reaches back to
+  when the rollup began.
+- **TLS.** Dialed with the same mTLS identity as the house dial.
+  `metrics_server_name` overrides the name checked against metricsd's cert for
+  this connection (`tls.server_name` names housed); empty uses the host in
+  `metrics_addr`, which on h031 means mapping `metricsd.h031.house.internal` to
+  loopback via `extra_hosts`, as for housed.
 
 ## Notes
 

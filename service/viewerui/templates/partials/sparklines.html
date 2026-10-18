@@ -1,0 +1,5 @@
+{{/* device_sparklines is what a device's sparks row swaps in: one chart per
+numeric reading plus the 24h/7d/30d range links, which re-request this fragment
+into the same cell. Chart geometry is computed in Go (metrics.go); the template
+only emits numbers it was handed. */}}
+{{define "device_sparklines"}}<span class="spark-range">{{range .Ranges}}<button class="action{{if .Active}} on{{end}}" aria-pressed="{{if .Active}}true{{else}}false{{end}}" hx-get="{{.Href}}" hx-target="closest td" hx-swap="innerHTML" hx-disabled-elt="this">{{.Key}}</button>{{end}}</span>{{range .Charts}}<span class="spark-item"><span class="dim">{{.Label}}</span>{{if .Note}}<span class="dim">{{.Note}}</span>{{else}}<svg class="spark" viewBox="0 0 120 24" preserveAspectRatio="none" role="img" aria-label="{{.Label}}, {{.Min}} to {{.Max}}"><polyline fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" points="{{.Points}}"/></svg><span class="dim">{{.Min}}–{{.Max}}</span>{{end}}</span>{{end}}{{end}}

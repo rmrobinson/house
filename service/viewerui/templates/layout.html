@@ -62,6 +62,14 @@
   tr.readings td::before { content: "\21b3"; margin-right: 0.5rem; color: var(--dim); }
   html:not(.hide-readings) table.devices tr:has(+ tr.readings:not([hidden])) td { border-bottom: none; }
   tr.readings[hidden], html.hide-readings tr.readings { display: none; }
+  tr.sparks td { padding: 0 0.75rem 0.5rem 2rem; font-size: 0.72rem; }
+  html:not(.hide-readings) table.devices tr.readings:not([hidden]):has(+ tr.sparks) td { border-bottom: none; }
+  html.hide-readings tr.sparks { display: none; }
+  .spark-range { margin-right: 1rem; white-space: nowrap; }
+  .spark-range button.action { padding: 0 0.4rem; font-size: 0.72rem; }
+  .spark-range button.action.on { color: var(--accent); border-color: var(--accent); }
+  .spark-item { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 1.25rem 0.1rem 0; white-space: nowrap; }
+  svg.spark { width: 120px; height: 24px; color: var(--accent); }
   .reading { margin-right: 1.25rem; white-space: nowrap; }
   .reading.alert { color: var(--err); }
   button.action[aria-pressed="false"] { color: var(--dim); }

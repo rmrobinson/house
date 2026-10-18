@@ -17,6 +17,13 @@ viewerui:
   # house CA (e.g. tls.ca_file) if it is signed by the internal CA.
   weather_ca_file: ""
   weather_psk: ""
+  # Optional: metricsd's MetricsService (its listen_port, default 17050), for
+  # the sparklines under each device's readings. Unset = no sparklines. Dialed
+  # with the mutual-TLS identity below; metrics_server_name overrides the name
+  # checked against its certificate for this connection only (empty = the
+  # host in the address), since tls.server_name names housed.
+  metrics_addr: ""
+  metrics_server_name: ""
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
     cert_file: ""
