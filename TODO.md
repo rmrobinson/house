@@ -38,7 +38,7 @@
 
 ## Metrics
 
-[ ] store device state changes, commands and Airthings history in InfluxDB v2 via a new service/metrics daemon (metricsd): CommandEvent on the bridge update stream + Command.origin, deadband+heartbeat sampling (all params configurable), optional BridgeService.GetDeviceHistory (Airthings first; port the telegraf RefreshHistory logic), daily backfill scheduler, Airthings refresh_interval 300s -> 21600s, 30d raw / ~548d downsampled buckets. Full phased plan: house-metrics-plan.md (handoff doc, ~/Downloads)
+[ ] store device state changes, commands and Airthings history in InfluxDB v2 via a new service/metrics daemon (metricsd): CommandEvent on the bridge update stream + Command.origin, deadband+heartbeat sampling (all params configurable), optional BridgeService.GetDeviceHistory (Airthings first; port the telegraf RefreshHistory logic), daily backfill scheduler, Airthings refresh_interval 300s -> 3600s (live values hourly, 12h history backfill restores 5m resolution), 30d raw / ~548d downsampled buckets. Full phased plan: house-metrics-plan.md (handoff doc, ~/Downloads)
 
 ## Policy engine
 
