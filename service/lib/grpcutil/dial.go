@@ -19,11 +19,21 @@ func DialInsecure(addr string) (*grpc.ClientConn, error) {
 	return grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 }
 
-// DialSystemTLS dials addr over TLS verified against the system root CAs -
-// for a public-facing server (e.g. behind an nginx or Caddy with an ACME
-// cert), as opposed to DialTLS's mutual TLS against this house's own CA.
-func DialSystemTLS(addr string) (*grpc.ClientConn, error) {
-	return grpc.Dial(addr, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})))
+// DialServerTLS dials addr over one-way TLS (no client certificate): the
+// server's certificate is verified against caFile, or against the system root
+// CAs when caFile is empty. For a server fronted by nginx/Caddy rather than
+// one of this house's own mTLS services - the certificate may still come from
+// the house's private CA (then pass that CA's file) or a public one.
+func DialServerTLS(addr, caFile string) (*grpc.ClientConn, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caFile != "" {
+		rootCAs, err := loadCAPool(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("loading root CA pool: %w", err)
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+	return grpc.Dial(addr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 }
 
 // ClientTLSConfig names the on-disk cert/key/CA files a gRPC client should

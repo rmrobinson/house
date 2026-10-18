@@ -57,7 +57,9 @@ as `adminui.tls.*`.
   thermostat's set point. Exterior is weather-server's newest reading (temp
   and feels-like, conditions, humidity, wind, rain today, UV, pressure). Set
   `viewerui.weather_addr` (plaintext gRPC, or `weather_tls: true` for the nginx
-  front on :443, e.g. `weather.ktc1.net.faltung.ca:443`; plus `weather_psk` if the
+  front on :443, verified against
+  `weather_ca_file` or the system roots - its cert is from the house CA, so
+  point it at `tls.ca_file`; plus `weather_psk` if the
   server has `WEATHER_PSK`); unset, or a reading older than 15 minutes, shows one
   placeholder tile saying why. The proto is vendored at
   `api/weather/v1/weather.proto` - weather-server stays the source of truth.
