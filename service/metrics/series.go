@@ -30,9 +30,34 @@ const (
 	rawMinWindow = time.Minute
 )
 
+// Combine is how several devices' per-window values merge into one point.
+type Combine int
+
+const (
+	CombineMean Combine = iota // the zero value
+	CombineMax
+	CombineSum
+)
+
+// fluxFn is the Flux aggregate that implements c over a window's tables.
+func (c Combine) fluxFn() string {
+	switch c {
+	case CombineMax:
+		return "max"
+	case CombineSum:
+		return "sum"
+	default:
+		return "mean"
+	}
+}
+
 // SeriesQuery selects one attribute's values over [Start, End).
 type SeriesQuery struct {
-	DeviceID string
+	// DeviceID selects one device. DeviceIDs, when non-empty, selects several
+	// whose series are merged with Combine, and DeviceID is ignored.
+	DeviceID  string
+	DeviceIDs []string
+	Combine   Combine
 	// Trait and Field are the "trait" tag and the Influx field key.
 	Trait, Field string
 	Start, End   time.Time
@@ -144,26 +169,55 @@ func (q *InfluxQuerier) querySeries(ctx context.Context, bucket, agg string, sq 
 		aggFilter = " and r.agg == " + fluxString(agg)
 	}
 
-	flux := fmt.Sprintf(`from(bucket: %s)
-  |> range(start: %s, stop: %s)
-  |> filter(fn: (r) => r._measurement == %s and r.device_id == %s and r.trait == %s and r._field == %s%s)
-  |> toFloat()
-  |> group()
-  |> sort(columns: ["_time"])
-  |> aggregateWindow(every: %ds, fn: mean, createEmpty: false, timeSrc: "_start")
-  |> keep(columns: ["_time", "_value"])`,
-		fluxString(bucket),
-		sq.Start.UTC().Format(time.RFC3339), sq.End.UTC().Format(time.RFC3339),
-		fluxString(StateMeasurement), fluxString(sq.DeviceID), fluxString(sq.Trait), fluxString(sq.Field),
-		aggFilter,
-		int64(window/time.Second))
-
-	body, err := q.runFlux(ctx, flux)
+	body, err := q.runFlux(ctx, seriesFlux(bucket, aggFilter, sq, window))
 	if err != nil {
 		return nil, err
 	}
 	defer body.Close()
 	return parseSeries(body)
+}
+
+// seriesFlux builds the windowed-mean query. aggFilter is either empty or a
+// ` and r.agg == "..."` clause selecting one aggregate of a rollup bucket.
+//
+// One device (sq.DeviceID) is a single series. Several (sq.DeviceIDs) are
+// averaged within each window per device first and then combined across
+// devices per window, so the result is one point per window however many
+// devices reported and however often. Grouping by device_id before the
+// window merges a device's live and backfill points, which differ only in tags.
+func seriesFlux(bucket, aggFilter string, sq SeriesQuery, window time.Duration) string {
+	rangeAndFilter := func(deviceExpr string) string {
+		return fmt.Sprintf(`from(bucket: %s)
+  |> range(start: %s, stop: %s)
+  |> filter(fn: (r) => r._measurement == %s and %s and r.trait == %s and r._field == %s%s)
+  |> toFloat()`,
+			fluxString(bucket),
+			sq.Start.UTC().Format(time.RFC3339), sq.End.UTC().Format(time.RFC3339),
+			fluxString(StateMeasurement), deviceExpr, fluxString(sq.Trait), fluxString(sq.Field),
+			aggFilter)
+	}
+
+	if len(sq.DeviceIDs) == 0 {
+		return rangeAndFilter("r.device_id == "+fluxString(sq.DeviceID)) + fmt.Sprintf(`
+  |> group()
+  |> sort(columns: ["_time"])
+  |> aggregateWindow(every: %ds, fn: mean, createEmpty: false, timeSrc: "_start")
+  |> keep(columns: ["_time", "_value"])`, int64(window/time.Second))
+	}
+
+	ids := make([]string, len(sq.DeviceIDs))
+	for i, id := range sq.DeviceIDs {
+		ids[i] = fluxString(id)
+	}
+	return rangeAndFilter("contains(value: r.device_id, set: ["+strings.Join(ids, ", ")+"])") + fmt.Sprintf(`
+  |> group(columns: ["device_id"])
+  |> sort(columns: ["_time"])
+  |> aggregateWindow(every: %ds, fn: mean, createEmpty: false, timeSrc: "_start")
+  |> group(columns: ["_time"])
+  |> %s()
+  |> group()
+  |> sort(columns: ["_time"])
+  |> keep(columns: ["_time", "_value"])`, int64(window/time.Second), sq.Combine.fluxFn())
 }
 
 // runFlux POSTs flux to the query API and returns the CSV body of a 2xx.

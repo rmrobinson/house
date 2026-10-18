@@ -162,6 +162,76 @@ func TestSeriesStampsWindowStartAndHonoursMaxPoints(t *testing.T) {
 	assert.Equal(t, 4.0, res.Points[2].Value)
 }
 
+func TestSeriesMultiDeviceQuery(t *testing.T) {
+	now := time.Now()
+	var flux string
+	q := newSeriesQuerier(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		flux = string(b)
+		_, _ = w.Write([]byte(seriesCSV))
+	})
+
+	for combine, fn := range map[Combine]string{CombineMean: "mean", CombineMax: "max", CombineSum: "sum"} {
+		res, err := q.Series(context.Background(), SeriesQuery{
+			DeviceIDs: []string{"a", "b$"}, Combine: combine, Trait: "power", Field: "power_w",
+			Start: now.Add(-24 * time.Hour), End: now, MaxPoints: 48,
+		})
+		require.NoError(t, err)
+		assert.Len(t, res.Points, 2)
+
+		// Each device is windowed on its own, then merged across devices
+		// per window by the chosen function.
+		assert.Contains(t, flux, `contains(value: r.device_id, set: ["a", "b\$"])`)
+		assert.NotContains(t, flux, `r.device_id ==`)
+		assert.Contains(t, flux, `group(columns: ["device_id"])`)
+		assert.Contains(t, flux, `group(columns: ["_time"])`)
+		assert.Contains(t, flux, "|> "+fn+"()")
+		assert.Less(t, strings.Index(flux, "aggregateWindow"), strings.Index(flux, `group(columns: ["_time"])`),
+			"windowing must precede the cross-device merge")
+	}
+}
+
+// The single-device query is the one verified against live data; adding the
+// multi-device path must not change it.
+func TestSeriesSingleDeviceQueryIsUnchangedByMultiSupport(t *testing.T) {
+	sq := SeriesQuery{
+		DeviceID: "dev", Trait: "air_quality", Field: "co2_ppm",
+		Start: time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 18, 0, 0, 0, 0, time.UTC),
+	}
+	want := `from(bucket: "house")
+  |> range(start: 2026-10-17T00:00:00Z, stop: 2026-10-18T00:00:00Z)
+  |> filter(fn: (r) => r._measurement == "state" and r.device_id == "dev" and r.trait == "air_quality" and r._field == "co2_ppm")
+  |> toFloat()
+  |> group()
+  |> sort(columns: ["_time"])
+  |> aggregateWindow(every: 1800s, fn: mean, createEmpty: false, timeSrc: "_start")
+  |> keep(columns: ["_time", "_value"])`
+	assert.Equal(t, want, seriesFlux("house", "", sq, 30*time.Minute))
+}
+
+func TestSeriesMultiDeviceRollupFallsBackToLast(t *testing.T) {
+	var queries []string
+	q := newSeriesQuerier(t, func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		queries = append(queries, string(b))
+		if strings.Contains(string(b), `r.agg == "mean"`) {
+			_, _ = w.Write([]byte(emptyCSV))
+			return
+		}
+		_, _ = w.Write([]byte(seriesCSV))
+	})
+	now := time.Now()
+	res, err := q.Series(context.Background(), SeriesQuery{
+		DeviceIDs: []string{"a", "b"}, Combine: CombineMax, Trait: "water", Field: "is_active",
+		Start: now.Add(-60 * 24 * time.Hour), End: now, MaxPoints: 50,
+	})
+	require.NoError(t, err)
+	assert.Len(t, res.Points, 2)
+	require.Len(t, queries, 2)
+	assert.Contains(t, queries[0], "contains(value: r.device_id")
+	assert.Contains(t, queries[1], `r.agg == "last"`)
+}
+
 func TestSeriesWindowDefaultsZeroMaxPoints(t *testing.T) {
 	end := time.Now()
 	assert.NotPanics(t, func() {
@@ -248,6 +318,68 @@ func TestGetSeries(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, MaxMaxPoints, f.got.MaxPoints)
+	})
+
+	t.Run("device_ids are de-duplicated and carry the combine mode", func(t *testing.T) {
+		f := &fakeSeries{}
+		_, err := newServer(f).GetSeries(context.Background(), &api2.GetSeriesRequest{
+			DeviceIds: []string{"a", "b", "a", "c"}, Attribute: "power.power_w", Start: start,
+			Combine: api2.GetSeriesRequest_COMBINE_SUM,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"a", "b", "c"}, f.got.DeviceIDs)
+		assert.Empty(t, f.got.DeviceID)
+		assert.Equal(t, CombineSum, f.got.Combine)
+	})
+
+	t.Run("combine modes map, unspecified is the mean", func(t *testing.T) {
+		for in, want := range map[api2.GetSeriesRequest_Combine]Combine{
+			api2.GetSeriesRequest_COMBINE_UNSPECIFIED: CombineMean,
+			api2.GetSeriesRequest_COMBINE_MEAN:        CombineMean,
+			api2.GetSeriesRequest_COMBINE_MAX:         CombineMax,
+			api2.GetSeriesRequest_COMBINE_SUM:         CombineSum,
+		} {
+			f := &fakeSeries{}
+			_, err := newServer(f).GetSeries(context.Background(), &api2.GetSeriesRequest{
+				DeviceIds: []string{"a", "b"}, Attribute: "a.b", Start: start, Combine: in,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, want, f.got.Combine, in.String())
+		}
+	})
+
+	t.Run("one distinct device in device_ids takes the single-device query", func(t *testing.T) {
+		f := &fakeSeries{}
+		_, err := newServer(f).GetSeries(context.Background(), &api2.GetSeriesRequest{
+			DeviceIds: []string{"only", "only"}, Attribute: "a.b", Start: start,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "only", f.got.DeviceID)
+		assert.Empty(t, f.got.DeviceIDs)
+	})
+
+	t.Run("bad device selection", func(t *testing.T) {
+		tooMany := make([]string, MaxSeriesDevices+1)
+		for i := range tooMany {
+			tooMany[i] = "d" + strconv.Itoa(i)
+		}
+		for name, req := range map[string]*api2.GetSeriesRequest{
+			"both device_id and device_ids": {DeviceId: "a", DeviceIds: []string{"b", "c"}, Attribute: "a.b", Start: start},
+			"empty id in device_ids":        {DeviceIds: []string{"a", ""}, Attribute: "a.b", Start: start},
+			"too many devices":              {DeviceIds: tooMany, Attribute: "a.b", Start: start},
+			"unknown combine":               {DeviceIds: []string{"a", "b"}, Attribute: "a.b", Start: start, Combine: 99},
+		} {
+			t.Run(name, func(t *testing.T) {
+				_, err := newServer(&fakeSeries{}).GetSeries(context.Background(), req)
+				assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			})
+		}
+
+		// Exactly the cap is allowed.
+		_, err := newServer(&fakeSeries{}).GetSeries(context.Background(), &api2.GetSeriesRequest{
+			DeviceIds: tooMany[:MaxSeriesDevices], Attribute: "a.b", Start: start,
+		})
+		assert.NoError(t, err)
 	})
 
 	t.Run("empty result is not an error", func(t *testing.T) {
