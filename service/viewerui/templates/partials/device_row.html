@@ -13,6 +13,12 @@ none; the DETAILS toggle hides every one via CSS (layout.html). */}}
 {{define "device_readings"}}<tr id="device-readings-{{domid .ID}}" class="readings"{{if not .Readings}} hidden{{end}}>{{template "device_readings_cell" .}}</tr>{{end}}
 {{define "device_readings_oob"}}<tr id="device-readings-{{domid .ID}}" class="readings" hx-swap-oob="true"{{if not .Readings}} hidden{{end}}>{{template "device_readings_cell" .}}</tr>{{end}}
 {{define "device_readings_cell"}}<td colspan="2">{{range .Readings}}<span class="reading{{if .Alert}} alert{{end}}"><span class="dim">{{.Label}}</span> {{.Value}}</span>{{end}}</td>{{end}}
+{{/* device_sparks is a third row: sparklines of the device's numeric readings,
+loaded once when it scrolls into view (hx-trigger "intersect once" never fires
+while the DETAILS toggle hides it). It is deliberately not part of the live SSE
+push, which swaps only the row and readings cell - so a push can't reset the
+range the viewer picked. Rendered only when a metrics server is configured. */}}
+{{define "device_sparks"}}{{if .Sparks}}<tr class="sparks"><td colspan="2" hx-get="{{.SparksHref}}" hx-trigger="intersect once" hx-swap="innerHTML"><span class="dim">loading history…</span></td></tr>{{end}}{{end}}
 {{define "device_info_oob"}}<td id="device-info-{{domid .ID}}" hx-swap-oob="true">{{template "device_info" .}}</td>{{end}}
 {{define "device_info"}}{{.Name}}<span class="badge">{{.Kind}}</span>{{if not .Online}}<span class="badge offline">offline</span>{{end}}{{if .Error}}<div class="err">{{.Error}}</div>{{end}}{{end}}
 {{define "device_row_cells"}}<td id="device-info-{{domid .ID}}">{{template "device_info" .}}</td>

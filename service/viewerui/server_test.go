@@ -176,9 +176,14 @@ type fakeBridge struct {
 	// updates, when non-nil, feeds StreamUpdates - a test can push an
 	// *api2.Update onto it to simulate a live BridgeService device update.
 	updates chan *api2.Update
+	// devices, when it has the requested ID, is returned from GetDevice.
+	devices map[string]*apiDevice.Device
 }
 
 func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*apiDevice.Device, error) {
+	if d, ok := f.devices[r.GetId()]; ok {
+		return d, nil
+	}
 	if r.GetId() == "cam1" {
 		c := cam()
 		switch f.camURL {
@@ -605,7 +610,7 @@ func TestCameraPlayerCarriesICEServers(t *testing.T) {
 func TestRoomDetailOffersEveryCamera(t *testing.T) {
 	cam2 := cam()
 	cam2.Id, cam2.Config.Name = "cam2", "Garage cam"
-	rv := roomToDetail(&api2.Room{Id: "r1", Devices: []*apiDevice.Device{cam(), cam2}})
+	rv := roomToDetail(&api2.Room{Id: "r1", Devices: []*apiDevice.Device{cam(), cam2}}, false)
 	require.Len(t, rv.Cameras, 2)
 	var sb strings.Builder
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "room_detail", rv))

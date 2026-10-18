@@ -22,6 +22,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
+	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 )
@@ -101,6 +102,24 @@ func main() {
 		}
 		defer conn.Close()
 		s.weather = startWeatherFeed(ctx, logger, conn, viper.GetString("viewerui.weather_psk"))
+	}
+
+	// Optional device-history sparklines: metricsd's MetricsService. Uses the
+	// same mTLS identity as the house dial; metrics_server_name replaces
+	// tls.server_name for this connection only (that one names housed).
+	if metricsAddr := viper.GetString("viewerui.metrics_addr"); metricsAddr != "" {
+		var metricsTLS *grpcutil.ClientTLSConfig
+		if tlsCfg != nil {
+			c := *tlsCfg
+			c.ServerName = viper.GetString("viewerui.metrics_server_name")
+			metricsTLS = &c
+		}
+		conn, err := grpcutil.Dial(metricsAddr, metricsTLS)
+		if err != nil {
+			logger.Fatal("unable to dial metrics server", zap.String("addr", metricsAddr), zap.Error(err))
+		}
+		defer conn.Close()
+		s.metrics = newMetricsFeed(logger, api2.NewMetricsServiceClient(conn))
 	}
 
 	port := viper.GetInt("viewerui.listen_port")

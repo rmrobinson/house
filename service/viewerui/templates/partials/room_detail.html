@@ -14,7 +14,7 @@
     {{end}}</ul>
   </dialog>{{end}}
   <table class="devices"><tbody>
-  {{range .Devices}}{{template "device_row" .}}{{template "device_readings" .}}
+  {{range .Devices}}{{template "device_row" .}}{{template "device_readings" .}}{{template "device_sparks" .}}
   {{else}}<tr><td class="dim">No devices linked.</td></tr>
   {{end}}</tbody></table>
 </div>{{end}}

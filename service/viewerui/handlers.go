@@ -97,7 +97,7 @@ func (s *Server) handleBuilding(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		floorID = room.GetFloorId()
-		rv := roomToDetail(room)
+		rv := roomToDetail(room, s.metrics != nil)
 		data.Room = &rv
 	}
 
@@ -148,7 +148,7 @@ func (s *Server) selectRoom(r *http.Request, panel *floorPanelView, roomID strin
 	if err != nil {
 		return nil, err
 	}
-	rv := roomToDetail(room)
+	rv := roomToDetail(room, s.metrics != nil)
 	return &rv, nil
 }
 
@@ -163,7 +163,7 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/buildings/"+room.GetBuildingId()+"?room="+url.QueryEscape(room.GetId()), http.StatusSeeOther)
 		return
 	}
-	s.renderFragment(w, "room_detail", roomToDetail(room))
+	s.renderFragment(w, "room_detail", roomToDetail(room, s.metrics != nil))
 }
 
 // handleCamera swaps the detail pane for a <video> that negotiates WHEP
