@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 
 	"github.com/rmrobinson/house/service/lib/configutil"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
@@ -85,14 +86,16 @@ func main() {
 	}
 
 	// Optional exterior weather: weather-server's WeatherService. Plaintext
-	// gRPC by default, or TLS against the system roots when weather_tls is set
-	// (the nginx front on :443); weather_psk matches its WEATHER_PSK if it has one.
+	// gRPC by default, or one-way TLS when weather_tls is set (the nginx
+	// front on :443), verified against weather_ca_file or the system roots; weather_psk matches its WEATHER_PSK if it has one.
 	if weatherAddr := viper.GetString("viewerui.weather_addr"); weatherAddr != "" {
-		dial := grpcutil.DialInsecure
+		var conn *grpc.ClientConn
+		var err error
 		if viper.GetBool("viewerui.weather_tls") {
-			dial = grpcutil.DialSystemTLS
+			conn, err = grpcutil.DialServerTLS(weatherAddr, viper.GetString("viewerui.weather_ca_file"))
+		} else {
+			conn, err = grpcutil.DialInsecure(weatherAddr)
 		}
-		conn, err := dial(weatherAddr)
 		if err != nil {
 			logger.Fatal("unable to dial weather server", zap.String("addr", weatherAddr), zap.Error(err))
 		}

@@ -62,6 +62,17 @@ helper package or a service rather than one of the fixed surfaces above,
 that's a sign it belongs under `bridges/lib`, `service/lib`, or
 `service/<name>` instead.
 
+## No deployment-specific addressing in this repo
+
+`house` is host-agnostic. Never put internal DNS names, host names (the
+machines a deployment runs on), IP addresses or ports that belong to one
+particular deployment in code, example configs, READMEs, comments, tests or
+commit/PR text. Use placeholders (`weather.example.com:443`, `<host>`) or an
+empty value in example configs. Everything specific to a deployment - which
+host runs what, concrete addresses, per-host config and the user's own
+policies - lives in the separate `house-config` repo. Check your diff for
+this before committing.
+
 ## Build system: Bazel + Gazelle (Go modules are secondary)
 
 This is a Bazel workspace (bzlmod, `MODULE.bazel`), not a plain Go module,
