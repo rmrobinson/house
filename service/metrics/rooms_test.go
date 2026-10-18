@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,6 +101,39 @@ func TestRoomResolverResolvesIDAndNameAcrossBuildings(t *testing.T) {
 	// A device that isn't linked anywhere has neither.
 	assert.Empty(t, r.RoomID("stray"))
 	assert.Empty(t, r.RoomName("stray"))
+}
+
+func TestRoomResolverWaitReady(t *testing.T) {
+	srv := &fakeHouseServer{
+		buildings: []string{"b1"},
+		rooms:     map[string][]*api2.Room{"b1": {room("r-office", "Office", "lamp")}},
+	}
+	r, client := newRoomResolverHarness(t, srv)
+
+	// Nothing loaded yet: the wait gives up rather than blocking recording.
+	assert.False(t, r.WaitReady(context.Background(), 10*time.Millisecond))
+
+	// A failed refresh doesn't count as ready.
+	srv.mu.Lock()
+	srv.roomsErr = status.Error(codes.Unavailable, "housed restarting")
+	srv.mu.Unlock()
+	require.Error(t, r.refresh(context.Background(), client))
+	assert.False(t, r.WaitReady(context.Background(), 10*time.Millisecond))
+
+	srv.mu.Lock()
+	srv.roomsErr = nil
+	srv.mu.Unlock()
+	require.NoError(t, r.refresh(context.Background(), client))
+	assert.True(t, r.WaitReady(context.Background(), time.Second))
+
+	// Ready stays true across later refreshes (the channel is only closed once).
+	require.NoError(t, r.refresh(context.Background(), client))
+	assert.True(t, r.WaitReady(context.Background(), time.Second))
+
+	// A cancelled context ends the wait early on a resolver that never loads.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.False(t, NewRoomResolver(zaptest.NewLogger(t)).WaitReady(ctx, time.Minute))
 }
 
 func TestRoomResolverKeepsPreviousRoomsWhenARefreshFails(t *testing.T) {

@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -27,6 +28,10 @@ import (
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/metrics"
 )
+
+// roomsReadyTimeout bounds how long startup waits for the first room load
+// before recording without room labels.
+const roomsReadyTimeout = 30 * time.Second
 
 func main() {
 	logger, err := zap.NewDevelopment()
@@ -138,6 +143,15 @@ func main() {
 		zap.String("house_addr", houseAddr),
 		zap.String("sampling_mode", string(sampling.Mode)),
 		zap.Duration("heartbeat", sampling.Heartbeat))
+
+	// The stream's initial replay and the backfill both stamp each point with
+	// a device label that includes its room, so hold them until the rooms have
+	// loaded. Otherwise every restart writes a burst of room-less labels that
+	// charts as a duplicate of each device. If house is down, record anyway.
+	if !rooms.WaitReady(ctx, roomsReadyTimeout) && ctx.Err() == nil {
+		logger.Warn("rooms not loaded yet; recording with room-less device labels until they are",
+			zap.Duration("waited", roomsReadyTimeout))
+	}
 
 	conn := bridgeconn.New(logger, houseAddr, tlsCfg)
 
