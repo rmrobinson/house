@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "handlers.go",
         "main.go",
+        "metrics.go",
         "overview.go",
         "overview_metrics.go",
         "server.go",
@@ -24,6 +25,7 @@ go_library(
         "templates/partials/overview.html",
         "templates/partials/room_detail.html",
         "templates/partials/room_update.html",
+        "templates/partials/sparklines.html",
     ],
     importpath = "github.com/rmrobinson/house/service/viewerui",
     visibility = ["//visibility:private"],
@@ -42,6 +44,7 @@ go_library(
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
+        "@org_golang_google_protobuf//types/known/timestamppb",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -54,7 +57,10 @@ go_binary(
 
 go_test(
     name = "viewerui_test",
-    srcs = ["server_test.go"],
+    srcs = [
+        "metrics_test.go",
+        "server_test.go",
+    ],
     embed = [":viewerui_lib"],
     deps = [
         "//api",
