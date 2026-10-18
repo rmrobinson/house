@@ -114,13 +114,13 @@
       "title": "Radon (long-term and short-term)",
       "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "displayName": "${__field.labels.label} (${__field.labels._field})", "unit": "suffix: Bq/m³", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
+      "fieldConfig": { "defaults": { "displayName": "${__field.labels.label} (${__field.labels.term})", "unit": "suffix: Bq/m³", "decimals": 0, "custom": { "spanNulls": 3600000, "lineWidth": 1 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
-          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_quality\" and (r._field == \"radon_bq_m3\" or r._field == \"radon_short_term_bq_m3\"))\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> map(fn: (r) => ({r with label: if exists r.device_label then r.device_label else r.device_name}))\n  |> filter(fn: (r) => r.label =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_id\", \"label\", \"_field\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_id\", \"label\", \"_field\"])"
+          "query": "import \"experimental\"\nbucketName = if v.timeRangeStart < experimental.subDuration(d: 28d, from: now()) then \"house_1h\" else \"house\"\nwindow = if bucketName == \"house_1h\" and int(v: v.windowPeriod) < int(v: 1h) then 1h else v.windowPeriod\n\nfrom(bucket: bucketName)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"state\" and r.trait == \"air_quality\" and (r._field == \"radon_bq_m3\" or r._field == \"radon_short_term_bq_m3\"))\n  |> filter(fn: (r) => bucketName == \"house\" or r.agg == \"mean\")\n  |> map(fn: (r) => ({r with label: if exists r.device_label then r.device_label else r.device_name, term: if r._field == \"radon_short_term_bq_m3\" then \"short-term\" else \"long-term\"}))\n  |> filter(fn: (r) => r.label =~ /^${device:regex}$/)\n  |> toFloat()\n  |> group(columns: [\"device_id\", \"label\", \"term\"])\n  |> aggregateWindow(every: window, fn: mean, createEmpty: false)\n  |> keep(columns: [\"_time\", \"_value\", \"device_id\", \"label\", \"term\"])"
         }
       ]
     },

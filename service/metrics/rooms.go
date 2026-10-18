@@ -35,11 +35,14 @@ type RoomResolver struct {
 
 	mu    sync.RWMutex
 	rooms map[string]roomRef
+
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 // NewRoomResolver creates an empty resolver; call Run to populate it.
 func NewRoomResolver(logger *zap.Logger) *RoomResolver {
-	return &RoomResolver{logger: logger, rooms: make(map[string]roomRef)}
+	return &RoomResolver{logger: logger, rooms: make(map[string]roomRef), ready: make(chan struct{})}
 }
 
 // RoomID implements RoomLookup.
@@ -120,5 +123,29 @@ func (r *RoomResolver) refresh(ctx context.Context, client api2.HouseServiceClie
 	r.mu.Lock()
 	r.rooms = rooms
 	r.mu.Unlock()
+	r.readyOnce.Do(func() { close(r.ready) })
 	return nil
+}
+
+// Ready is closed once the first refresh has succeeded. Points written before
+// then carry a bare device label with no room, which charts as a second
+// series next to the real one, so a writer should WaitReady first.
+func (r *RoomResolver) Ready() <-chan struct{} {
+	return r.ready
+}
+
+// WaitReady blocks until the first refresh has succeeded, ctx is done, or
+// timeout passes, and reports whether the rooms are loaded. A timeout is not
+// fatal: recording with bare labels beats not recording while house is down.
+func (r *RoomResolver) WaitReady(ctx context.Context, timeout time.Duration) bool {
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-r.ready:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return false
+	}
 }
