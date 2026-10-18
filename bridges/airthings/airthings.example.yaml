@@ -9,7 +9,7 @@ bridge:
     cert_file: ""
     key_file: ""
     client_ca_file: ""
-  refresh_interval: 300
+  refresh_interval: 3600
 sensor:
   ids: [1, 2]
 bluetooth:
