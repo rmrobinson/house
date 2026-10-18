@@ -133,7 +133,7 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 			add("Battery", "%d%%", s.GetCapacityRemainingPct())
 		}
 		if s.GetCapacityRemainingMins() != 0 {
-			add("Runtime", "%s", formatRuntime(s.GetCapacityRemainingMins()))
+			add("Runtime", "%s", FormatRuntime(s.GetCapacityRemainingMins()))
 		}
 		if s.GetStatus() != "" {
 			add("Status", "%s", s.GetStatus())
@@ -149,7 +149,7 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 	case *apiTrait.Ventilation:
 		s := t.GetState()
 		if s.MinutesRemaining != nil {
-			add("Remaining", "%s", formatRuntime(s.GetMinutesRemaining()))
+			add("Remaining", "%s", FormatRuntime(s.GetMinutesRemaining()))
 		}
 		if s.GetFilterStatusMessage() != "" {
 			add("Filter", "%s", s.GetFilterStatusMessage())

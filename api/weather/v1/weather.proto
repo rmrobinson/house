@@ -1,0 +1,83 @@
+// Vendored from github.com/rmrobinson/weather-server (proto/weather/v1/weather.proto),
+// which is the source of truth: keep the package, field numbers and service
+// name identical so the wire format stays compatible, and re-copy on change.
+syntax = "proto3";
+package weather.v1;
+option go_package = "github.com/rmrobinson/house/api/weather/v1;weatherv1";
+
+import "google/protobuf/timestamp.proto";
+
+// WeatherCondition enumerates the possible derived sky/precipitation conditions.
+// Values are ordered by specificity: precipitation > night > sky cover.
+enum WeatherCondition {
+  WEATHER_CONDITION_UNSPECIFIED   = 0;
+  WEATHER_CONDITION_SUNNY         = 1;
+  WEATHER_CONDITION_MOSTLY_SUNNY  = 2;
+  WEATHER_CONDITION_PARTLY_CLOUDY = 3;
+  WEATHER_CONDITION_MOSTLY_CLOUDY = 4;
+  WEATHER_CONDITION_OVERCAST      = 5;
+  WEATHER_CONDITION_LIGHT_RAIN    = 6;
+  WEATHER_CONDITION_RAIN          = 7;
+  WEATHER_CONDITION_HEAVY_RAIN    = 8;
+  WEATHER_CONDITION_FREEZING_RAIN = 9;
+  WEATHER_CONDITION_SNOW          = 10;
+  WEATHER_CONDITION_NIGHT         = 11;
+}
+
+message WeatherReading {
+  google.protobuf.Timestamp timestamp = 1;
+  double temp_c = 2;
+  double humidity_pct = 3;
+  double pressure_hpa = 4;
+  double wind_speed_ms = 5;
+  double wind_dir_deg = 6;
+  double rain_mm_hr = 7;
+  double uv_index = 8;
+  double solar_wm2 = 9;
+  double rain_event_mm = 10;
+  double rain_yearly_mm = 11;
+  double wind_gust_ms = 12;
+  double rain_daily_mm = 13;
+  double rain_weekly_mm = 14;
+  double rain_monthly_mm = 15;
+  double pressure_abs_hpa = 16;
+  double temp_in_c = 17;
+  double humidity_in_pct = 18;
+  double max_daily_gust_ms = 19;
+  double rain_hourly_mm = 20;
+  reserved 21;
+  reserved "rain_season_mm";
+  double battery_v = 22;
+  double capacitor_v = 23;
+  // Derived atmospheric fields.
+  double dew_point_c = 27; // Magnus formula from temp_c + humidity_pct
+  // Derived solar fields — computed from solar_wm2 and station location.
+  double clear_sky_wm2 = 24;   // theoretical clear-sky GHI (W/m²)
+  double clear_sky_index = 25; // Kt = measured / clear-sky; 0 when sun below horizon
+  double cloud_cover_pct = 26; // estimated cloud cover 0–100 %; -1 when sun below horizon
+  // Derived situational — derived from the fields above.
+  // feels_like_c is stored; condition is never persisted to InfluxDB.
+  double feels_like_c = 29; // EC wind-chill or humidex (°C); equals temp_c when neither applies
+  WeatherCondition condition = 28;
+}
+
+message StreamRequest {}
+
+message RainAccumulationRequest {
+  google.protobuf.Timestamp start = 1;
+  // end is optional; server uses current time if zero.
+  google.protobuf.Timestamp end = 2;
+}
+
+message RainAccumulationResponse {
+  // Accumulated rainfall in mm (last rain_yearly_mm minus first over the range).
+  double rain_mm = 1;
+  // Timestamps of the actual first and last data points found.
+  google.protobuf.Timestamp actual_start = 2;
+  google.protobuf.Timestamp actual_end = 3;
+}
+
+service WeatherService {
+  rpc StreamReadings(StreamRequest) returns (stream WeatherReading);
+  rpc QueryRainAccumulation(RainAccumulationRequest) returns (RainAccumulationResponse);
+}

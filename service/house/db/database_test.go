@@ -221,10 +221,16 @@ func TestFloor_CreateGetListUpdateDelete(t *testing.T) {
 	assert.Equal(t, f1.ID, floors[0].ID)
 	assert.Equal(t, f2.ID, floors[1].ID)
 
+	assert.False(t, got.Exterior, "floors default to interior")
+
 	f1.Name = "Ground Floor"
+	f1.Exterior = true
 	updated, err := d.UpdateFloor(ctx, f1)
 	require.NoError(t, err)
 	assert.Equal(t, "Ground Floor", updated.Name)
+	got, err = d.GetFloor(ctx, f1.ID)
+	require.NoError(t, err)
+	assert.True(t, got.Exterior, "exterior flag round-trips through update")
 
 	_, err = d.UpdateFloor(ctx, &Floor{ID: f1.ID, Version: "stale", Name: "X"})
 	assert.ErrorIs(t, err, ErrVersionMismatch)

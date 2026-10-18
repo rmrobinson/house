@@ -7,6 +7,13 @@ viewerui:
   # Optional: STUN/TURN urls for the camera player, only needed to view
   # cameras from outside the LAN. e.g. ["stun:stun.l.google.com:19302"]
   ice_servers: []
+  # Optional: weather-server (github.com/rmrobinson/weather-server) gRPC address,
+  # for the overview's exterior climate. Plaintext unless weather_tls is true
+  # (TLS against system roots, e.g. its nginx front on :443); weather_psk is
+  # only needed if that server runs with WEATHER_PSK.
+  weather_addr: ""      # e.g. "weather.ktc1.net.faltung.ca:443"
+  weather_tls: false
+  weather_psk: ""
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
     cert_file: ""

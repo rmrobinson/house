@@ -22,13 +22,45 @@ as `adminui.tls.*`.
 
 | Route | Behavior |
 |---|---|
-| `GET /` | Redirects to the building if there's exactly one, else lists them |
+| `GET /` | Redirects to the building's overview if there's exactly one, else lists them |
+| `GET /buildings/{id}/overview` | Landing page: house tiles (mode, occupancy, total power, indoor/outdoor temp, leaks), every thermostat's setpoint, per-floor motion |
+| `GET /buildings/{id}/overview/events` | SSE for the overview: debounced re-render of the body, plus the exterior-motion camera popup |
+| `GET /rooms/{id}/popup` | Camera overlay for a room (every linked camera); 204 if it has none |
 | `GET /buildings/{id}` | Floor list + room list for the first floor (`?floor=`, `?room=` preselect) |
 | `GET /buildings/{id}/floors/{floor_id}` | htmx swap of the floor/room panel |
 | `GET /rooms/{id}` | htmx detail pane: Properties grid, devices, VIEW CAMERA if a Camera is linked (a direct browser hit redirects to the full page) |
 | `GET /rooms/{id}/camera/{device_id}` | `<video>` + inline WHEP negotiation against `Camera.media_stream.state.url` |
 | `POST /devices/{id}/commands` | `on=true\|false` (OnOff) or `brightness=0-100` (BrightnessAbsolute, the dimmer slider) → `ExecuteCommand` → swaps the device row. Requires the `HX-Request` header (CSRF guard); other values are a 400 |
 | `GET /buildings/{id}/events` | SSE: `HouseService.StreamHouseUpdates` (occupancy dots, open room's grid, event log) + `BridgeService.StreamUpdates` (device rows) |
+
+## Overview and exterior-motion popup
+
+- **Exterior** is an explicit flag on a Floor (`Floor.exterior`, set in
+  adminui's floor form or `housecli -exterior`), not inferred from names. Motion
+  starting (room occupied false -> true) in any room of an exterior floor
+  opens the camera overlay on the overview. It stays while any exterior room
+  has motion and closes 30s after the last one goes quiet; `[ X ]` closes it.
+  It only fires while the overview page is open.
+- **Deploy order.** `UpdateFloor` replaces a floor wholesale, so an adminui
+  built before `Floor.exterior` existed will silently clear the flag when
+  anyone saves a floor. Deploy `housed`, then adminui and viewerui together,
+  and don't edit floors in an old adminui.
+- **Overview refresh cost.** Any device change re-renders the overview
+  (floors + rooms + devices fetched), coalesced to at most one render per tab
+  per 5s.
+- **`weather_psk` travels in cleartext** unless `weather_tls` is on; put it in
+  the secrets file (`!secret`) rather than the yaml.
+- **Total power** sums `Room.Properties.power_draw_w`, so it covers metered
+  devices only - not the whole-house draw.
+- **Climate has Interior and Exterior sub-headings.** Interior is the room
+  average temp, average humidity, the worst CO2/VOC/radon room, and each
+  thermostat's set point. Exterior is weather-server's newest reading (temp
+  and feels-like, conditions, humidity, wind, rain today, UV, pressure). Set
+  `viewerui.weather_addr` (plaintext gRPC, or `weather_tls: true` for the nginx
+  front on :443, e.g. `weather.ktc1.net.faltung.ca:443`; plus `weather_psk` if the
+  server has `WEATHER_PSK`); unset, or a reading older than 15 minutes, shows one
+  placeholder tile saying why. The proto is vendored at
+  `api/weather/v1/weather.proto` - weather-server stays the source of truth.
 
 ## Notes
 

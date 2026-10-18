@@ -32,6 +32,7 @@ type floorView struct {
 	ID         string
 	Name       string
 	SortOrder  int32
+	Exterior   bool
 	BuildingID string
 	Version    string
 }
@@ -158,6 +159,7 @@ func floorToView(f *api2.Floor) floorView {
 		ID:         f.GetId(),
 		Name:       f.GetName(),
 		SortOrder:  f.GetSortOrder(),
+		Exterior:   f.GetExterior(),
 		BuildingID: f.GetBuildingId(),
 		Version:    f.GetVersion(),
 	}
