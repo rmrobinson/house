@@ -230,7 +230,10 @@ grpcurl -cert ... -key ... -cacert ... \
   per-window values are merged across devices. That gives "average indoor
   temperature", "worst CO₂" and "total power" as one chart from one query.
   Duplicates are ignored, one distinct device behaves exactly like `device_id`,
-  and at most 64 devices are accepted. A device with no points in a window adds
+  and at most 64 devices (ids up to 256 bytes) are accepted. Pass devices that
+  report the attribute as the same kind of value: past 28 days the rollup holds a
+  numeric leaf's hourly mean but a bool's only last, and a request that finds
+  any mean leaves bool-only devices out. A device with no points in a window adds
   nothing to it, which understates a `SUM`; the 5 minute heartbeat means this
   only bites windows narrower than that, and callers charting power should ask
   for coarser ones. This is built from per-device history, so it tracks but does

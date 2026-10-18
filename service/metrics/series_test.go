@@ -69,7 +69,7 @@ func TestSeriesRawBucket(t *testing.T) {
 
 	assert.Contains(t, flux, `from(bucket: "house")`)
 	assert.NotContains(t, flux, `r.agg`)
-	assert.Contains(t, flux, `r.device_id == "dev\$1"`, "device id must be quoted/escaped")
+	assert.Contains(t, flux, `r.device_id == "dev$1"`, "a bare $ is a legal literal character")
 	assert.Contains(t, flux, `r.trait == "air_quality"`)
 	assert.Contains(t, flux, `r._field == "co2_ppm"`)
 	assert.Contains(t, flux, "every: 600s")
@@ -162,6 +162,26 @@ func TestSeriesStampsWindowStartAndHonoursMaxPoints(t *testing.T) {
 	assert.Equal(t, 4.0, res.Points[2].Value)
 }
 
+// A device id is caller-supplied, so it must not be able to leave its string
+// literal or start an interpolation.
+func TestFluxStringEscapes(t *testing.T) {
+	for in, want := range map[string]string{
+		`plain`:             `"plain"`,
+		`dev$1`:             `"dev$1"`,
+		`say "hi"`:          `"say \"hi\""`,
+		`back\slash`:        `"back\\slash"`,
+		"two\nlines":        `"two\nlines"`,
+		`${secret}`:         `"\${secret}"`,
+		`x${a}${b}`:         `"x\${a}\${b}"`,
+		`"; drop() //`:      `"\"; drop() //"`,
+		`\${x}`:             `"\\\${x}"`,
+		`end\`:              `"end\\"`,
+		`"}) |> yield() //`: `"\"}) |> yield() //"`,
+	} {
+		assert.Equal(t, want, fluxString(in), in)
+	}
+}
+
 func TestSeriesMultiDeviceQuery(t *testing.T) {
 	now := time.Now()
 	var flux string
@@ -181,13 +201,16 @@ func TestSeriesMultiDeviceQuery(t *testing.T) {
 
 		// Each device is windowed on its own, then merged across devices
 		// per window by the chosen function.
-		assert.Contains(t, flux, `contains(value: r.device_id, set: ["a", "b\$"])`)
+		assert.Contains(t, flux, `contains(value: r.device_id, set: ["a", "b$"])`)
 		assert.NotContains(t, flux, `r.device_id ==`)
 		assert.Contains(t, flux, `group(columns: ["device_id"])`)
 		assert.Contains(t, flux, `group(columns: ["_time"])`)
 		assert.Contains(t, flux, "|> "+fn+"()")
-		assert.Less(t, strings.Index(flux, "aggregateWindow"), strings.Index(flux, `group(columns: ["_time"])`),
-			"windowing must precede the cross-device merge")
+		win, merge := strings.Index(flux, "aggregateWindow"), strings.Index(flux, `group(columns: ["_time"])`)
+		require.GreaterOrEqual(t, win, 0, "the per-device window step must be present")
+		require.GreaterOrEqual(t, merge, 0, "the cross-device merge step must be present")
+		assert.Less(t, win, merge, "windowing must precede the cross-device merge")
+		assert.Less(t, merge, strings.Index(flux, "|> "+fn+"()"), "the merge function runs after regrouping by time")
 	}
 }
 
@@ -380,6 +403,26 @@ func TestGetSeries(t *testing.T) {
 			DeviceIds: tooMany[:MaxSeriesDevices], Attribute: "a.b", Start: start,
 		})
 		assert.NoError(t, err)
+
+		// The cap counts distinct devices: a longer list that dedupes to
+		// within it is fine.
+		f := &fakeSeries{}
+		dup := append(append([]string{}, tooMany[:MaxSeriesDevices]...), tooMany[:10]...)
+		_, err = newServer(f).GetSeries(context.Background(), &api2.GetSeriesRequest{
+			DeviceIds: dup, Attribute: "a.b", Start: start,
+		})
+		require.NoError(t, err)
+		assert.Len(t, f.got.DeviceIDs, MaxSeriesDevices)
+
+		// An over-long id is refused for either field, not sent on to Influx.
+		long := strings.Repeat("x", MaxDeviceIDLen+1)
+		for name, req := range map[string]*api2.GetSeriesRequest{
+			"device_id":  {DeviceId: long, Attribute: "a.b", Start: start},
+			"device_ids": {DeviceIds: []string{"a", long}, Attribute: "a.b", Start: start},
+		} {
+			_, err := newServer(&fakeSeries{}).GetSeries(context.Background(), req)
+			assert.Equal(t, codes.InvalidArgument, status.Code(err), name)
+		}
 	})
 
 	t.Run("empty result is not an error", func(t *testing.T) {

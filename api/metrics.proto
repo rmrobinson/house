@@ -37,7 +37,11 @@ message GetSeriesRequest {
   // reports more often doesn't outweigh one that reports less. A window in
   // which a device recorded nothing contributes nothing for that device, which
   // understates a sum, so keep windows wider than the 5 minute heartbeat.
-  // Duplicates are ignored; the server caps the count.
+  // Every device should report the attribute as the same kind of value (all
+  // numeric, or all bool): in the long-term hourly store a numeric leaf has a
+  // mean and a bool only a last, and the request uses the mean when any device
+  // has one, which leaves bool-only devices out of the result.
+  // Duplicates are ignored; the server caps the count and each id's length.
   repeated string device_ids = 6;
   Combine combine = 7;
 

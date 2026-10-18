@@ -55,10 +55,11 @@ func NewInfluxQuerier(cfg InfluxConfig) (*InfluxQuerier, error) {
 	}, nil
 }
 
-// fluxString quotes s as a Flux string literal. "$" is escaped because
-// "${...}" interpolates inside Flux strings.
+// fluxString quotes s as a Flux string literal. "${" is escaped because it
+// starts an interpolation inside Flux strings; a bare "$" is left alone, as
+// `\$` on its own is not an escape the Flux spec defines.
 func fluxString(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`, "\n", `\n`)
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "${", `\${`, "\n", `\n`)
 	return `"` + r.Replace(s) + `"`
 }
 

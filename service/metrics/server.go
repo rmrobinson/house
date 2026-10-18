@@ -26,6 +26,10 @@ const (
 	// MaxSeriesDevices caps device_ids, bounding the series one request can
 	// make Influx read and merge.
 	MaxSeriesDevices = 64
+	// MaxDeviceIDLen caps one device id. Real ids (UUIDs, MACs, IEEE
+	// addresses, "<bridge-uuid>:<n>") are far shorter; the cap keeps a request
+	// from smuggling an enormous literal into the Flux text.
+	MaxDeviceIDLen = 256
 )
 
 // seriesDevices validates the request's device selection and returns the
@@ -38,21 +42,29 @@ func seriesDevices(req *api2.GetSeriesRequest) (id string, ids []string, err err
 		if req.GetDeviceId() == "" {
 			return "", nil, status.Error(codes.InvalidArgument, "device_id is required")
 		}
+		if len(req.GetDeviceId()) > MaxDeviceIDLen {
+			return "", nil, status.Errorf(codes.InvalidArgument, "device_id must not exceed %d bytes", MaxDeviceIDLen)
+		}
 		return req.GetDeviceId(), nil, nil
 	}
 
-	seen := make(map[string]bool, len(req.GetDeviceIds()))
+	// Rejected as soon as the distinct count passes the cap, so an enormous
+	// list can't make the server build a set before being refused.
+	seen := make(map[string]bool)
 	for _, d := range req.GetDeviceIds() {
 		if d == "" {
 			return "", nil, status.Error(codes.InvalidArgument, "device_ids must not contain an empty id")
 		}
+		if len(d) > MaxDeviceIDLen {
+			return "", nil, status.Errorf(codes.InvalidArgument, "device ids must not exceed %d bytes", MaxDeviceIDLen)
+		}
 		if !seen[d] {
+			if len(ids) == MaxSeriesDevices {
+				return "", nil, status.Errorf(codes.InvalidArgument, "device_ids must not exceed %d devices", MaxSeriesDevices)
+			}
 			seen[d] = true
 			ids = append(ids, d)
 		}
-	}
-	if len(ids) > MaxSeriesDevices {
-		return "", nil, status.Errorf(codes.InvalidArgument, "device_ids must not exceed %d devices", MaxSeriesDevices)
 	}
 	// One device needs no merging, and takes the plain single-device query.
 	if len(ids) == 1 {
