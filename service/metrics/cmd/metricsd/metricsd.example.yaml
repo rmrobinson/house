@@ -9,10 +9,21 @@ metricsd:
   # keeps its old room tag on points already written.
   room_refresh_interval: 5m
 
+  # Port for the MetricsService gRPC API (GetSeries), which serves recorded
+  # history to viewerui. Uses the tls.* cert below, and requires clients to
+  # present one signed by tls.client_ca_file (default: tls.ca_file).
+  listen_port: 17050
+
   influx:
     url: http://influxdb.example.com:8086
     org: falnet
     bucket: house
+    # Hourly long-term bucket, read for ranges starting more than 28d ago.
+    rollup_bucket: house_1h
+    # Token used by GetSeries. Must read both buckets; the write token above
+    # only reaches `bucket`. Falls back to `token` when unset, which leaves
+    # long ranges failing with Unavailable.
+    read_token: !secret influx_read_token
     # Keep the token out of the tracked file: resolved from a sibling
     # metricsd.secrets.yaml, same "!secret" convention as other services.
     token: !secret influx_token
@@ -65,10 +76,11 @@ metricsd:
       capacity_remaining_pct: 1
       playback_position_s: 30
 
-  # Optional: mutual TLS to house, same keys as viewerui.tls.*. Leave blank
-  # for plaintext gRPC.
+  # Optional: mutual TLS, same keys as viewerui.tls.*. Used both to dial
+  # house and to serve the MetricsService. Leave blank for plaintext gRPC.
   tls:
     cert_file: ""
     key_file: ""
     ca_file: ""
+    client_ca_file: ""    # CA for verifying API clients; defaults to ca_file
     server_name: ""

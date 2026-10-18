@@ -11,6 +11,7 @@ proto_library(
     srcs = [
         "bridge.proto",
         "house.proto",
+        "metrics.proto",
         "notification.proto",
         "policy.proto",
         "sensor.proto",
@@ -20,6 +21,7 @@ proto_library(
         "//api/command:command_proto",
         "//api/device:device_proto",
         "@googleapis//google/rpc:status_proto",
+        "@protobuf//:duration_proto",
         "@protobuf//:empty_proto",
         "@protobuf//:timestamp_proto",
     ],
