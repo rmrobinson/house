@@ -172,9 +172,16 @@ func (r *recordingSink) Write(points ...Point) {
 	r.points = append(r.points, points...)
 }
 
+// fixedRooms maps a device ID to its room ID; every room is named "Study".
 type fixedRooms map[string]string
 
 func (f fixedRooms) RoomID(id string) string { return f[id] }
+func (f fixedRooms) RoomName(id string) string {
+	if f[id] == "" {
+		return ""
+	}
+	return "Study"
+}
 
 func TestServiceStateUpdates(t *testing.T) {
 	sink := &recordingSink{}
@@ -201,7 +208,8 @@ func TestServiceStateUpdates(t *testing.T) {
 	assert.Equal(t, "state", aq.Measurement)
 	assert.Equal(t, map[string]string{
 		"bridge_id": "b1", "device_id": "s1", "device_name": "Office sensor",
-		"room_id": "room-1", "trait": "air_quality", "source": "live",
+		"device_label": "Office sensor (Study)",
+		"room_id":      "room-1", "trait": "air_quality", "source": "live",
 	}, aq.Tags)
 	assert.Equal(t, now, aq.Time)
 
