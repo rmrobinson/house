@@ -23,7 +23,68 @@ const (
 	MaxMaxPoints = 1000
 	// MaxSeriesRange caps end-start. The rollup bucket keeps ~548d.
 	MaxSeriesRange = 366 * 24 * time.Hour
+	// MaxSeriesDevices caps device_ids, bounding the series one request can
+	// make Influx read and merge.
+	MaxSeriesDevices = 64
+	// MaxDeviceIDLen caps one device id. Real ids (UUIDs, MACs, IEEE
+	// addresses, "<bridge-uuid>:<n>") are far shorter; the cap keeps a request
+	// from smuggling an enormous literal into the Flux text.
+	MaxDeviceIDLen = 256
 )
+
+// seriesDevices validates the request's device selection and returns the
+// device(s) to query: exactly one of device_id or device_ids, de-duplicated.
+func seriesDevices(req *api2.GetSeriesRequest) (id string, ids []string, err error) {
+	if req.GetDeviceId() != "" && len(req.GetDeviceIds()) > 0 {
+		return "", nil, status.Error(codes.InvalidArgument, "set one of device_id and device_ids, not both")
+	}
+	if len(req.GetDeviceIds()) == 0 {
+		if req.GetDeviceId() == "" {
+			return "", nil, status.Error(codes.InvalidArgument, "device_id is required")
+		}
+		if len(req.GetDeviceId()) > MaxDeviceIDLen {
+			return "", nil, status.Errorf(codes.InvalidArgument, "device_id must not exceed %d bytes", MaxDeviceIDLen)
+		}
+		return req.GetDeviceId(), nil, nil
+	}
+
+	// Rejected as soon as the distinct count passes the cap, so an enormous
+	// list can't make the server build a set before being refused.
+	seen := make(map[string]bool)
+	for _, d := range req.GetDeviceIds() {
+		if d == "" {
+			return "", nil, status.Error(codes.InvalidArgument, "device_ids must not contain an empty id")
+		}
+		if len(d) > MaxDeviceIDLen {
+			return "", nil, status.Errorf(codes.InvalidArgument, "device ids must not exceed %d bytes", MaxDeviceIDLen)
+		}
+		if !seen[d] {
+			if len(ids) == MaxSeriesDevices {
+				return "", nil, status.Errorf(codes.InvalidArgument, "device_ids must not exceed %d devices", MaxSeriesDevices)
+			}
+			seen[d] = true
+			ids = append(ids, d)
+		}
+	}
+	// One device needs no merging, and takes the plain single-device query.
+	if len(ids) == 1 {
+		return ids[0], nil, nil
+	}
+	return "", ids, nil
+}
+
+func seriesCombine(c api2.GetSeriesRequest_Combine) (Combine, error) {
+	switch c {
+	case api2.GetSeriesRequest_COMBINE_UNSPECIFIED, api2.GetSeriesRequest_COMBINE_MEAN:
+		return CombineMean, nil
+	case api2.GetSeriesRequest_COMBINE_MAX:
+		return CombineMax, nil
+	case api2.GetSeriesRequest_COMBINE_SUM:
+		return CombineSum, nil
+	default:
+		return CombineMean, status.Errorf(codes.InvalidArgument, "unknown combine %d", int32(c))
+	}
+}
 
 // Server implements api2.MetricsServiceServer over a SeriesQuerier.
 type Server struct {
@@ -51,8 +112,13 @@ func SplitAttribute(attribute string) (trait, leaf string, ok bool) {
 
 // GetSeries implements api2.MetricsServiceServer.
 func (s *Server) GetSeries(ctx context.Context, req *api2.GetSeriesRequest) (*api2.GetSeriesResponse, error) {
-	if req.GetDeviceId() == "" {
-		return nil, status.Error(codes.InvalidArgument, "device_id is required")
+	deviceID, deviceIDs, err := seriesDevices(req)
+	if err != nil {
+		return nil, err
+	}
+	combine, err := seriesCombine(req.GetCombine())
+	if err != nil {
+		return nil, err
 	}
 	trait, leaf, ok := SplitAttribute(req.GetAttribute())
 	if !ok {
@@ -86,7 +152,9 @@ func (s *Server) GetSeries(ctx context.Context, req *api2.GetSeriesRequest) (*ap
 	}
 
 	res, err := s.querier.Series(ctx, SeriesQuery{
-		DeviceID:  req.GetDeviceId(),
+		DeviceID:  deviceID,
+		DeviceIDs: deviceIDs,
+		Combine:   combine,
 		Trait:     trait,
 		Field:     leaf,
 		Start:     start,
@@ -103,7 +171,8 @@ func (s *Server) GetSeries(ctx context.Context, req *api2.GetSeriesRequest) (*ap
 			return nil, status.FromContextError(context.DeadlineExceeded).Err()
 		}
 		s.logger.Warn("series query failed",
-			zap.String("device_id", req.GetDeviceId()), zap.String("attribute", req.GetAttribute()), zap.Error(err))
+			zap.String("device_id", deviceID), zap.Int("device_count", len(deviceIDs)),
+			zap.String("attribute", req.GetAttribute()), zap.Error(err))
 		return nil, status.Error(codes.Unavailable, "unable to query metrics store")
 	}
 
