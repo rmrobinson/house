@@ -153,6 +153,9 @@ type sparkView struct {
 	Points   string
 	Min, Max string
 	Note     string
+	// Unit and Hint are the trends' value suffix and source line ("interior
+	// average"); a device reading's Value already carries its unit.
+	Unit, Hint string
 }
 
 type rangeLink struct {

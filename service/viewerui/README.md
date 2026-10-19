@@ -77,6 +77,13 @@ Unset, the row isn't rendered and `/devices/{id}/sparklines` is a 404.
   temperature, humidity, CO2, power, battery %, ...); text and bool readings
   have none. The metric to read is derived from the device on the server, never
   from the request.
+- **One chart at a time.** A device with many readings (an air sensor has
+  seven) lists them as tabs and shows only the selected chart; hovering,
+  focusing or tapping a tab selects it, and the first starts selected and
+  highlighted. The pick survives switching 24h / 7d / 30d. The overview's
+  TRENDS box works the same way. The charts are all in the response and
+  switched client-side (a few lines in `layout.html`), so hovering costs no
+  request.
 - **Lazy and cached.** The row loads once when it scrolls into view
   (`hx-trigger="intersect once"`, so a hidden DETAILS row costs nothing), one
   request per device. Each `(device, metric, range)` is cached for 60s; failed

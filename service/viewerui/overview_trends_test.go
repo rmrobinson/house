@@ -222,6 +222,42 @@ func TestTrendsRendersChartsAndAsksForTheRightSeries(t *testing.T) {
 	assert.Equal(t, now, temp.GetEnd().AsTime(), "end is pinned so combined windows line up")
 }
 
+// One chart is visible at a time: every measurement gets a tab, the first
+// starts selected, and the rest are rendered (so hovering is instant) but not
+// shown.
+func TestSparkSetShowsOneChartWithTheFirstSelected(t *testing.T) {
+	charts := []sparkView{
+		{Label: "Temp", Value: "21°C", Points: "0,1 2,3", Min: "20", Max: "22"},
+		{Label: "CO2", Value: "600 ppm", Points: "0,1 2,3", Min: "500", Max: "700"},
+		{Label: "VOC", Note: "no history yet"},
+	}
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "spark_set", charts))
+	html := sb.String()
+
+	assert.Equal(t, 3, strings.Count(html, `role="tab"`))
+	assert.Equal(t, 3, strings.Count(html, `role="tabpanel"`))
+	assert.Equal(t, 1, strings.Count(html, `class="spark-tab on"`), "only the first tab is highlighted")
+	assert.Equal(t, 1, strings.Count(html, `class="spark-panel on"`), "only the first chart is shown")
+	assert.Contains(t, html, `class="spark-tab on" role="tab" tabindex="0" data-spark="0" aria-selected="true"`)
+	assert.Contains(t, html, `data-spark="2" aria-selected="false"`)
+	assert.Contains(t, html, "no history yet")
+}
+
+func TestTrendsAndDeviceSparksUseTheTabbedSet(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	s, _ := trendServer(t, now)
+	body := get(s, "/buildings/b1/overview/trends").Body.String()
+	assert.Contains(t, body, `class="spark-tab on"`)
+	assert.Equal(t, 1, strings.Count(body, `class="spark-panel on"`))
+
+	s2, _, bridge := startTestServer(t)
+	bridge.devices = map[string]*apiDevice.Device{"fan1": fanWithTemp()}
+	withMetrics(t, s2, now).points = series(now, 1, 2)
+	body = get(s2, "/devices/fan1/sparklines").Body.String()
+	assert.Contains(t, body, `class="spark-tab on"`)
+}
+
 func TestTrendsRangeAndValidation(t *testing.T) {
 	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	s, fm := trendServer(t, now)

@@ -42,8 +42,7 @@ and re-requested by the range buttons, never part of the SSE push. */}}
 {{define "overview_trends"}}<div class="box-title">TRENDS</div>
 <div class="pad"><span class="spark-range">{{range .Ranges}}<button class="action{{if .Active}} on{{end}}" aria-pressed="{{if .Active}}true{{else}}false{{end}}" hx-get="{{.Href}}" hx-target="#trends" hx-swap="innerHTML" hx-disabled-elt="this">{{.Key}}</button>{{end}}</span>
 <span class="dim">rebuilt from device history - close to, not identical to, the tiles above</span></div>
-<div class="trends">{{range .Charts}}<div class="trend"><div class="label">{{.Label}}</div>{{if .Note}}<div class="dim">{{.Note}}</div>{{else}}<div class="val">{{.Value}} <span class="dim">{{.Unit}}</span></div><svg class="spark" viewBox="0 0 120 24" preserveAspectRatio="none" role="img" aria-label="{{.Label}}, {{.Min}} to {{.Max}} {{.Unit}}"><polyline fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" points="{{.Points}}"/></svg><div class="dim note">{{.Min}}–{{.Max}} · {{.Hint}}</div>{{end}}</div>
-{{else}}<div class="pad dim">No history to chart yet.</div>{{end}}</div>{{end}}
+<div class="trends">{{if .Charts}}{{template "spark_set" .Charts}}{{else}}<span class="dim">No history to chart yet.</span>{{end}}</div>{{end}}
 
 {{define "exterior_state_oob"}}<div id="exterior-state" hidden data-active="{{.Active}}" hx-swap-oob="true"></div>{{end}}
 

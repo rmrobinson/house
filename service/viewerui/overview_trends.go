@@ -221,14 +221,9 @@ func mergeSeries(parts [][]*api2.SeriesPoint, combine api2.GetSeriesRequest_Comb
 	return out
 }
 
-type trendView struct {
-	sparkView
-	Unit, Hint string
-}
-
 type trendsView struct {
 	Ranges []rangeLink
-	Charts []trendView
+	Charts []sparkView
 }
 
 func trendsHref(buildingID string) string {
@@ -237,17 +232,16 @@ func trendsHref(buildingID string) string {
 
 // trendCharts fetches and lays out every spec over rng. A chart whose
 // history can't be read shows a note instead; a partial sum would mislead.
-func (s *Server) trendCharts(ctx context.Context, specs []trendSpec, rng sparkRange) []trendView {
+func (s *Server) trendCharts(ctx context.Context, specs []trendSpec, rng sparkRange) []sparkView {
 	end := s.metrics.now()
 	start := end.Add(-rng.Dur)
-	charts := make([]trendView, len(specs))
+	charts := make([]sparkView, len(specs))
 	var wg sync.WaitGroup
 	for i, spec := range specs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tv := trendView{Unit: spec.Unit, Hint: spec.Hint}
-			tv.sparkView = sparkView{Label: spec.Label}
+			tv := sparkView{Label: spec.Label, Unit: spec.Unit, Hint: spec.Hint}
 
 			parts := make([][]*api2.SeriesPoint, len(spec.Groups))
 			errs := make([]error, len(spec.Groups))
@@ -271,7 +265,8 @@ func (s *Server) trendCharts(ctx context.Context, specs []trendSpec, rng sparkRa
 			}
 
 			pts := mergeSeries(parts, spec.Combine)
-			tv.sparkView = buildSpark(houseview.Reading{Label: spec.Label}, pts, start, end)
+			tv = buildSpark(houseview.Reading{Label: spec.Label}, pts, start, end)
+			tv.Unit, tv.Hint = spec.Unit, spec.Hint
 			if len(pts) > 0 {
 				tv.Value = sparkNumber(pts[len(pts)-1].GetValue())
 			}
