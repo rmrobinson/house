@@ -239,8 +239,9 @@ func TestSparkSetShowsOneChartWithTheFirstSelected(t *testing.T) {
 	assert.Equal(t, 3, strings.Count(html, `role="tabpanel"`))
 	assert.Equal(t, 1, strings.Count(html, `class="spark-tab on"`), "only the first tab is highlighted")
 	assert.Equal(t, 1, strings.Count(html, `class="spark-panel on"`), "only the first chart is shown")
-	assert.Contains(t, html, `class="spark-tab on" role="tab" tabindex="0" data-spark="0" aria-selected="true"`)
-	assert.Contains(t, html, `data-spark="2" aria-selected="false"`)
+	assert.Contains(t, html, `class="spark-tab on" role="tab" tabindex="0" data-spark="Temp" aria-selected="true"`)
+	assert.Contains(t, html, `tabindex="-1" data-spark="VOC" aria-selected="false"`, "only the selected tab is in the tab order")
+	assert.Contains(t, html, `class="spark-panel" role="tabpanel" data-spark="CO2"`, "panels are keyed like their tabs")
 	assert.Contains(t, html, "no history yet")
 }
 
@@ -256,6 +257,44 @@ func TestTrendsAndDeviceSparksUseTheTabbedSet(t *testing.T) {
 	withMetrics(t, s2, now).points = series(now, 1, 2)
 	body = get(s2, "/devices/fan1/sparklines").Body.String()
 	assert.Contains(t, body, `class="spark-tab on"`)
+}
+
+// A SUM over more devices than one request may carry is split into chunks whose
+// per-window values are added back together, and the chart is built from that.
+func TestTrendsChunkedSumIsAddedAcrossRequests(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	s, _, _ := startTestServer(t)
+	var plugs []*apiDevice.Device
+	for i := 0; i < maxTrendDevices+1; i++ {
+		plugs = append(plugs, meteredPlug("p"+string(rune('A'+i/26))+string(rune('a'+i%26)), 1))
+	}
+	spec := specByLabel(t, trendPlan(trendSnap(plugs, nil)), "House power")
+	require.Len(t, spec.Groups, 2)
+
+	fm := withMetrics(t, s, now)
+	fm.points = series(now, 100, 200)
+	charts := s.trendCharts(t.Context(), []trendSpec{spec}, sparkRanges[0])
+	require.Len(t, charts, 1)
+
+	reqs := fm.requests()
+	require.Len(t, reqs, 2, "one GetSeries per chunk")
+	var sizes []int
+	for _, r := range reqs {
+		n := len(r.GetDeviceIds())
+		if r.GetDeviceId() != "" {
+			n = 1
+		}
+		sizes = append(sizes, n)
+	}
+	assert.ElementsMatch(t, []int{maxTrendDevices, 1}, sizes)
+	for _, r := range reqs {
+		assert.Equal(t, api2.GetSeriesRequest_COMBINE_SUM, r.GetCombine())
+		assert.Equal(t, "power.power_w", r.GetAttribute())
+	}
+	// Both chunks returned the same two windows, so each window is doubled.
+	assert.Equal(t, "400", charts[0].Value, "latest window: 200 + 200")
+	assert.Equal(t, "200", charts[0].Min)
+	assert.Equal(t, "400", charts[0].Max)
 }
 
 func TestTrendsRangeAndValidation(t *testing.T) {

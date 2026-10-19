@@ -110,31 +110,53 @@ document.addEventListener('click', function (e) {
   b.parentElement.classList.add('active');
 });
 
-// Sparkline sets show one chart at a time: hovering (or focusing, or tapping) a
-// measurement's tab selects it. The pick is remembered on the swap target so
-// changing the 24h/7d/30d range, which re-renders the set, keeps it.
-function sparkPick(tab) {
+// Sparkline sets show one chart at a time: hovering (or tapping) a
+// measurement's tab selects it, and the arrow keys move between tabs (only the
+// selected tab is in the tab order). Tabs are keyed by measurement name, not
+// position, and the pick is remembered on the swap target, so changing the
+// 24h/7d/30d range - which re-renders the set - keeps the same measurement even
+// if the set's readings changed in between.
+function sparkPick(tab, focus) {
   var set = tab.closest('.spark-set');
   if (!set) return;
+  var key = tab.dataset.spark;
   set.querySelectorAll('[data-spark]').forEach(function (el) {
-    var on = el.dataset.spark === tab.dataset.spark;
+    var on = el.dataset.spark === key;
     el.classList.toggle('on', on);
-    if (el.classList.contains('spark-tab')) el.setAttribute('aria-selected', on);
+    if (el.classList.contains('spark-tab')) {
+      el.setAttribute('aria-selected', on);
+      el.tabIndex = on ? 0 : -1;
+    }
   });
+  if (focus) tab.focus();
   var holder = set.closest('td, #trends');
-  if (holder) holder.dataset.spark = tab.dataset.spark;
+  if (holder) holder.dataset.spark = key;
 }
-['mouseover', 'focusin', 'click'].forEach(function (ev) {
+['mouseover', 'click'].forEach(function (ev) {
   document.addEventListener(ev, function (e) {
     var t = e.target.closest && e.target.closest('.spark-tab');
     if (t && !t.classList.contains('on')) sparkPick(t);
   });
 });
+document.addEventListener('keydown', function (e) {
+  var t = e.target.closest && e.target.closest('.spark-tab');
+  if (!t) return;
+  var tabs = Array.prototype.slice.call(t.parentElement.children);
+  var i = tabs.indexOf(t);
+  if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+  else if (e.key === 'ArrowLeft') i = (i + tabs.length - 1) % tabs.length;
+  else if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  sparkPick(tabs[i], true);
+});
 document.addEventListener('htmx:afterSwap', function (e) {
   var h = e.target;
   if (!h || !h.dataset || !h.dataset.spark) return;
-  var t = h.querySelector('.spark-tab[data-spark="' + h.dataset.spark + '"]');
-  if (t) sparkPick(t);
+  Array.prototype.some.call(h.querySelectorAll('.spark-tab'), function (t) {
+    if (t.dataset.spark !== h.dataset.spark) return false;
+    sparkPick(t);
+    return true;
+  });
 });
 
 // Live-update status. SSE pushes only deltas, so after a drop the page is
