@@ -25,6 +25,7 @@ proto_library(
         "movement.proto",
         "network_presence.proto",
         "onoff.proto",
+        "open_close.proto",
         "position.proto",
         "power.proto",
         "presence.proto",

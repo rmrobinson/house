@@ -518,8 +518,8 @@ func (nc *networkConn) runInitialQueries() {
 // bridges/zwave's classify (a fixed generic-device-class switch), Zigbee has no equivalent
 // taxonomy to key off - so this inspects the actual exposes shape instead: a top-level "light"
 // composite is a controllable light; a top-level "fan" composite (with at least a "state"
-// feature) is a fan; a top-level "switch" composite, or a bare top-level binary "state" property,
-// is a controllable on/off device; anything else is only a candidate sensor, built if it reports
+// feature) is a fan; a "garage_door_contact" binary is a garage door opener; a top-level "switch"
+// composite, or a bare top-level binary "state" property, is a controllable on/off device; anything else is only a candidate sensor, built if it reports
 // at least one of the read-only capabilities sensorBuilder knows about. The Coordinator entry, a
 // disabled device, and a device with no exposes at all (never interviewed, or a model
 // zigbee-herdsman-converters doesn't recognize) never match anything here.
@@ -534,6 +534,9 @@ func (nc *networkConn) classify(bd bridgeDevice) (deviceBuilder, bool) {
 	}
 	if fb, ok := newFanBuilder(exposes); ok {
 		return fb, true
+	}
+	if gb, ok := newGarageDoorBuilder(exposes); ok {
+		return gb, true
 	}
 	if _, ok := findTopLevel(exposes, "switch"); ok {
 		return onOffBuilder{}, true

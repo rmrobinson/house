@@ -65,6 +65,14 @@ type deviceView struct {
 	VolumeLevel      int
 	VolumeMax        int
 	IsCamera         bool
+	// CanOperateDoor is true when the device's OpenClose trait allows
+	// control; DoorOpen picks which action the button offers (and its
+	// label). With the position unknown (the sensor hasn't reported, or is
+	// dead) OPEN/CLOSE can't be chosen safely, so CanTriggerDoor offers a
+	// plain press of the opener's button instead.
+	CanOperateDoor bool
+	DoorOpen       bool
+	CanTriggerDoor bool
 	// Presets are a StandingDesk's preset buttons (its Mode trait's
 	// available_modes), one control each; CurrentPreset is the one last
 	// activated, if the bridge reports it.
@@ -226,6 +234,16 @@ func deviceToView(d *apiDevice.Device) deviceView {
 			// but a slider with max=0 is degenerate - fall back rather than
 			// render one no drag can move.
 			dv.VolumeMax = 100
+		}
+	}
+	if oc := d.GetGarageDoor().GetOpenClose(); oc.GetAttributes().GetCanControl() {
+		switch oc.GetState().GetPosition() {
+		case apiTrait.OpenClose_POSITION_OPEN:
+			dv.CanOperateDoor, dv.DoorOpen = true, true
+		case apiTrait.OpenClose_POSITION_CLOSED:
+			dv.CanOperateDoor = true
+		default:
+			dv.CanTriggerDoor = true
 		}
 	}
 	if mode := d.GetStandingDesk().GetMode(); mode.GetAttributes().GetCanControl() {

@@ -53,7 +53,7 @@ func Readings(d *apiDevice.Device) []Reading {
 		}
 		prefix := ""
 		switch f.Name() {
-		case "air_properties", "air_quality", "power", "battery", "light_level", "temperature", "ventilation", "water", "position":
+		case "air_properties", "air_quality", "power", "battery", "light_level", "temperature", "ventilation", "water", "position", "open_close":
 		default:
 			prefix = humanize(string(f.Name())) + " "
 		}
@@ -163,6 +163,16 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 		}
 		if s.GetFilterStatusMessage() != "" {
 			add("Filter", "%s", s.GetFilterStatusMessage())
+		}
+	case *apiTrait.OpenClose:
+		switch t.GetState().GetPosition() {
+		case apiTrait.OpenClose_POSITION_OPEN:
+			out = append(out, Reading{Label: "Door", Value: "Open"})
+		case apiTrait.OpenClose_POSITION_CLOSED:
+			out = append(out, Reading{Label: "Door", Value: "Closed"})
+		default:
+			// Said outright so the viewer's TRIGGER-only button isn't unexplained.
+			out = append(out, Reading{Label: "Door", Value: "Unknown"})
 		}
 	case *apiDevice.Sensor_BinarySensor:
 		// Only water is a measurement worth surfacing; alarm, fire and

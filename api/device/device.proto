@@ -12,6 +12,7 @@ import "api/device/clock.proto";
 import "api/device/connected_device.proto";
 import "api/device/ev_charger.proto";
 import "api/device/fan.proto";
+import "api/device/garage_door.proto";
 import "api/device/generic.proto";
 import "api/device/light.proto";
 import "api/device/media_player.proto";
@@ -119,5 +120,6 @@ message Device {
     faltung.house.api.device.Camera camera = 111;
     faltung.house.api.device.Fan fan = 112;
     faltung.house.api.device.StandingDesk standing_desk = 113;
+    faltung.house.api.device.GarageDoor garage_door = 114;
   }
 }

@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// OpenClose commands a device with the OpenClose trait to reach a position. It is a target, not
+// a toggle: asking an already-closed door to CLOSE does nothing, so a caller (a policy firing
+// every night, say) can't accidentally open it.
+message OpenClose {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_OPEN = 1;
+    ACTION_CLOSE = 2;
+    // Press the opener's button once, whatever position the device believes the door is in. On
+    // hardware whose position sensor is missing or unreliable this is the only way to move the
+    // door, and the direction it goes is whatever the opener decides. Prefer OPEN/CLOSE.
+    ACTION_TRIGGER = 3;
+  }
+  Action action = 1;
+}

@@ -201,7 +201,7 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 // (0-100) sends BrightnessAbsolute, "playback" (play|pause) sends Playback,
 // "skip" (forward|backward) sends SkipForward/SkipBackward, "volume" (0-N)
 // sends VolumeAbsolute, "mode" (a Mode value, e.g. a standing desk preset)
-// sends Mode.
+// sends Mode, "door" (open|close|trigger) sends OpenClose.
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -228,6 +228,12 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		cmd.Details = &command.Command_SkipForward{SkipForward: &command.SkipForward{}}
 	case r.PostForm.Get("skip") == "backward":
 		cmd.Details = &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}
+	case r.PostForm.Get("door") == "open":
+		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_OPEN}}
+	case r.PostForm.Get("door") == "close":
+		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_CLOSE}}
+	case r.PostForm.Get("door") == "trigger":
+		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_TRIGGER}}
 	case r.PostForm.Get("mode") != "":
 		cmd.Details = &command.Command_Mode{Mode: &command.Mode{Value: r.PostForm.Get("mode")}}
 	case r.PostForm.Has("volume"):
@@ -238,7 +244,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		}
 		cmd.Details = &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: int32(level)}}
 	default:
-		http.Error(w, `expected on=true|false, brightness=0-100, playback=play|pause, skip=forward|backward, volume=0-N, or mode=<value>`, http.StatusBadRequest)
+		http.Error(w, `expected on=true|false, brightness=0-100, playback=play|pause, skip=forward|backward, volume=0-N, door=open|close|trigger, or mode=<value>`, http.StatusBadRequest)
 		return
 	}
 

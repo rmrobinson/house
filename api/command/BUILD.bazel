@@ -18,6 +18,7 @@ proto_library(
         "mode.proto",
         "movement.proto",
         "onoff.proto",
+        "open_close.proto",
         "position.proto",
         "speed.proto",
         "thermostat.proto",

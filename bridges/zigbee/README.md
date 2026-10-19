@@ -184,6 +184,29 @@ degrades anything else:
   a JSON bool: confirmed necessary against the STARKVIND itself, whose `"led_enable"` is a plain
   bool but `"child_lock"` is the string pair `"LOCK"`/`"UNLOCK"` - both on the very same device.
 
+**Garage door openers** (`GarageDoor` + `OpenClose` trait) are recognised by a binary
+`garage_door_contact` expose - today that is the Tuya/LoraTap `GDC311ZBQ1`, whose exposes (read
+from a live broker) are just a writable `trigger` and that read-only contact. Despite the Tuya
+"cover" naming elsewhere, it exposes no `cover` composite, so it is not a cover in the sense
+listed as out of scope below. (The "Verified against a live broker" section below predates this
+and records the opener being skipped.)
+- `OpenClose.State.Position` is `CLOSED` or `OPEN` from the contact, where "closed" is whichever
+  raw value the expose's `value_off` documents (`true` on the real device). It stays `UNSPECIFIED`
+  until the contact first reports; there is no "opening"/"closing" - anything not closed is `OPEN`.
+- `command.OpenClose` (OPEN/CLOSE) is a *target*, translated into one `{"trigger": true}` pulse
+  only when the door isn't already there, so repeating a command can't move the door the wrong
+  way. With an unknown position the command is refused (`FailedPrecondition`) rather than guessed.
+  `ACTION_TRIGGER` is the escape hatch: it always sends one pulse (the opener's button) whatever
+  position is reported, for when the contact is silent or wrong - the viewer offers it as
+  `[ TRIGGER ]` only while the position is unknown. The contact is report-only (a `/get` is
+  rejected by zigbee2mqtt: "No converter available"), so after a bridge restart the position stays
+  unknown until the sensor next reports on its own. The pulse is published without waiting for an echo; the contact changing is the confirmation, and
+  position is never updated optimistically.
+- Known hazard: a command arriving while the door is mid-travel sees "open" and pulses, which
+  stops (or reverses) it - the hardware gives this bridge no way to tell.
+- A device exposing the contact but no `trigger` builds with `can_control: false`.
+- Not yet exercised against the real opener: the pulse itself (nothing has been sent to it).
+
 Out of scope for this pass (mirroring `bridges/zwave`'s "Out of scope for this pass"): covers,
 locks, climate/thermostat devices, and multi-endpoint devices (e.g. a 2-gang wall switch) -
 `network.go`'s `findTopLevel`/`findByProperty` only ever match an expose with no `endpoint` set, so

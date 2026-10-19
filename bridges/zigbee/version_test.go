@@ -17,6 +17,21 @@ func TestComputeVersion_ChangesWithControllableState(t *testing.T) {
 	assert.NotEqual(t, v1, v2)
 }
 
+func TestComputeVersion_GarageDoorChangesWithPosition(t *testing.T) {
+	bd := garageDoorDevice(true)
+	gb := mustGarageDoorBuilder(t, bd)
+	d, err := gb.build(bd)
+	require.NoError(t, err)
+
+	unknown := computeVersion(d)
+	gb.applyState(d, map[string]any{"garage_door_contact": true})
+	closed := computeVersion(d)
+	gb.applyState(d, map[string]any{"garage_door_contact": false})
+	open := computeVersion(d)
+	assert.NotEqual(t, unknown, closed)
+	assert.NotEqual(t, closed, open)
+}
+
 func TestComputeVersion_StableAcrossPowerTelemetry(t *testing.T) {
 	d, err := onOffBuilder{}.build(switchDevice(true))
 	require.NoError(t, err)
