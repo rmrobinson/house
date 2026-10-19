@@ -19,7 +19,9 @@ import (
 // fan.mode.state.current_mode, fan.toggles.state.settings (fanBuilder) - the Fan branch was
 // missing entirely for a while after fanBuilder was added, which would have left every Fan
 // device's version constant regardless of applied commands, defeating Command.version's whole
-// purpose for that device type; caught by TestComputeVersion_FanIncludesOnOffModeAndToggles.
+// purpose for that device type; caught by TestComputeVersion_FanIncludesOnOffModeAndToggles;
+// garage_door.open_close.state.position (garageDoorBuilder) - OPEN/CLOSE are relative to the
+// reported position, so a caller holding a stale version must not get to act on the new one.
 //
 // Excluded: everything under Sensor - sensorBuilder.applyCommand always returns
 // bridge.ErrUnsupportedCommand, so a Sensor device has no command-target fields at all;
@@ -59,6 +61,10 @@ func computeVersion(d *device.Device) string {
 		for _, name := range names {
 			fmt.Fprintf(h, "toggle.%s=%t\x00", name, settings[name])
 		}
+	}
+
+	if g := d.GetGarageDoor(); g != nil {
+		fmt.Fprintf(h, "position=%d\x00", g.GetOpenClose().GetState().GetPosition())
 	}
 
 	return fmt.Sprintf("%x", h.Sum64())

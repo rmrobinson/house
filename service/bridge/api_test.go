@@ -71,6 +71,15 @@ func lightDevice(id string) *device.Device {
 	}
 }
 
+func garageDoorDevice(id string, canControl bool) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_GarageDoor{GarageDoor: &device.GarageDoor{
+			OpenClose: &trait.OpenClose{Attributes: &trait.OpenClose_Attributes{CanControl: canControl}},
+		}},
+	}
+}
+
 func fanDevice(id string) *device.Device {
 	return &device.Device{
 		Id: id,
@@ -309,6 +318,24 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			name: "standing desk position not supported (movement not wired)",
 			d:    &device.Device{Id: "d1", Details: &device.Device_StandingDesk{StandingDesk: &device.StandingDesk{Mode: &trait.Mode{}}}},
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_Position{Position: &command.Position{}}},
+			want: false,
+		},
+		{
+			name: "garage door open/close supported when controllable",
+			d:    garageDoorDevice("d1", true),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_CLOSE}}},
+			want: true,
+		},
+		{
+			name: "garage door open/close rejected when read-only",
+			d:    garageDoorDevice("d1", false),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_OPEN}}},
+			want: false,
+		},
+		{
+			name: "garage door on/off not supported",
+			d:    garageDoorDevice("d1", true),
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_OnOff{OnOff: &command.OnOff{On: true}}},
 			want: false,
 		},
 		{

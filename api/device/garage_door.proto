@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package faltung.house.api.device;
+
+option go_package = "github.com/rmrobinson/house/api/device";
+
+import "api/trait/open_close.proto";
+
+// GarageDoor is a device which represents a garage door opener in a house.
+message GarageDoor {
+  faltung.house.api.trait.OpenClose open_close = 1;
+}

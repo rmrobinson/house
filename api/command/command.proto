@@ -14,6 +14,7 @@ import "api/command/media.proto";
 import "api/command/mode.proto";
 import "api/command/movement.proto";
 import "api/command/onoff.proto";
+import "api/command/open_close.proto";
 import "api/command/position.proto";
 import "api/command/speed.proto";
 import "api/command/thermostat.proto";
@@ -73,5 +74,6 @@ message Command {
     faltung.house.api.command.SkipBackward skip_backward = 128;
     faltung.house.api.command.Input input = 129;
     faltung.house.api.command.AudioOutput audio_output = 130;
+    faltung.house.api.command.OpenClose open_close = 131;
   }
 }

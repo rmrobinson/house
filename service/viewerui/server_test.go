@@ -674,6 +674,73 @@ func TestStandingDeskPresetsAreControlsAndSendMode(t *testing.T) {
 	assert.Contains(t, sb.String(), "[ 4 SIT ]")
 }
 
+func garageDoor(pos apiTrait.OpenClose_Position, canControl bool) *apiDevice.Device {
+	return &apiDevice.Device{
+		Id:      "garage1",
+		Config:  &apiDevice.Device_Config{Name: "Garage Door"},
+		Address: &apiDevice.Device_Address{IsReachable: true},
+		Details: &apiDevice.Device_GarageDoor{GarageDoor: &apiDevice.GarageDoor{
+			OpenClose: &apiTrait.OpenClose{
+				Attributes: &apiTrait.OpenClose_Attributes{CanControl: canControl},
+				State:      &apiTrait.OpenClose_State{Position: pos},
+			},
+		}},
+	}
+}
+
+func TestGarageDoorButtonOffersTheOppositeActionWithConfirm(t *testing.T) {
+	tests := []struct {
+		pos         apiTrait.OpenClose_Position
+		wantVals    string
+		wantLabel   string
+		wantReading string
+	}{
+		{apiTrait.OpenClose_POSITION_CLOSED, `{"door": "open"}`, "[ OPEN ]", "Closed"},
+		{apiTrait.OpenClose_POSITION_OPEN, `{"door": "close"}`, "[ CLOSE ]", "Open"},
+	}
+	for _, tc := range tests {
+		dv := deviceToView(garageDoor(tc.pos, true))
+		assert.True(t, dv.CanOperateDoor)
+		assert.Equal(t, "Garage Door", dv.Kind)
+		var sb strings.Builder
+		require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
+		assert.Contains(t, sb.String(), tc.wantVals)
+		assert.Contains(t, sb.String(), tc.wantLabel)
+		assert.Contains(t, sb.String(), `hx-confirm=`)
+		require.Len(t, dv.Readings, 1)
+		assert.Equal(t, houseview.Reading{Label: "Door", Value: tc.wantReading}, dv.Readings[0])
+	}
+}
+
+func TestGarageDoorUnknownPositionOffersOnlyTrigger(t *testing.T) {
+	dv := deviceToView(garageDoor(apiTrait.OpenClose_POSITION_UNSPECIFIED, true))
+	assert.False(t, dv.CanOperateDoor)
+	assert.True(t, dv.CanTriggerDoor)
+	require.Len(t, dv.Readings, 1)
+	assert.Equal(t, houseview.Reading{Label: "Door", Value: "Unknown"}, dv.Readings[0])
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
+	assert.Contains(t, sb.String(), `{"door": "trigger"}`)
+	assert.Contains(t, sb.String(), "[ TRIGGER ]")
+	assert.Contains(t, sb.String(), `hx-confirm=`)
+	assert.NotContains(t, sb.String(), "[ OPEN ]")
+	assert.NotContains(t, sb.String(), "[ CLOSE ]")
+}
+
+func TestGarageDoorKnownPositionHasNoTriggerButton(t *testing.T) {
+	for _, pos := range []apiTrait.OpenClose_Position{apiTrait.OpenClose_POSITION_OPEN, apiTrait.OpenClose_POSITION_CLOSED} {
+		assert.False(t, deviceToView(garageDoor(pos, true)).CanTriggerDoor)
+	}
+}
+
+func TestGarageDoorWithoutControlHasNoButtons(t *testing.T) {
+	for _, pos := range []apiTrait.OpenClose_Position{apiTrait.OpenClose_POSITION_UNSPECIFIED, apiTrait.OpenClose_POSITION_OPEN} {
+		dv := deviceToView(garageDoor(pos, false))
+		assert.False(t, dv.CanOperateDoor)
+		assert.False(t, dv.CanTriggerDoor)
+	}
+}
+
 func TestPlayingMediaIsFirstReadingNotUnderName(t *testing.T) {
 	dv := deviceToView(speaker("Kitchen Speaker", true, true, true))
 	require.NotEmpty(t, dv.Readings)

@@ -77,6 +77,8 @@ func Kind(d *apiDevice.Device) string {
 		return "Fan"
 	case d.GetStandingDesk() != nil:
 		return "Standing Desk"
+	case d.GetGarageDoor() != nil:
+		return "Garage Door"
 	default:
 		return "Generic"
 	}

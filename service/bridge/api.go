@@ -152,6 +152,10 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 		if d.GetStandingDesk().GetMode() != nil && req.GetMode() != nil {
 			return true
 		}
+	} else if d.GetGarageDoor() != nil {
+		if d.GetGarageDoor().GetOpenClose().GetAttributes().GetCanControl() && req.GetOpenClose() != nil {
+			return true
+		}
 	} else if d.GetMediaPlayer() != nil {
 		if d.GetMediaPlayer().GetVolume() != nil && (req.GetVolumeAbsolute() != nil || req.GetVolumeRelative() != nil || req.GetMute() != nil) {
 			return true
