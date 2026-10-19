@@ -240,6 +240,14 @@ func TestBuildSpark(t *testing.T) {
 		assert.Equal(t, "0.0,22.0 120.0,2.0", sv.Points)
 	})
 
+	t.Run("large values keep their digits", func(t *testing.T) {
+		sv := buildSpark(rd, []*api2.SeriesPoint{pt(start, 444), pt(end, 1010.4)}, start, end)
+		assert.Equal(t, "444", sv.Min)
+		assert.Equal(t, "1010", sv.Max, "not 1.01e+03")
+		assert.Equal(t, "0.25", sparkNumber(0.25))
+		assert.Equal(t, "12.3", sparkNumber(12.3456))
+	})
+
 	t.Run("under two points is a note, not a chart", func(t *testing.T) {
 		for _, pts := range [][]*api2.SeriesPoint{nil, {pt(start, 1)}} {
 			sv := buildSpark(rd, pts, start, end)

@@ -68,8 +68,16 @@
   .spark-range { margin-right: 1rem; white-space: nowrap; }
   .spark-range button.action { padding: 0 0.4rem; font-size: 0.72rem; }
   .spark-range button.action.on { color: var(--accent); border-color: var(--accent); }
-  .spark-item { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 1.25rem 0.1rem 0; white-space: nowrap; }
+  .spark-set { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.2rem 1rem; vertical-align: middle; }
+  .spark-tabs { display: inline-flex; flex-wrap: wrap; gap: 0.1rem 0.15rem; }
+  .spark-tab { padding: 0 0.45rem; color: var(--dim); border-bottom: 1px solid transparent; cursor: default; }
+  .spark-tab:hover, .spark-tab:focus-visible { color: var(--fg, inherit); }
+  .spark-tab.on { color: var(--accent); border-bottom-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .spark-panel { display: none; align-items: center; gap: 0.5rem; white-space: nowrap; }
+  .spark-panel.on { display: inline-flex; }
   svg.spark { width: 120px; height: 24px; color: var(--accent); }
+  .trends { padding: 0.25rem 0.75rem 0.75rem; font-size: 0.8rem; }
+  .trends svg.spark { width: 180px; height: 32px; }
   .reading { margin-right: 1.25rem; white-space: nowrap; }
   .reading.alert { color: var(--err); }
   button.action[aria-pressed="false"] { color: var(--dim); }
@@ -100,6 +108,55 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   document.querySelectorAll('#room-list li.active').forEach(function (l) { l.classList.remove('active'); });
   b.parentElement.classList.add('active');
+});
+
+// Sparkline sets show one chart at a time: hovering (or tapping) a
+// measurement's tab selects it, and the arrow keys move between tabs (only the
+// selected tab is in the tab order). Tabs are keyed by measurement name, not
+// position, and the pick is remembered on the swap target, so changing the
+// 24h/7d/30d range - which re-renders the set - keeps the same measurement even
+// if the set's readings changed in between.
+function sparkPick(tab, focus) {
+  var set = tab.closest('.spark-set');
+  if (!set) return;
+  var key = tab.dataset.spark;
+  set.querySelectorAll('[data-spark]').forEach(function (el) {
+    var on = el.dataset.spark === key;
+    el.classList.toggle('on', on);
+    if (el.classList.contains('spark-tab')) {
+      el.setAttribute('aria-selected', on);
+      el.tabIndex = on ? 0 : -1;
+    }
+  });
+  if (focus) tab.focus();
+  var holder = set.closest('td, #trends');
+  if (holder) holder.dataset.spark = key;
+}
+['mouseover', 'click'].forEach(function (ev) {
+  document.addEventListener(ev, function (e) {
+    var t = e.target.closest && e.target.closest('.spark-tab');
+    if (t && !t.classList.contains('on')) sparkPick(t);
+  });
+});
+document.addEventListener('keydown', function (e) {
+  var t = e.target.closest && e.target.closest('.spark-tab');
+  if (!t) return;
+  var tabs = Array.prototype.slice.call(t.parentElement.children);
+  var i = tabs.indexOf(t);
+  if (e.key === 'ArrowRight') i = (i + 1) % tabs.length;
+  else if (e.key === 'ArrowLeft') i = (i + tabs.length - 1) % tabs.length;
+  else if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  sparkPick(tabs[i], true);
+});
+document.addEventListener('htmx:afterSwap', function (e) {
+  var h = e.target;
+  if (!h || !h.dataset || !h.dataset.spark) return;
+  Array.prototype.some.call(h.querySelectorAll('.spark-tab'), function (t) {
+    if (t.dataset.spark !== h.dataset.spark) return false;
+    sparkPick(t);
+    return true;
+  });
 });
 
 // Live-update status. SSE pushes only deltas, so after a drop the page is

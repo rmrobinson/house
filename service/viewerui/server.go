@@ -115,6 +115,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /buildings/{id}/events", s.handleEvents)
 	mux.HandleFunc("GET /buildings/{id}/overview", s.handleOverview)
 	mux.HandleFunc("GET /buildings/{id}/overview/events", s.handleOverviewEvents)
+	mux.HandleFunc("GET /buildings/{id}/overview/trends", s.handleTrends)
 	mux.HandleFunc("GET /rooms/{id}/popup", s.handlePopup)
 	mux.HandleFunc("GET /rooms/{id}", s.handleRoom)
 	mux.HandleFunc("GET /rooms/{id}/camera/{device_id}", s.handleCamera)

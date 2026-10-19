@@ -8,6 +8,7 @@ go_library(
         "metrics.go",
         "overview.go",
         "overview_metrics.go",
+        "overview_trends.go",
         "server.go",
         "sse.go",
         "templates.go",
@@ -44,6 +45,7 @@ go_library(
         "@com_github_spf13_viper//:viper",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
+        "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_golang_google_protobuf//types/known/timestamppb",
         "@org_uber_go_zap//:zap",
     ],
@@ -59,6 +61,7 @@ go_test(
     name = "viewerui_test",
     srcs = [
         "metrics_test.go",
+        "overview_trends_test.go",
         "server_test.go",
     ],
     embed = [":viewerui_lib"],

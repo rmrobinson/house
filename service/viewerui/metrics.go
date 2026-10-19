@@ -83,9 +83,39 @@ func newMetricsFeed(logger *zap.Logger, client api2.MetricsServiceClient) *metri
 // series returns metric's history over r. Only successful lookups are cached,
 // so a metricsd blip doesn't blank a chart for the TTL.
 func (m *metricsFeed) series(ctx context.Context, deviceID, metric string, r sparkRange) ([]*api2.SeriesPoint, error) {
-	key := deviceID + "\x00" + metric + "\x00" + r.Key
 	now := m.now()
+	return m.fetch(ctx, deviceID+"\x00"+metric+"\x00"+r.Key, now, &api2.GetSeriesRequest{
+		DeviceId:  deviceID,
+		Attribute: metric,
+		Start:     timestamppb.New(now.Add(-r.Dur)),
+		MaxPoints: sparkPoints,
+	})
+}
 
+// combined returns metric's history over r for several devices merged into one
+// series by combine. Start and End are both pinned (rather than leaving End to
+// metricsd's clock) so every combined series over r uses the same window width
+// and their points line up when overview_trends.go adds them together.
+func (m *metricsFeed) combined(ctx context.Context, ids []string, metric string, combine api2.GetSeriesRequest_Combine, r sparkRange) ([]*api2.SeriesPoint, error) {
+	now := m.now()
+	req := &api2.GetSeriesRequest{
+		Attribute: metric,
+		Start:     timestamppb.New(now.Add(-r.Dur)),
+		End:       timestamppb.New(now),
+		MaxPoints: sparkPoints,
+		Combine:   combine,
+	}
+	if len(ids) == 1 {
+		req.DeviceId = ids[0]
+	} else {
+		req.DeviceIds = ids
+	}
+	key := strings.Join(ids, "\x01") + "\x00" + metric + "\x00" + combine.String() + "\x00" + r.Key
+	return m.fetch(ctx, key, now, req)
+}
+
+// fetch runs req, serving and filling the cache under key.
+func (m *metricsFeed) fetch(ctx context.Context, key string, now time.Time, req *api2.GetSeriesRequest) ([]*api2.SeriesPoint, error) {
 	m.mu.Lock()
 	if c, ok := m.cache[key]; ok && now.Sub(c.at) < sparkCacheTTL {
 		m.mu.Unlock()
@@ -95,12 +125,7 @@ func (m *metricsFeed) series(ctx context.Context, deviceID, metric string, r spa
 
 	ctx, cancel := context.WithTimeout(ctx, sparkTimeout)
 	defer cancel()
-	resp, err := m.client.GetSeries(ctx, &api2.GetSeriesRequest{
-		DeviceId:  deviceID,
-		Attribute: metric,
-		Start:     timestamppb.New(now.Add(-r.Dur)),
-		MaxPoints: sparkPoints,
-	})
+	resp, err := m.client.GetSeries(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +153,9 @@ type sparkView struct {
 	Points   string
 	Min, Max string
 	Note     string
+	// Unit and Hint are the trends' value suffix and source line ("interior
+	// average"); a device reading's Value already carries its unit.
+	Unit, Hint string
 }
 
 type rangeLink struct {
@@ -188,8 +216,17 @@ func buildSpark(rd houseview.Reading, pts []*api2.SeriesPoint, start, end time.T
 		fmt.Fprintf(&b, "%.1f,%.1f", x, y)
 	}
 	sv.Points = b.String()
-	sv.Min, sv.Max = fmt.Sprintf("%.3g", lo), fmt.Sprintf("%.3g", hi)
+	sv.Min, sv.Max = sparkNumber(lo), sparkNumber(hi)
 	return sv
+}
+
+// sparkNumber formats a chart label to three significant figures, except that
+// 1000 and up keep every integer digit ("1010", not "1.01e+03").
+func sparkNumber(v float64) string {
+	if math.Abs(v) >= 1000 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return fmt.Sprintf("%.3g", v)
 }
 
 // handleSparklines renders the charts for a device's numeric readings over

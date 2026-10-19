@@ -294,6 +294,8 @@ type overviewPageData struct {
 	ID       string
 	Name     string
 	Overview overviewView
+	// Trends is whether to show the TRENDS box (a metrics server is configured).
+	Trends bool
 }
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +306,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ov := buildOverview(snap)
-	s.renderPage(w, "overview", overviewPageData{ID: id, Name: ov.Name, Overview: ov})
+	s.renderPage(w, "overview", overviewPageData{ID: id, Name: ov.Name, Overview: ov, Trends: s.metrics != nil})
 }
 
 // popupCamera is one camera in the motion popup.
