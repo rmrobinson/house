@@ -3,11 +3,13 @@ package bridge
 import (
 	"context"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
@@ -40,6 +42,18 @@ type Handler interface {
 	// produces exactly one terminal CommandUpdate and its RPC response is always
 	// empty.
 	ProcessCommandAsync(ctx context.Context, cmd *command.Command) error
+}
+
+// HistoryHandler is an optional interface a Handler may also implement to serve
+// BridgeService.GetDeviceHistory. A bridge whose handler doesn't implement it
+// answers that RPC with ErrHistoryNotSupported. A bridge should only implement
+// it for devices that advertise Sensor.Metadata.history.
+type HistoryHandler interface {
+	// GetHistory returns the samples the device recorded in (since, until],
+	// in any order and possibly with samples outside that range: the API layer
+	// filters, sorts and caps what it returns to the caller. An unknown
+	// deviceID should be reported as ErrDeviceNotFound.
+	GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error)
 }
 
 // Service contains the relevant fields to allow management of devices on the bridge.
@@ -255,6 +269,26 @@ func (s *Service) CompleteCommand(cmd *command.Command, resultErr error, resulti
 			},
 		},
 	})
+	s.publishCommandEvent(cmd, grpcStatus, resultingVersion)
+}
+
+// publishCommandEvent emits a CommandEvent recording cmd and its outcome. It is
+// separate from CommandUpdate so existing consumers are unaffected, and so the
+// synchronous path (which has no CommandUpdate) is observable too. cmd is
+// cloned so the event never aliases a caller-owned message.
+func (s *Service) publishCommandEvent(cmd *command.Command, result *status.Status, resultingVersion string) {
+	s.updates.SendMessage(&api2.Update{
+		Action: api2.Update_COMMAND,
+		Update: &api2.Update_CommandEvent{
+			CommandEvent: &api2.CommandEvent{
+				Command:          proto.Clone(cmd).(*command.Command),
+				Result:           result.Proto(),
+				ResultingVersion: resultingVersion,
+				Time:             timestamppb.Now(),
+				BridgeId:         s.bridge.GetId(),
+			},
+		},
+	})
 }
 
 func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
@@ -264,8 +298,10 @@ func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*de
 		if _, ok := status.FromError(err); !ok {
 			s.logger.Info("received a non-gRPC status error when processing command. rewriting to unknown",
 				zap.Error(err))
-			return nil, status.Error(codes.Internal, err.Error())
+			err = status.Error(codes.Internal, err.Error())
 		}
+		failure, _ := status.FromError(err)
+		s.publishCommandEvent(cmd, failure, "")
 		return nil, err
 	}
 
@@ -274,6 +310,10 @@ func (s *Service) processCommand(ctx context.Context, cmd *command.Command) (*de
 	if !proto.Equal(existingDevice, retDevice) {
 		s.UpdateDevice(retDevice)
 	}
+
+	// Published after UpdateDevice so a stream consumer sees the new state
+	// before the command that produced it, matching CompleteCommand's ordering.
+	s.publishCommandEvent(cmd, status.New(codes.OK, ""), retDevice.GetVersion())
 
 	return retDevice, nil
 }

@@ -10,8 +10,8 @@ import (
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
-// handleRoot sends you straight to your building when there's only one (the
-// common case), else lists them.
+// handleRoot sends you straight to your building's overview when there's only
+// one (the common case), else lists them.
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	buildings, err := houseview.ListBuildings(r.Context(), s.house)
 	if err != nil {
@@ -19,7 +19,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(buildings) == 1 {
-		http.Redirect(w, r, "/buildings/"+buildings[0].GetId(), http.StatusSeeOther)
+		http.Redirect(w, r, "/buildings/"+buildings[0].GetId()+"/overview", http.StatusSeeOther)
 		return
 	}
 	type row struct{ ID, Name string }
@@ -97,7 +97,7 @@ func (s *Server) handleBuilding(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		floorID = room.GetFloorId()
-		rv := roomToDetail(room)
+		rv := roomToDetail(room, s.metrics != nil)
 		data.Room = &rv
 	}
 
@@ -148,7 +148,7 @@ func (s *Server) selectRoom(r *http.Request, panel *floorPanelView, roomID strin
 	if err != nil {
 		return nil, err
 	}
-	rv := roomToDetail(room)
+	rv := roomToDetail(room, s.metrics != nil)
 	return &rv, nil
 }
 
@@ -163,7 +163,7 @@ func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/buildings/"+room.GetBuildingId()+"?room="+url.QueryEscape(room.GetId()), http.StatusSeeOther)
 		return
 	}
-	s.renderFragment(w, "room_detail", roomToDetail(room))
+	s.renderFragment(w, "room_detail", roomToDetail(room, s.metrics != nil))
 }
 
 // handleCamera swaps the detail pane for a <video> that negotiates WHEP
@@ -209,7 +209,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := &command.Command{DeviceId: id}
+	cmd := &command.Command{DeviceId: id, Origin: "viewerui"}
 	switch {
 	case r.PostForm.Has("brightness"):
 		level, err := strconv.Atoi(r.PostForm.Get("brightness"))

@@ -39,6 +39,11 @@ message Command {
   // device has changed since. Empty means execute unconditionally.
   string version = 3;
 
+  // Free-form, advisory label for who issued the command (e.g. "policy:<id>",
+  // "viewerui", "adminui"). Recorded for observability only - it is not
+  // authenticated and must not be used for access control.
+  string origin = 4;
+
   // The specifics of the command we're executing.
   // Control of these is done via spending relevant 'Command' entities to the Bridge.
   // Each device has a set of supported commands; these can be seen in the comments on the specific device.
@@ -74,6 +79,7 @@ message Command {
     faltung.house.api.command.SkipBackward skip_backward = 128;
     faltung.house.api.command.Input input = 129;
     faltung.house.api.command.AudioOutput audio_output = 130;
-    faltung.house.api.command.OpenClose open_close = 131;
+    faltung.house.api.command.PlayMedia play_media = 131;
+    faltung.house.api.command.OpenClose open_close = 132;
   }
 }

@@ -462,8 +462,8 @@ func (db *Database) CreateFloor(ctx context.Context, f *Floor) (*Floor, error) {
 	newID := uuid.NewString()
 	newVersion := uuid.NewString()
 
-	_, err = db.db.ExecContext(ctx, "INSERT INTO floor (id, building_id, name, sort_order, version) VALUES (?, ?, ?, ?, ?)",
-		newID, f.BuildingID, f.Name, f.SortOrder, newVersion)
+	_, err = db.db.ExecContext(ctx, "INSERT INTO floor (id, building_id, name, sort_order, exterior, version) VALUES (?, ?, ?, ?, ?, ?)",
+		newID, f.BuildingID, f.Name, f.SortOrder, f.Exterior, newVersion)
 	if err != nil {
 		db.logger.Error("unable to create floor", zap.Error(err))
 		return nil, err
@@ -477,9 +477,9 @@ func (db *Database) CreateFloor(ctx context.Context, f *Floor) (*Floor, error) {
 // GetFloor retrieves the floor with the specified ID, or nil if it doesn't exist.
 func (db *Database) GetFloor(ctx context.Context, floorID string) (*Floor, error) {
 	f := &Floor{}
-	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,name,sort_order,version FROM floor WHERE id=?", floorID)
+	row := db.db.QueryRowContext(ctx, "SELECT id,building_id,name,sort_order,exterior,version FROM floor WHERE id=?", floorID)
 
-	if err := row.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Version); err == sql.ErrNoRows {
+	if err := row.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Exterior, &f.Version); err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		db.logger.Error("unable to retrieve floor", zap.Error(err))
@@ -490,7 +490,7 @@ func (db *Database) GetFloor(ctx context.Context, floorID string) (*Floor, error
 
 // ListFloors retrieves every floor of the specified building, ordered by SortOrder.
 func (db *Database) ListFloors(ctx context.Context, buildingID string) ([]Floor, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT id,building_id,name,sort_order,version FROM floor WHERE building_id=? ORDER BY sort_order", buildingID)
+	rows, err := db.db.QueryContext(ctx, "SELECT id,building_id,name,sort_order,exterior,version FROM floor WHERE building_id=? ORDER BY sort_order", buildingID)
 	if err != nil {
 		db.logger.Error("unable to list floors", zap.String("building_id", buildingID), zap.Error(err))
 		return nil, err
@@ -500,7 +500,7 @@ func (db *Database) ListFloors(ctx context.Context, buildingID string) ([]Floor,
 	var floors []Floor
 	for rows.Next() {
 		f := Floor{}
-		if err := rows.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Version); err != nil {
+		if err := rows.Scan(&f.ID, &f.BuildingID, &f.Name, &f.SortOrder, &f.Exterior, &f.Version); err != nil {
 			db.logger.Error("unable to scan floor row", zap.Error(err))
 			return nil, err
 		}
@@ -518,8 +518,8 @@ func (db *Database) ListFloors(ctx context.Context, buildingID string) ([]Floor,
 func (db *Database) UpdateFloor(ctx context.Context, f *Floor) (*Floor, error) {
 	newVersion := uuid.NewString()
 
-	res, err := db.db.ExecContext(ctx, "UPDATE floor SET name=?,sort_order=?,version=? WHERE id=? AND version=?",
-		f.Name, f.SortOrder, newVersion, f.ID, f.Version)
+	res, err := db.db.ExecContext(ctx, "UPDATE floor SET name=?,sort_order=?,exterior=?,version=? WHERE id=? AND version=?",
+		f.Name, f.SortOrder, f.Exterior, newVersion, f.ID, f.Version)
 	if err != nil {
 		db.logger.Error("unable to update floor", zap.String("floor_id", f.ID), zap.Error(err))
 		return nil, err

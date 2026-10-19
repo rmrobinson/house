@@ -59,6 +59,7 @@ enabling `cast.discovery.mdns_enabled`:
 | `VolumeAbsolute` / `VolumeRelative` | Receiver connected (works even with no app running) |
 | `Mute` | Same as above |
 | `AppLaunch` | Receiver connected (no app needs to already be running) |
+| `PlayMedia` | Receiver connected (works on an idle device) |
 
 The table above applies equally to `Television`-kind devices (`Playback`/`SeekAbsolute`/
 `SeekRelative`/`SkipForward`/`SkipBackward`/`VolumeAbsolute`/`VolumeRelative`/`Mute`/`AppLaunch`;
@@ -98,6 +99,36 @@ live against a real Chromecast/Spotify session, it silently skips to a different
 queue instead. See the doc comments on `castctrl.Session.SeekAbsolute` and the `SeekAbsolute` case
 in `dispatchCommand` (`command.go`).
 
+`PlayMedia` plays a direct http(s) media URL (`content_url` + `content_type`, optional
+`title`/`artist`/`image_url`, optional `repeat`). A `LOAD` has to be addressed to a running app, so
+`castctrl.Session.LoadMedia` launches the Default Media Receiver (`CC1AD845`) first unless it is
+already the foreground app — which ends any other app, so this replaces whatever was playing. With
+`repeat` it sends `QUEUE_LOAD` with `REPEAT_SINGLE` instead of `LOAD`, since `LOAD` has no repeat
+flag. The device fetches the URL itself, so it must be reachable from the device; anything that
+needs a login or header (Spotify, Plex) won't work. The command allows 12s (`playMediaTimeout`,
+kept under policyd's 15s command timeout) because it is two round trips and the launch is slow on
+a Home Mini. It deliberately does not touch
+volume — send `VolumeAbsolute` first if the level matters.
+
+`PlayMedia` is accepted by `Television`-kind devices too (a Google TV Streamer), where launching the
+media receiver ends whatever is running, Netflix included. It also needs the receiver to be
+connected to the *new* app before it sends the `LOAD` (`connectedToAppLocked`): when the launch
+reply is a `LAUNCH_STATUS` (a string `status`, seen live on a Home Mini) the app only appears via
+the receiver's next push, and a `LAUNCH_ERROR` that arrives that way ends the command at once as a
+rejection instead of timing out. Receiver-namespace messages other than `RECEIVER_STATUS` never
+touch the cached app or volume.
+
+To play from a LAN copy instead of the internet, set `cast.media_dir` (see `cast.example.yaml`):
+the bridge then serves that directory read-only at `http://<host>:17022/<file>` (`media_listen_port`;
+a port of its own, separate from the gRPC port 17021 and the art proxy's 17023 — `main.go` resolves
+all three and refuses to start if two enabled ones match; keep them clear of other services on the
+same host too, e.g. ecobee holds 17012 on h031). With
+`repeat` the speaker keeps looping that file through an internet outage. Confirmed on a real Google
+Home Mini (plain `http://` LAN URL accepted): playback kept running when the internet was cut, and a
+fresh launch with the internet already down also worked (~6s from command to audio). Caveat: the
+launch test ran minutes after an earlier launch, so it doesn't prove a cold start after hours idle
+needs no Google fetch; the Default Media Receiver may have been cached on the device.
+
 `AppLaunch` starts an application by its Cast receiver app ID (e.g. `233637DE` for YouTube) — there's
 no local API to enumerate what a device *could* run, only what it's running now (`App.Attributes.
 applications` stays empty), so the caller has to already know the ID. Confirmed live against a real
@@ -106,8 +137,8 @@ correctly reflected in `App.State` (`application_id`/`application_name`). **`App
 start playback** — confirmed live, both IDs above land on the same "Ready to Cast" idle screen once
 launched, not a browsable/interactive app UI. Starting real content needs a `LOAD` message (content
 URL/ID, MIME type, stream type — for an authenticated source like Plex, probably also a
-token/header) that this bridge never sends: `LOAD` isn't implemented anywhere in this bridge or
-`castctrl` — `TypeLoad` exists in `namespaces.go` as a constant but nothing ever sends it. Whether
+token/header); that is what `PlayMedia` (above) sends, but only to the Default Media Receiver, so
+it can't start content in YouTube/Plex. Whether
 any Cast receiver app has a browsable on-TV UI reachable via `LAUNCH` alone (without `LOAD`) is
 untested here — the two apps tried both needed `LOAD` regardless. Stopping the running application
 isn't wired up either
@@ -118,7 +149,7 @@ flags (queue, shuffle, repeat, like — real capabilities several apps report bu
 
 ## Album art proxy
 
-Optional (`cast.art_base_url` / `cast.art_listen_port` in config) — see `art.go`. If configured,
+Optional (`cast.art_base_url` / `cast.art_listen_port` in config, port default 17023) — see `art.go`. If configured,
 every art URL a device reports is rewritten to a locally-served, cached copy before the device
 update is published, so dashboard clients never need direct internet egress. Deliberately kept
 free of any Cast-specific dependency (`art.go` only knows about URLs and bytes) — cameras will

@@ -7,6 +7,23 @@ viewerui:
   # Optional: STUN/TURN urls for the camera player, only needed to view
   # cameras from outside the LAN. e.g. ["stun:stun.l.google.com:19302"]
   ice_servers: []
+  # Optional: weather-server (github.com/rmrobinson/weather-server) gRPC address,
+  # for the overview's exterior climate. Plaintext unless weather_tls is true
+  # (TLS against system roots, e.g. its nginx front on :443); weather_psk is
+  # only needed if that server runs with WEATHER_PSK.
+  weather_addr: ""
+  weather_tls: false
+  # CA that signed the weather server's certificate; empty = system roots. The
+  # house CA (e.g. tls.ca_file) if it is signed by the internal CA.
+  weather_ca_file: ""
+  weather_psk: ""
+  # Optional: metricsd's MetricsService (its listen_port, default 17050), for
+  # the sparklines under each device's readings. Unset = no sparklines. Dialed
+  # with the mutual-TLS identity below; metrics_server_name overrides the name
+  # checked against its certificate for this connection only (empty = the
+  # host in the address), since tls.server_name names housed.
+  metrics_addr: ""
+  metrics_server_name: ""
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
     cert_file: ""

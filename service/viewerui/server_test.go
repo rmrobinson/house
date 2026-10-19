@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,11 +18,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	apiDevice "github.com/rmrobinson/house/api/device"
 	apiTrait "github.com/rmrobinson/house/api/trait"
+	weatherv1 "github.com/rmrobinson/house/api/weather/v1"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
@@ -35,6 +38,9 @@ type fakeHouse struct {
 	// ListRooms and GetRoom - used to put a media-capable device on a room
 	// a test can then push BridgeService updates for.
 	extraDevice *apiDevice.Device
+
+	// exteriorFloor flags floor f2 as an exterior area (set before use).
+	exteriorFloor bool
 }
 
 func (f *fakeHouse) setExtraDevice(d *apiDevice.Device) {
@@ -56,7 +62,7 @@ func (f *fakeHouse) GetBuilding(context.Context, *api2.GetBuildingRequest) (*api
 	return &api2.Building{Id: "b1", Config: &api2.Building_Config{Name: "Home"}}, nil
 }
 func (f *fakeHouse) ListFloors(_ *api2.ListFloorsRequest, s api2.HouseService_ListFloorsServer) error {
-	s.Send(&api2.Floor{Id: "f2", Name: "Upstairs", SortOrder: 2, BuildingId: "b1"})
+	s.Send(&api2.Floor{Id: "f2", Name: "Upstairs", SortOrder: 2, BuildingId: "b1", Exterior: f.exteriorFloor})
 	return s.Send(&api2.Floor{Id: "f1", Name: "Main", SortOrder: 1, BuildingId: "b1"})
 }
 func (f *fakeHouse) ListRooms(_ *api2.ListRoomsRequest, s api2.HouseService_ListRoomsServer) error {
@@ -170,9 +176,14 @@ type fakeBridge struct {
 	// updates, when non-nil, feeds StreamUpdates - a test can push an
 	// *api2.Update onto it to simulate a live BridgeService device update.
 	updates chan *api2.Update
+	// devices, when it has the requested ID, is returned from GetDevice.
+	devices map[string]*apiDevice.Device
 }
 
 func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*apiDevice.Device, error) {
+	if d, ok := f.devices[r.GetId()]; ok {
+		return d, nil
+	}
 	if r.GetId() == "cam1" {
 		c := cam()
 		switch f.camURL {
@@ -261,7 +272,7 @@ func TestRootRedirectsToOnlyBuilding(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	rec := get(s, "/")
 	assert.Equal(t, http.StatusSeeOther, rec.Code)
-	assert.Equal(t, "/buildings/b1", rec.Header().Get("Location"))
+	assert.Equal(t, "/buildings/b1/overview", rec.Header().Get("Location"))
 }
 
 func TestBuildingPageListsFloorsInOrderAndFirstFloorRooms(t *testing.T) {
@@ -454,7 +465,7 @@ func TestEventsMediaUpdateSkipsNoopButRefreshesOnChange(t *testing.T) {
 			t.Fatal("no SSE message for unchanged update")
 		}
 	}
-	assert.Contains(t, gotUnchanged, `id="device-`+playing.GetId()+`"`, "the device row itself still refreshes")
+	assert.Contains(t, gotUnchanged, `id="device-`+domID(playing.GetId())+`"`, "the device row itself still refreshes")
 	assert.NotContains(t, gotUnchanged, `id="room-nowplaying-r1"`, "unchanged media signature must not re-push now playing")
 	assert.NotContains(t, gotUnchanged, `afterbegin:#event-log"><div>Kitchen Speaker:`, "unchanged media signature must not re-log an event")
 
@@ -599,7 +610,7 @@ func TestCameraPlayerCarriesICEServers(t *testing.T) {
 func TestRoomDetailOffersEveryCamera(t *testing.T) {
 	cam2 := cam()
 	cam2.Id, cam2.Config.Name = "cam2", "Garage cam"
-	rv := roomToDetail(&api2.Room{Id: "r1", Devices: []*apiDevice.Device{cam(), cam2}})
+	rv := roomToDetail(&api2.Room{Id: "r1", Devices: []*apiDevice.Device{cam(), cam2}}, false)
 	require.Len(t, rv.Cameras, 2)
 	var sb strings.Builder
 	require.NoError(t, fragments.ExecuteTemplate(&sb, "room_detail", rv))
@@ -626,6 +637,36 @@ func TestRoomDetailShowsAirQualityTilesOnlyWhenReported(t *testing.T) {
 	assert.Contains(t, body, "640 ppm")
 	assert.NotContains(t, body, ">VOC<", "unreported metrics get no tile")
 	assert.NotContains(t, body, ">Radon<")
+}
+
+func TestDomIDEscapesWhatSelectorsCannotHold(t *testing.T) {
+	assert.Equal(t, "zigbee-0017880100b56fa7", domID("zigbee-0017880100b56fa7"), "already-safe IDs are untouched")
+	assert.Equal(t, "54a91131-fc19-4d13-b46f-18b36772f531_3a2", domID("54a91131-fc19-4d13-b46f-18b36772f531:2"))
+	assert.Equal(t, "a_5fb", domID("a_b"), "underscore is the escape character, so it is escaped too")
+	assert.NotEqual(t, domID("a:b"), domID("a_3ab"), "distinct IDs never collide")
+	assert.Equal(t, "10_2e0_2e0_2e1", domID("10.0.0.1"))
+}
+
+// A bridge whose device IDs contain ":" (monop-amp: "<bridge-uuid>:2") made
+// every control on its rows throw in htmx - "#device-...:2" is not a valid
+// selector - so nothing could be commanded from the UI.
+func TestDeviceRowWithColonInIDHasSelectorSafeIDsAndTargets(t *testing.T) {
+	d := lamp(false)
+	d.Id = "54a91131-fc19-4d13-b46f-18b36772f531:2"
+	view := deviceToView(d)
+
+	var row, oob strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&row, "device_row", view))
+	require.NoError(t, fragments.ExecuteTemplate(&oob, "device_row_oob", view))
+
+	const safe = "device-54a91131-fc19-4d13-b46f-18b36772f531_3a2"
+	assert.Contains(t, row.String(), `<tr id="`+safe+`"`)
+	assert.Contains(t, row.String(), `hx-target="#`+safe+`"`, "the control targets the row by its safe id")
+	assert.Contains(t, oob.String(), `id="`+safe+`" hx-swap-oob="true"`, "live pushes match the same id")
+	assert.Contains(t, row.String(), `hx-post="/devices/54a91131-fc19-4d13-b46f-18b36772f531:2/commands"`,
+		"the command URL keeps the real device ID")
+	assert.NotContains(t, row.String()+oob.String(), `#device-54a91131-fc19-4d13-b46f-18b36772f531:2`)
+	assert.NotContains(t, row.String()+oob.String(), `id="device-54a91131-fc19-4d13-b46f-18b36772f531:2"`)
 }
 
 func TestCameraPushRefreshesOnlyTheInfoCell(t *testing.T) {
@@ -800,7 +841,7 @@ func TestDeviceRowRendersMediaControlsGatedOnSkipCapability(t *testing.T) {
 
 	assert.Contains(t, body, `[ || ]`, "playing shows the pause icon")
 	assert.Contains(t, body, `hx-vals='{"playback": "pause"}'`)
-	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
+	assert.Contains(t, body, `aria-label="Kitchen Speaker next" hx-post="/devices/speaker-Kitchen Speaker/commands" hx-vals='{"skip": "forward"}' hx-target="#device-speaker-Kitchen_20Speaker" hx-swap="outerHTML" hx-disabled-elt="this">[ &gt;| ]`)
 	assert.Contains(t, body, ` disabled aria-label="Kitchen Speaker next"`, "can_skip_forward false disables next")
 	assert.NotContains(t, body, ` disabled aria-label="Kitchen Speaker previous"`, "can_skip_backward true enables previous")
 	assert.Contains(t, body, `class="volume" name="volume" min="0" max="16" step="1" value="7"`)
@@ -847,4 +888,390 @@ func TestRoomPropsCellsWater(t *testing.T) {
 	assert.Contains(t, render("Detected"), `stat alert"><div class="label">Water</div><div class="val">Detected`)
 	assert.Contains(t, render("Dry"), `<div class="val">Dry`)
 	assert.NotContains(t, render(""), "Water", "no water sensor -> hidden")
+}
+
+func thermostatDevice(mode apiTrait.Thermostat_Mode, heat, cool *float32) *apiDevice.Device {
+	return &apiDevice.Device{
+		Id:     "tstat",
+		Config: &apiDevice.Device_Config{Name: "Main Thermostat"},
+		Details: &apiDevice.Device_Thermostat{Thermostat: &apiDevice.Thermostat{
+			Thermostat: &apiTrait.Thermostat{State: &apiTrait.Thermostat_State{
+				TargetMode:                mode,
+				HeatSetpointCelsius:       heat,
+				CoolSetpointCelsius:       cool,
+				CurrentTemperatureCelsius: 20.5,
+			}},
+		}},
+	}
+}
+
+func TestBuildOverviewAggregatesHouseTilesThermostatsAndMotion(t *testing.T) {
+	yes, no := true, false
+	w1, w2, tIn1, tIn2, tOut := 120.0, 80.0, 20.0, 22.0, 5.0
+	heat := float32(21)
+	snap := houseSnapshot{
+		Building: &api2.Building{Id: "b1", Config: &api2.Building_Config{Name: "Home"}, State: &api2.Building_State{Mode: "home", Occupied: &yes}},
+		Floors: []*api2.Floor{
+			{Id: "f1", Name: "Main"},
+			{Id: "f2", Name: "Property", Exterior: true},
+		},
+		Rooms: map[string][]*api2.Room{
+			"f1": {
+				{Id: "r1", Config: &api2.Room_Config{Name: "Kitchen"}, Properties: &api2.Room_Properties{Occupied: &no, PowerDrawW: &w1, TemperatureC: &tIn1},
+					Devices: []*apiDevice.Device{thermostatDevice(apiTrait.Thermostat_HEAT, &heat, nil)}},
+				{Id: "r2", Config: &api2.Room_Config{Name: "Den"}, Properties: &api2.Room_Properties{Occupied: &yes, PowerDrawW: &w2, TemperatureC: &tIn2}},
+			},
+			"f2": {
+				{Id: "r3", Config: &api2.Room_Config{Name: "Driveway"}, Properties: &api2.Room_Properties{Occupied: &yes, TemperatureC: &tOut}},
+			},
+		},
+	}
+	ov := buildOverview(snap)
+
+	tiles := map[string]tileView{}
+	for _, tl := range ov.Tiles {
+		tiles[tl.Label] = tl
+	}
+	assert.Equal(t, "HOME", tiles["Mode"].Value)
+	assert.Equal(t, "Occupied", tiles["House"].Value)
+	assert.Equal(t, "200 W", tiles["Power"].Value)
+	interior := map[string]tileView{}
+	for _, tl := range ov.Interior {
+		interior[tl.Label] = tl
+	}
+	assert.Equal(t, "21.0°C", interior["Temp"].Value, "exterior rooms don't skew the indoor average")
+	assert.Equal(t, "Dry", tiles["Water"].Value)
+	require.Len(t, ov.Exterior, 1)
+	assert.Equal(t, "Weather", ov.Exterior[0].Label, "no reading -> one placeholder tile")
+
+	require.Len(t, ov.Thermostats, 1)
+	assert.Equal(t, "21.0°C", ov.Thermostats[0].Setpoint)
+	assert.Equal(t, "20.5°C", ov.Thermostats[0].Current)
+	assert.Equal(t, "Heat", ov.Thermostats[0].Mode)
+
+	require.Len(t, ov.Floors, 2)
+	assert.Equal(t, "yes", ov.Floors[0].Motion)
+	assert.Equal(t, []string{"Den"}, ov.Floors[0].Active)
+	assert.False(t, ov.Floors[0].Exterior)
+	assert.True(t, ov.Floors[1].Exterior)
+	assert.True(t, ov.ExteriorActive)
+}
+
+func TestBuildOverviewLeakAndUnknowns(t *testing.T) {
+	yes := true
+	snap := houseSnapshot{
+		Building: &api2.Building{Id: "b1", Config: &api2.Building_Config{Name: "Home"}},
+		Floors:   []*api2.Floor{{Id: "f1", Name: "Main"}},
+		Rooms:    map[string][]*api2.Room{"f1": {{Id: "r1", Config: &api2.Room_Config{Name: "Sump"}, Properties: &api2.Room_Properties{WaterDetected: &yes}}}},
+	}
+	ov := buildOverview(snap)
+	var water, power, mode tileView
+	for _, tl := range ov.Tiles {
+		switch tl.Label {
+		case "Water":
+			water = tl
+		case "Power":
+			power = tl
+		case "Mode":
+			mode = tl
+		}
+	}
+	assert.True(t, water.Alert)
+	assert.Equal(t, "Sump", water.Note)
+	assert.Equal(t, "—", power.Value, "no metered device -> dash, not 0 W")
+	assert.Equal(t, "—", mode.Value)
+	assert.Equal(t, "unknown", ov.Floors[0].Motion)
+	assert.False(t, ov.ExteriorActive)
+}
+
+func TestThermostatSetpointFollowsTargetMode(t *testing.T) {
+	heat, cool := float32(19), float32(24)
+	assert.Equal(t, "24.0°C", thermostatToView(thermostatDevice(apiTrait.Thermostat_COOL, &heat, &cool)).Setpoint)
+	assert.Equal(t, "19.0–24.0°C", thermostatToView(thermostatDevice(apiTrait.Thermostat_AUTO, &heat, &cool)).Setpoint)
+	assert.Equal(t, "Off", thermostatToView(thermostatDevice(apiTrait.Thermostat_OFF, &heat, &cool)).Setpoint)
+	assert.Equal(t, "—", thermostatToView(thermostatDevice(apiTrait.Thermostat_HEAT, nil, &cool)).Setpoint)
+}
+
+func TestOverviewPageRendersAndLinksToFloors(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	rec := get(s, "/buildings/b1/overview")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `sse-connect="/buildings/b1/overview/events"`)
+	assert.Contains(t, body, `id="overview"`)
+	assert.Contains(t, body, `href="/buildings/b1?floor=f1"`)
+	assert.Contains(t, body, ">Interior<")
+	assert.Contains(t, body, ">Exterior<")
+	assert.Contains(t, body, `id="popup-slot"`)
+}
+
+func TestPopupRendersRoomCameras(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	rec := get(s, "/rooms/r1/popup")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, `id="motion-popup"`)
+	assert.Contains(t, body, "MOTION · Bath")
+	assert.Contains(t, body, "data-whep=")
+}
+
+func TestOverviewEventsOpensPopupOnExteriorMotionOnly(t *testing.T) {
+	s, house, _ := startTestServer(t)
+	house.exteriorFloor = true // f2 "Upstairs" is exterior, listing r1 (Bath, quiet) and r2 (Kitchen, already active)
+
+	srv := httptest.NewServer(s.routes())
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/buildings/b1/overview/events")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	yes := true
+	push := func() {
+		select {
+		case house.updates <- &api2.HouseUpdate{Update: &api2.HouseUpdate_Room{Room: &api2.RoomUpdate{RoomId: "r1", Properties: &api2.Room_Properties{Occupied: &yes}}}}:
+		default:
+		}
+	}
+	done := make(chan string, 1)
+	go func() {
+		var got strings.Builder
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			got.Write(buf[:n])
+			if strings.Contains(got.String(), "popup-slot") || err != nil {
+				done <- got.String()
+				return
+			}
+		}
+	}()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case got := <-done:
+			assert.Contains(t, got, `hx-get="/rooms/r1/popup"`)
+			assert.Contains(t, got, `hx-trigger="load"`)
+			return
+		case <-time.After(50 * time.Millisecond):
+			push()
+		case <-deadline:
+			t.Fatal("no popup fragment")
+		}
+	}
+}
+
+func TestOverviewMetricsFromDevices(t *testing.T) {
+	reach := &apiDevice.Device_Address{IsReachable: true}
+	humid := func(id string, h float32) *apiDevice.Device {
+		return &apiDevice.Device{Id: id, Address: reach, Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+			AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{HumidityPercentage: h}}}}}
+	}
+	lowBatt := &apiDevice.Device{Id: "door", Config: &apiDevice.Device_Config{Name: "Door"}, Address: reach, Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{CapacityRemainingPct: 4}}}}}
+	deadLight := &apiDevice.Device{Id: "dl", Config: &apiDevice.Device_Config{Name: "Hall"}, Details: &apiDevice.Device_Light{Light: lamp(true).GetLight()}}
+	ups := &apiDevice.Device{Id: "ups", Config: &apiDevice.Device_Config{Name: "Rack UPS"}, Address: reach, Details: &apiDevice.Device_Ups{Ups: &apiDevice.UPS{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{CapacityRemainingMins: 45}}}}}
+	charger := &apiDevice.Device{Id: "ev", Config: &apiDevice.Device_Config{Name: "Wall Charger"}, Address: reach, Details: &apiDevice.Device_EvCharger{EvCharger: &apiDevice.EVCharger{
+		WallPower:       &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 7200}},
+		ChargingSession: &apiTrait.ChargingSession{State: &apiTrait.ChargingSession_State{EnergyWh: 12300, DurationS: 3900}},
+	}}}
+	tv := speaker("Living Room Speaker", true, false, false)
+
+	co2a, co2b := int32(900), int32(1200)
+	radon := int32(157)
+	yes := true
+	snap := houseSnapshot{
+		Building: &api2.Building{Id: "b1", Config: &api2.Building_Config{Name: "Home"}},
+		Floors:   []*api2.Floor{{Id: "f1", Name: "Main"}, {Id: "f2", Name: "Property", Exterior: true}},
+		Rooms: map[string][]*api2.Room{
+			"f1": {
+				{Id: "r1", Config: &api2.Room_Config{Name: "Den"}, Properties: &api2.Room_Properties{Co2Ppm: &co2a, RadonBqM3: &radon}, Devices: []*apiDevice.Device{humid("h1", 40), tv}},
+				{Id: "r2", Config: &api2.Room_Config{Name: "Office"}, Properties: &api2.Room_Properties{Co2Ppm: &co2b}, Devices: []*apiDevice.Device{humid("h2", 50)}},
+			},
+			"f2": {{Id: "r3", Config: &api2.Room_Config{Name: "Porch"}, Properties: &api2.Room_Properties{Occupied: &yes}, Devices: []*apiDevice.Device{humid("h3", 99)}}},
+		},
+		Devices: []*apiDevice.Device{lowBatt, deadLight, ups, charger, lamp(false)},
+	}
+	ov := buildOverview(snap)
+	by := func(tiles []tileView, label string) tileView {
+		for _, tl := range tiles {
+			if tl.Label == label {
+				return tl
+			}
+		}
+		t.Fatalf("no tile %q", label)
+		return tileView{}
+	}
+
+	assert.Equal(t, "45%", by(ov.Interior, "Humidity").Value, "interior sensors only, exterior 99% excluded")
+	co2 := by(ov.Interior, "CO₂ (worst)")
+	assert.Equal(t, "1200 ppm", co2.Value)
+	assert.Equal(t, "Office", co2.Note)
+	assert.True(t, co2.Alert)
+	assert.False(t, by(ov.Interior, "Radon (worst)").Alert)
+	assert.Equal(t, "—", by(ov.Interior, "VOC (worst)").Value)
+
+	assert.Equal(t, "45 min", by(ov.StatusTiles, "UPS").Value)
+	health := by(ov.StatusTiles, "Devices")
+	assert.True(t, health.Alert)
+	assert.Contains(t, health.Value, "1 offline")
+	assert.Contains(t, health.Value, "1 low battery")
+	assert.Contains(t, health.Note, "Hall")
+	assert.Contains(t, health.Note, "Door")
+	assert.Equal(t, "0 of 2", by(ov.StatusTiles, "Lights on").Value, "the unreachable light's remembered on-state is not counted")
+
+	require.Len(t, ov.Media, 1)
+	assert.Equal(t, "Den", ov.Media[0].Room)
+	require.Len(t, ov.Chargers, 1)
+	assert.Equal(t, "Charging", ov.Chargers[0].State)
+	assert.Equal(t, "7.20 kW", ov.Chargers[0].Power)
+	assert.Equal(t, "12.3 kWh · 1h 5m", ov.Chargers[0].Session)
+}
+
+func TestUPSOnBatteryAlerts(t *testing.T) {
+	ups := &apiDevice.Device{Id: "ups", Config: &apiDevice.Device_Config{Name: "Rack UPS"}, Details: &apiDevice.Device_Ups{Ups: &apiDevice.UPS{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{Discharging: true, CapacityRemainingMins: 12}}}}}
+	tile := upsTile([]*apiDevice.Device{ups})
+	assert.Equal(t, "On battery", tile.Value)
+	assert.True(t, tile.Alert)
+}
+
+func TestExteriorTilesFromWeatherReading(t *testing.T) {
+	r := &weatherv1.WeatherReading{
+		TempC: -3.2, FeelsLikeC: -9.0, HumidityPct: 81, DewPointC: -5.6, PressureHpa: 1013.4,
+		WindSpeedMs: 5, WindGustMs: 9, WindDirDeg: 292, RainDailyMm: 1.25, RainMmHr: 0.4, UvIndex: 0.3,
+		Condition: weatherv1.WeatherCondition_WEATHER_CONDITION_MOSTLY_CLOUDY,
+	}
+	tiles := map[string]tileView{}
+	for _, tl := range exteriorTiles(r, "") {
+		tiles[tl.Label] = tl
+	}
+	assert.Equal(t, "-3.2°C", tiles["Temp"].Value)
+	assert.Equal(t, "feels like -9°C", tiles["Temp"].Note)
+	assert.Equal(t, "Mostly cloudy", tiles["Conditions"].Value)
+	assert.Equal(t, "81%", tiles["Humidity"].Value)
+	assert.Equal(t, "18 km/h WNW", tiles["Wind"].Value)
+	assert.Equal(t, "gusts 32 km/h", tiles["Wind"].Note)
+	assert.Equal(t, "1.2 mm", tiles["Rain today"].Value)
+	assert.Equal(t, "1013 hPa", tiles["Pressure"].Value)
+}
+
+func TestWeatherFeedStalenessAndNil(t *testing.T) {
+	var nilFeed *weatherFeed
+	r, why := nilFeed.current(time.Now())
+	assert.Nil(t, r)
+	assert.Contains(t, why, "no weather server")
+
+	now := time.Now()
+	f := &weatherFeed{latest: &weatherv1.WeatherReading{Timestamp: timestamppb.New(now.Add(-time.Minute))}}
+	r, _ = f.current(now)
+	assert.NotNil(t, r)
+
+	f.latest = &weatherv1.WeatherReading{Timestamp: timestamppb.New(now.Add(-time.Hour))}
+	r, why = f.current(now)
+	assert.Nil(t, r)
+	assert.Contains(t, why, "60 min ago")
+}
+
+// fakeWeather sends one reading per connection, then goes silent - like a
+// half-open connection.
+type fakeWeather struct {
+	weatherv1.UnimplementedWeatherServiceServer
+	conns atomic.Int32
+}
+
+func (f *fakeWeather) StreamReadings(_ *weatherv1.StreamRequest, s weatherv1.WeatherService_StreamReadingsServer) error {
+	f.conns.Add(1)
+	if err := s.Send(&weatherv1.WeatherReading{Timestamp: timestamppb.Now(), TempC: 7}); err != nil {
+		return err
+	}
+	<-s.Context().Done()
+	return nil
+}
+
+func TestWeatherFeedReconnectsWhenStreamGoesSilent(t *testing.T) {
+	old := weatherIdleTimeout
+	weatherIdleTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { weatherIdleTimeout = old })
+
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	fw := &fakeWeather{}
+	gs := grpc.NewServer()
+	weatherv1.RegisterWeatherServiceServer(gs, fw)
+	go gs.Serve(lis)
+	t.Cleanup(gs.Stop)
+	conn, err := grpcutil.DialInsecure(lis.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	feed := startWeatherFeed(ctx, zaptest.NewLogger(t), conn, "")
+
+	require.Eventually(t, func() bool { return fw.conns.Load() >= 2 }, 5*time.Second, 20*time.Millisecond, "silent stream must be re-dialled")
+	r, _ := feed.current(time.Now())
+	require.NotNil(t, r)
+	assert.Equal(t, 7.0, r.GetTempC())
+}
+
+func TestDeviceHealthIgnoresUnreportedBatteryAndStaleLights(t *testing.T) {
+	reach := &apiDevice.Device_Address{IsReachable: true}
+	// Battery trait present but no state yet: "not reported", not 0%.
+	unreported := &apiDevice.Device{Id: "s1", Address: reach, Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{Battery: &apiTrait.Battery{}}}}
+	assert.Equal(t, "All OK", deviceHealthTile([]*apiDevice.Device{unreported}).Value)
+
+	// An unreachable light's remembered "on" isn't counted as on.
+	offline := lamp(true)
+	offline.Address = &apiDevice.Device_Address{IsReachable: false}
+	online := lamp(true)
+	online.Id, online.Address = "lamp2", reach
+	assert.Equal(t, "1 of 2", lightsTile([]*apiDevice.Device{offline, online}).Value)
+}
+
+func TestOverviewEventsRefreshIsThrottled(t *testing.T) {
+	oldD, oldG := overviewDebounce, overviewMinGap
+	overviewDebounce, overviewMinGap = 20*time.Millisecond, 600*time.Millisecond
+	t.Cleanup(func() { overviewDebounce, overviewMinGap = oldD, oldG })
+
+	s, house, _ := startTestServer(t)
+	srv := httptest.NewServer(s.routes())
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/buildings/b1/overview/events")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	// Count overview re-renders over ~2s of constant room updates.
+	var mu sync.Mutex
+	renders := 0
+	go func() {
+		buf := make([]byte, 1<<16)
+		for {
+			n, err := resp.Body.Read(buf)
+			mu.Lock()
+			renders += strings.Count(string(buf[:n]), `id="overview" hx-swap-oob`)
+			mu.Unlock()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	temp := 20.0
+	stop := time.After(2 * time.Second)
+tick:
+	for {
+		select {
+		case <-stop:
+			break tick
+		case <-time.After(10 * time.Millisecond):
+			select {
+			case house.updates <- &api2.HouseUpdate{Update: &api2.HouseUpdate_Room{Room: &api2.RoomUpdate{RoomId: "r1", Properties: &api2.Room_Properties{TemperatureC: &temp}}}}:
+			default:
+			}
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	assert.GreaterOrEqual(t, renders, 1, "updates must produce a refresh")
+	assert.LessOrEqual(t, renders, 4, "but at most one per overviewMinGap (~600ms) over 2s")
 }

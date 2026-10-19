@@ -81,6 +81,11 @@ type deviceView struct {
 	// Readings are this device's own measurements (temperature, humidity,
 	// power, ...), shown in a second row under it; see houseview.Readings.
 	Readings []houseview.Reading
+	// Sparks is true when the device has numeric readings and a metrics
+	// server is configured: its row gets a lazily loaded sparklines row
+	// (SparksHref), see metrics.go.
+	Sparks     bool
+	SparksHref string
 	// ViewHref opens this camera's player. RowView is true when it's the
 	// room's only camera, so its own row carries the [ VIEW ] button; with
 	// several, the DEVICES header offers one [ VIEW ] that opens a picker.
@@ -264,7 +269,10 @@ func roomNowPlaying(devices []*apiDevice.Device) string {
 	return ""
 }
 
-func roomToDetail(r *api2.Room) roomDetailView {
+// roomToDetail builds a room's detail pane; sparks says whether a metrics
+// server is configured, which gives each device with numeric readings a
+// sparklines row.
+func roomToDetail(r *api2.Room, sparks bool) roomDetailView {
 	rv := roomDetailView{
 		ID:         r.GetId(),
 		Name:       r.GetConfig().GetName(),
@@ -273,6 +281,10 @@ func roomToDetail(r *api2.Room) roomDetailView {
 	}
 	for _, d := range houseview.SortDevices(r.GetDevices()) {
 		dv := deviceToView(d)
+		if sparks && hasMetricReadings(dv.Readings) {
+			dv.Sparks = true
+			dv.SparksHref = sparkHref(dv.ID)
+		}
 		if dv.IsCamera {
 			dv.ViewHref = "/rooms/" + rv.ID + "/camera/" + dv.ID
 			rv.Cameras = append(rv.Cameras, dv)

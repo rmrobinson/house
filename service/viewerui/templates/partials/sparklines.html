@@ -1,0 +1,12 @@
+{{/* device_sparklines is what a device's sparks row swaps in: the 24h/7d/30d
+range links, which re-request this fragment into the same cell, and the
+device's charts, one visible at a time. Chart geometry is computed in Go
+(metrics.go); the template only emits numbers it was handed. */}}
+
+{{/* spark_set shows one chart of several: a tab per chart (hover, focus or tap
+selects it, arrow keys move between them - see the sparkPick script in
+layout.html) and one panel per chart, keyed by the measurement's label so a
+remembered pick survives a re-render. The first starts selected. Used by the device rows and the overview's TRENDS. */}}
+{{define "spark_set"}}<span class="spark-set"><span class="spark-tabs" role="tablist" aria-label="Measurements">{{range $i, $c := .}}<span class="spark-tab{{if eq $i 0}} on{{end}}" role="tab" tabindex="{{if eq $i 0}}0{{else}}-1{{end}}" data-spark="{{$c.Label}}" aria-selected="{{if eq $i 0}}true{{else}}false{{end}}">{{$c.Label}}</span>{{end}}</span>{{range $i, $c := .}}<span class="spark-panel{{if eq $i 0}} on{{end}}" role="tabpanel" data-spark="{{$c.Label}}">{{if $c.Note}}<span class="dim">{{$c.Note}}</span>{{else}}<span class="spark-val" title="latest point in the chart (a window average on 7d and 30d)">{{$c.Value}}{{if $c.Unit}} <span class="dim">{{$c.Unit}}</span>{{end}}</span><svg class="spark" viewBox="0 0 120 24" preserveAspectRatio="none" role="img" aria-label="{{$c.Label}}, {{$c.Min}} to {{$c.Max}}{{if $c.Unit}} {{$c.Unit}}{{end}}"><polyline fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" points="{{$c.Points}}"/></svg><span class="dim">{{$c.Min}}–{{$c.Max}}{{if $c.Hint}} · {{$c.Hint}}{{end}}</span>{{end}}</span>{{end}}</span>{{end}}
+
+{{define "device_sparklines"}}<span class="spark-range">{{range .Ranges}}<button class="action{{if .Active}} on{{end}}" aria-pressed="{{if .Active}}true{{else}}false{{end}}" hx-get="{{.Href}}" hx-target="closest td" hx-swap="innerHTML" hx-disabled-elt="this">{{.Key}}</button>{{end}}</span>{{template "spark_set" .Charts}}{{end}}

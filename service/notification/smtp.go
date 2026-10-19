@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"mime/quotedprintable"
 	"net/smtp"
 	"strings"
 	"time"
@@ -38,6 +39,15 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body, contentType st
 // service is asked to send is either plain text or one self-contained HTML
 // document (e.g. the battery-report policy script builds its own HTML
 // string entirely in Lua before calling notify.send).
+//
+// The body is quoted-printable encoded. That script builds its HTML as one
+// line with no newlines, and SMTP caps a line at 998 characters (RFC 5321
+// section 4.5.3.1.6): a relay breaks anything longer at that column, and when
+// the break lands just after a "<" the tag turns into literal "< li>" text in
+// the recipient's mail client. Quoted-printable wraps lines at 76 characters
+// with soft breaks (an "=" at the end of a line, removed on decoding) that a
+// mail client never shows, and it also carries non-ASCII text, which an
+// unencoded "charset=utf-8" body with no declared 8-bit transport would not.
 func buildMessage(from, to, subject, body, contentType string) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "From: %s\r\n", stripCRLF(from))
@@ -47,8 +57,15 @@ func buildMessage(from, to, subject, body, contentType string) []byte {
 	fmt.Fprintf(&b, "Message-Id: %s\r\n", newMessageID(from))
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Content-Type: %s; charset=utf-8\r\n", stripCRLF(contentType))
+	fmt.Fprintf(&b, "Content-Transfer-Encoding: quoted-printable\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
+
+	// In its default (text) mode the writer turns each line break into CRLF
+	// itself, so body is passed through unmodified. Writing to a bytes.Buffer
+	// cannot fail.
+	qp := quotedprintable.NewWriter(&b)
+	_, _ = qp.Write([]byte(body))
+	_ = qp.Close()
 	return b.Bytes()
 }
 

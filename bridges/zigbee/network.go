@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -128,33 +129,24 @@ type builtDevice struct {
 	friendlyName string
 	ieeeAddress  string
 
-	// cmdSlot serializes commands to this device, like mu does, but unlike a bare mutex a waiter
-	// can give up: see acquireCommand.
-	cmdOnce sync.Once
-	cmdSlot chan struct{}
-}
+	// lane orders the commands sent to this device: one at a time, a newer command superseding
+	// older pending ones, a stale one dropped rather than delivered late. See
+	// bridge.CommandLane for why a slow device needs this.
+	lane bridge.CommandLane
 
-// acquireCommand takes this device's command slot, waiting for any in-flight command to finish
-// first, and returns the func that releases it. It returns ctx's error instead if ctx ends while
-// waiting (or has ended by the time the slot is free).
-//
-// This is what keeps a slow device from poisoning its own queue. With a plain mutex, every
-// command queued behind a stuck one waited its turn regardless of its caller's deadline and then
-// published anyway - so one unresponsive bulb produced a train of stale commands, each costing a
-// full write timeout and each landing on the device long after the caller had given up.
-func (bd *builtDevice) acquireCommand(ctx context.Context) (func(), error) {
-	bd.cmdOnce.Do(func() { bd.cmdSlot = make(chan struct{}, 1) })
-
-	select {
-	case bd.cmdSlot <- struct{}{}:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	if err := ctx.Err(); err != nil {
-		<-bd.cmdSlot
-		return nil, err
-	}
-	return func() { <-bd.cmdSlot }, nil
+	// The three fields below bound how long a COMMANDED state can stand in for a real one; see
+	// networkConn.applyCommand and unconfirmedStateGrace. All guarded by mu.
+	//
+	// stateGen counts events that bear on the device's on/off/brightness: a report that carries
+	// them, or a command being accepted. It lets a deferred "revert the assumed state if nothing has
+	// happened since" tell whether anything has.
+	stateGen uint64
+	// assumedBase is the last state the device itself reported - or, if several commands are
+	// unconfirmed, the state before the first of them - and is nil while the published state is one
+	// the device reported. It is what an expired assumption reverts to.
+	assumedBase *device.Device
+	// assumedExpiry is the pending revert, if any.
+	assumedExpiry *time.Timer
 }
 
 // networkConn owns zigbee2mqtt device discovery (driven by the retained bridge/devices message),
@@ -191,6 +183,10 @@ type networkConn struct {
 	queries      []initialQuery
 	queryRunning bool
 	queryWG      sync.WaitGroup
+
+	// expiryWG tracks the pending reverts of assumed state (builtDevice.assumedExpiry), so tests can
+	// stop them before they end.
+	expiryWG sync.WaitGroup
 }
 
 func newNetworkConn(logger *zap.Logger, svc *bridge.Service, zb *ZigbeeBridge, mc *mqttConn, cfg zigbeeConfig) *networkConn {
@@ -259,8 +255,23 @@ func (nc *networkConn) onMessage(topic string, payload []byte) {
 			bd.device.LastSeen = timestamppb.New(t)
 		}
 	}
+	if carriesCommandableState(state) {
+		// The device has told us its own on/off or brightness, so whatever was assumed from a
+		// command is now replaced by fact and there is nothing left to expire.
+		bd.stateGen++
+		bd.assumedBase = nil
+		nc.cancelAssumedExpiry(bd)
+	}
 	bd.device.Version = computeVersion(bd.device)
 	nc.svc.UpdateDevice(bd.device)
+}
+
+// carriesCommandableState reports whether a state report includes the properties a command can
+// assume (on/off and brightness), as opposed to a report of only link quality or a battery level.
+func carriesCommandableState(state map[string]any) bool {
+	_, hasState := state["state"]
+	_, hasBrightness := state["brightness"]
+	return hasState || hasBrightness
 }
 
 // handleBridgeDevices runs a full discovery/rebuild pass from a bridge/devices payload. Unlike
@@ -577,7 +588,7 @@ func (nc *networkConn) handleAvailability(friendlyName string, payload []byte) {
 // optimistically-updated device - same contract as bridges/zwave/network.go's applyCommand. The
 // returned device is a clone taken while still holding bd's lock, so the caller can't race with a
 // concurrent state update mutating the same *device.Device.
-func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (dev *device.Device, err error) {
 	nc.mu.Lock()
 	bd, ok := nc.devices[cmd.DeviceId]
 	nc.mu.Unlock()
@@ -585,20 +596,160 @@ func (nc *networkConn) applyCommand(ctx context.Context, cmd *command.Command) (
 		return nil, bridge.ErrDeviceNotFound
 	}
 
-	release, err := bd.acquireCommand(ctx)
-	if err != nil {
-		return nil, err
+	var lease *bridge.Lease
+	for lease == nil {
+		l, flight, aerr := bd.lane.Acquire(ctx, cmd)
+		if aerr != nil {
+			nc.logDroppedCommand(bd.friendlyName, cmd, aerr)
+			return nil, aerr
+		}
+		if flight == nil {
+			lease = l
+			break
+		}
+
+		// An identical command is already on its way to this device. Sending it again can only
+		// lengthen the queue of a device that is already behind, so this caller waits for that
+		// command's outcome instead - and, if it succeeded, reports the device's state now.
+		nc.logger.Debug("command identical to one already pending; waiting on it instead of resending",
+			zap.String("device", bd.friendlyName), zap.String("command", string(bridge.ClassOf(cmd))))
+		werr := flight.Wait(ctx)
+		if errors.Is(werr, bridge.ErrOwnerGaveUp) {
+			continue // the caller that owned it gave up; this request is still live, so send it ourselves
+		}
+		if werr != nil {
+			nc.logDroppedCommand(bd.friendlyName, cmd, werr)
+			return nil, werr
+		}
+		bd.mu.Lock()
+		defer bd.mu.Unlock()
+		return proto.Clone(bd.device).(*device.Device), nil
 	}
-	defer release()
+
+	// ectx is cancelled if a newer command supersedes this one while it is waiting on the device,
+	// which frees this device's slot at once instead of after the write timeout. Whatever this
+	// returns is passed on, via Release, to any caller that joined this command.
+	ectx := lease.Context()
+	defer func() { lease.Release(err) }()
 
 	bd.mu.Lock()
 	defer bd.mu.Unlock()
 
-	if err := bd.builder.applyCommand(ctx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+	// A builder updates the device to the state the command asks for, then sends it. That commanded
+	// state is published as soon as the command is accepted - when WriteState is about to send, via
+	// this hook - and not after the device confirms. A device that is slow to confirm (seconds, on a
+	// bad day) otherwise leaves the house believing the OLD state for all that time, so the next
+	// request, a toggle above all, decides from stale facts: three taps on a pair of lamps that were
+	// stalling all sent "on". If a report later contradicts the assumed state it replaces it, as
+	// any state report does.
+	before := proto.Clone(bd.device).(*device.Device)
+	var accepted bool
+	var acceptedGen uint64
+	sendCtx := withAcceptedHook(ectx, func() {
+		if bd.assumedBase == nil {
+			bd.assumedBase = before // the last state the device itself reported
+		}
+		nc.cancelAssumedExpiry(bd)
+		bd.stateGen++
+		accepted, acceptedGen = true, bd.stateGen
+		bd.device.Version = computeVersion(bd.device)
+		nc.svc.UpdateDevice(bd.device)
+	})
+
+	if err := bd.builder.applyCommand(sendCtx, nc.mqtt, bd.friendlyName, bd.device, cmd); err != nil {
+		// A command that never left this process is undone at once: there is nothing in flight to
+		// wait for, so the assumed state is simply wrong.
+		notSent := commandNotSent(err)
+		if notSent {
+			bd.device = before
+			if bd.assumedBase == before {
+				bd.assumedBase = nil
+			}
+			bd.stateGen++
+			nc.svc.UpdateDevice(bd.device)
+		}
+		err = bridge.SupersededError(ectx, err)
+
+		// One that was sent but not confirmed (a timeout, or its caller giving up) may still take
+		// effect, so the commanded state stands - but only for a while. A device that is really
+		// unreachable will never report, and without a bound the house would go on showing a state
+		// the caller was told had failed. See unconfirmedStateGrace.
+		if !notSent && accepted && bd.stateGen == acceptedGen && assumedStateUnconfirmed(err) &&
+			bd.assumedBase != nil && !proto.Equal(bd.assumedBase, bd.device) {
+			nc.scheduleAssumedExpiry(bd, acceptedGen)
+		}
+
+		nc.logDroppedCommand(bd.friendlyName, cmd, err)
 		return nil, err
 	}
 	bd.device.Version = computeVersion(bd.device)
 	return proto.Clone(bd.device).(*device.Device), nil
+}
+
+// unconfirmedStateGrace is how long a commanded state that the device never confirmed is allowed
+// to stand before the bridge goes back to the last state the device itself reported, if nothing
+// has reported or been commanded in the meantime. It must outlast the delivery stalls seen in
+// practice (up to ~14s before a lamp acknowledged a command) so that a slow-but-working lamp keeps
+// its commanded state until its own report arrives, yet be finite, so a lamp that has dropped off
+// the network doesn't read as "on" forever because a command to it timed out. A var so tests can
+// shrink it.
+var unconfirmedStateGrace = 30 * time.Second
+
+// assumedStateUnconfirmed reports whether err means a command was sent and not confirmed - it
+// timed out, or its caller gave up waiting - as opposed to being superseded by a newer command
+// (which then governs the state) or never sent (rolled back at once).
+func assumedStateUnconfirmed(err error) bool {
+	return errors.Is(err, bridge.ErrCommandTimeout) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// scheduleAssumedExpiry arranges for bd's published state to revert to assumedBase after
+// unconfirmedStateGrace, unless a state-bearing report or a newer command (anything that bumps
+// stateGen past gen) intervenes first. Call with bd.mu held.
+func (nc *networkConn) scheduleAssumedExpiry(bd *builtDevice, gen uint64) {
+	nc.cancelAssumedExpiry(bd)
+	nc.expiryWG.Add(1)
+	bd.assumedExpiry = time.AfterFunc(unconfirmedStateGrace, func() {
+		defer nc.expiryWG.Done()
+		bd.mu.Lock()
+		defer bd.mu.Unlock()
+		if bd.stateGen != gen || bd.assumedBase == nil {
+			return // a report or a newer command got there first
+		}
+		nc.logger.Info("commanded state was never confirmed by the device; reverting to the last state it reported",
+			zap.String("device", bd.friendlyName), zap.Duration("after", unconfirmedStateGrace))
+		bd.device = bd.assumedBase
+		bd.assumedBase = nil
+		bd.assumedExpiry = nil
+		bd.stateGen++
+		nc.svc.UpdateDevice(bd.device)
+	})
+}
+
+// cancelAssumedExpiry drops bd's pending revert, if any. Call with bd.mu held.
+func (nc *networkConn) cancelAssumedExpiry(bd *builtDevice) {
+	if bd.assumedExpiry != nil && bd.assumedExpiry.Stop() {
+		nc.expiryWG.Done()
+	}
+	bd.assumedExpiry = nil
+}
+
+// logDroppedCommand records a command that was superseded by a newer one, or expired waiting for
+// its turn (see bridge.CommandLane). Neither is an error in the bridge, but a person watching a
+// light that "didn't do what I pressed" needs to be able to see it happened - and, naming the
+// device, which one is struggling to keep up. Other errors are the caller's to report.
+func (nc *networkConn) logDroppedCommand(friendlyName string, cmd *command.Command, err error) {
+	var reason string
+	switch {
+	case errors.Is(err, bridge.ErrCommandSuperseded):
+		reason = "superseded by a newer command"
+	case errors.Is(err, bridge.ErrCommandStale):
+		reason = "expired waiting for the device to finish an earlier command"
+	default:
+		return
+	}
+	nc.logger.Info("command dropped: "+reason,
+		zap.String("device", friendlyName), zap.String("command", string(bridge.ClassOf(cmd))))
 }
 
 // lastSeenRefresh is the minimum advance in a device's reported last_seen before it is written

@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"sort"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -193,7 +195,12 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 // mediaSupportsCommand reports whether req is a playback-family command
 // media actually supports. Playback/Seek are accepted unconditionally once a
 // Media trait is present, matching every other branch's granularity in
-// deviceSupportsCommand; SkipForward/SkipBackward are additionally gated on
+// deviceSupportsCommand, and so is PlayMedia: it says what to play rather than
+// acting on media already loaded, so it must work on an idle device whose
+// can_* attributes are all unset. That also means a device whose bridge can't
+// start arbitrary content passes this check and is rejected by the bridge
+// itself, and a bridge that can (cast) will end whatever app is running to
+// start it. SkipForward/SkipBackward are additionally gated on
 // their own can_skip_forward/can_skip_backward attribute, since - unlike
 // pause or seek - plenty of devices (anything without an active queue) don't
 // support track navigation at all, and the one bridge implementing it today
@@ -201,7 +208,7 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 // hardware - see bridges/cast/README.md - so a request shouldn't reach it
 // for a device that never claimed to support it.
 func mediaSupportsCommand(media *trait.Media, req *command.Command) bool {
-	if req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil {
+	if req.GetPlayback() != nil || req.GetSeekAbsolute() != nil || req.GetSeekRelative() != nil || req.GetPlayMedia() != nil {
 		return true
 	} else if req.GetSkipForward() != nil {
 		return media.GetAttributes().GetCanSkipForward()
@@ -243,6 +250,10 @@ func (a *API) ExecuteCommand(ctx context.Context, req *command.Command) (*device
 
 	if err := checkVersion(d, req); err != nil {
 		logger.Info("stale command version received", zap.String("command_version", req.GetVersion()), zap.String("device_version", d.GetVersion()))
+		// Recorded, like the async path's CompleteCommand does: a version
+		// conflict means two writers raced and is worth seeing in history.
+		failure, _ := status.FromError(err)
+		a.svc.publishCommandEvent(req, failure, "")
 		return nil, err
 	}
 
@@ -299,6 +310,73 @@ func (a *API) ExecuteCommandAsync(ctx context.Context, req *command.Command) (*a
 	}
 
 	return &api2.ExecuteCommandAsyncResponse{}, nil
+}
+
+// GetDeviceHistory streams the samples a device recorded in (since, until],
+// oldest first, from the handler's HistoryHandler implementation. The range,
+// ordering and max_samples cap are enforced here so handlers need only return
+// what the device has.
+func (a *API) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.BridgeService_GetDeviceHistoryServer) error {
+	if a.svc.bridge == nil {
+		return ErrBridgeNotReady
+	}
+	if req.GetMaxSamples() < 0 {
+		return status.Error(codes.InvalidArgument, "max_samples must not be negative")
+	}
+
+	logger := a.logger.With(zap.String("device_id", req.GetDeviceId()))
+	if a.svc.getDevice(req.GetDeviceId()) == nil {
+		logger.Debug("history requested for unknown device")
+		return ErrDeviceNotFound
+	}
+	hh, ok := a.svc.handler.(HistoryHandler)
+	if !ok {
+		return ErrHistoryNotSupported
+	}
+
+	var since time.Time
+	if req.GetSince() != nil {
+		since = req.GetSince().AsTime()
+	}
+	until := time.Now()
+	if req.GetUntil() != nil {
+		until = req.GetUntil().AsTime()
+	}
+	if !until.After(since) {
+		return nil
+	}
+
+	samples, err := hh.GetHistory(stream.Context(), req.GetDeviceId(), since, until)
+	if err != nil {
+		if _, ok := status.FromError(err); !ok {
+			logger.Info("received a non-gRPC status error when fetching history. rewriting to internal", zap.Error(err))
+			return status.Error(codes.Internal, err.Error())
+		}
+		return err
+	}
+
+	inRange := make([]*api2.HistorySample, 0, len(samples))
+	for _, s := range samples {
+		if s.GetTime() == nil {
+			continue
+		}
+		if t := s.GetTime().AsTime(); t.After(since) && !t.After(until) {
+			inRange = append(inRange, s)
+		}
+	}
+	sort.SliceStable(inRange, func(i, j int) bool {
+		return inRange[i].GetTime().AsTime().Before(inRange[j].GetTime().AsTime())
+	})
+	if limit := int(req.GetMaxSamples()); limit > 0 && len(inRange) > limit {
+		inRange = inRange[:limit]
+	}
+
+	for _, s := range inRange {
+		if err := stream.Send(s); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {

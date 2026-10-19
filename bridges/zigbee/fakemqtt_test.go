@@ -28,6 +28,10 @@ type fakeMQTTClient struct {
 	// synchronously, once a Publish to that topic is observed - see respond.
 	responses map[string]fakeResponse
 
+	// publishErr, if set, makes every Publish fail the way a broker that rejects it would: the
+	// message is NOT recorded as published and the returned token carries the error.
+	publishErr error
+
 	// after, if set, runs at the end of every deliver. Tests set it to the connection's quiesce,
 	// because dispatch now hands device messages to per-topic goroutines (see mqttConn.dispatch):
 	// without it, "deliver, then assert state" would race the handler.
@@ -62,6 +66,14 @@ func (f *fakeMQTTClient) respond(publishTopic, responseTopic string, payload []b
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.responses[publishTopic] = fakeResponse{topic: responseTopic, payload: payload}
+}
+
+// setPublishErr makes (or, with nil, stops making) every Publish fail. Under the client's lock,
+// because the bridge publishes from several goroutines (the startup state queries run on their own).
+func (f *fakeMQTTClient) setPublishErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.publishErr = err
 }
 
 func (f *fakeMQTTClient) publishedTopics() []string {
@@ -101,6 +113,11 @@ func (f *fakeMQTTClient) Publish(topic string, qos byte, retained bool, payload 
 	b, _ := payload.([]byte)
 
 	f.mu.Lock()
+	if f.publishErr != nil {
+		err := f.publishErr
+		f.mu.Unlock()
+		return &fakeToken{err: err}
+	}
 	f.published = append(f.published, fakePublish{topic: topic, payload: b})
 	resp, hasResp := f.responses[topic]
 	subs := append([]fakeSub(nil), f.subs...)
@@ -196,12 +213,12 @@ func topicMatchesFilter(filter, topic string) bool {
 
 // fakeToken is an already-completed mqtt.Token: every fake operation is synchronous, so there's
 // never anything to actually wait for.
-type fakeToken struct{}
+type fakeToken struct{ err error }
 
 func (t *fakeToken) Wait() bool                     { return true }
 func (t *fakeToken) WaitTimeout(time.Duration) bool { return true }
 func (t *fakeToken) Done() <-chan struct{}          { ch := make(chan struct{}); close(ch); return ch }
-func (t *fakeToken) Error() error                   { return nil }
+func (t *fakeToken) Error() error                   { return t.err }
 
 type fakeMessage struct {
 	topic   string

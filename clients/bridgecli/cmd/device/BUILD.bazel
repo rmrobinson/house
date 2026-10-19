@@ -8,8 +8,10 @@ go_library(
         "comfortprofile.go",
         "device.go",
         "heatcoolsetpoints.go",
+        "history.go",
         "mute.go",
         "onoff.go",
+        "playmedia.go",
         "temperature.go",
         "thermostatmode.go",
         "time.go",
@@ -23,5 +25,7 @@ go_library(
         "//api/trait",
         "@com_github_davecgh_go_spew//spew",
         "@com_github_spf13_cobra//:cobra",
+        "@org_golang_google_protobuf//encoding/prototext",
+        "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )

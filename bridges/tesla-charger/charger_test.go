@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -43,5 +44,58 @@ func TestRefreshCachedValuesWhileCharging(t *testing.T) {
 		t.Errorf("lifetime watt hours incorrect")
 	} else if state.version.PartNumber != "1734412-02-D" {
 		t.Errorf("incorrect part number")
+	}
+}
+
+func TestToDevice_WallPowerIsVoltageTimesCurrent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		vitals vitalAPIResponse
+		wantW  float64
+	}{
+		// The payload from TestRefreshCachedValuesWhileCharging: a split-phase install, with the
+		// whole 47A on currentB_a. 3654.6Wh over 1213s averages ~10.9kW while ramping up, so a
+		// 11.3kW instantaneous figure is consistent.
+		"charging on one phase": {
+			vitals: vitalAPIResponse{ContactorClosed: true, GridVoltage: 240.8, CurrentBAmps: 47},
+			wantW:  240.8 * 47,
+		},
+		// Current split across phases is summed, not double counted or dropped.
+		"current across phases": {
+			vitals: vitalAPIResponse{ContactorClosed: true, GridVoltage: 240, CurrentAAmps: 10, CurrentBAmps: 12, CurrentCAmps: 8},
+			wantW:  240 * 30,
+		},
+		// The neutral return isn't extra draw.
+		"neutral excluded": {
+			vitals: vitalAPIResponse{ContactorClosed: true, GridVoltage: 240, CurrentBAmps: 20, CurrentNAmps: 20},
+			wantW:  240 * 20,
+		},
+		// A closed contactor with the car barely drawing (end of a charge) is real, small power.
+		"closed contactor, trickle": {
+			vitals: vitalAPIResponse{ContactorClosed: true, GridVoltage: 245.9, CurrentBAmps: 0.5},
+			wantW:  245.9 * 0.5,
+		},
+		// The real idle payload: contactor open, no vehicle, yet the sensor reads a constant 0.2A
+		// offset. That is not power and must not be reported as ~49W.
+		"open contactor ignores sensor offset": {
+			vitals: vitalAPIResponse{GridVoltage: 246.2, CurrentBAmps: 0.2, VehicleCurrentAmps: 0.2},
+			wantW:  0,
+		},
+		"closed contactor, no current": {
+			vitals: vitalAPIResponse{ContactorClosed: true, GridVoltage: 245.9},
+			wantW:  0,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cs := &ChargerState{
+				vitals:   &tc.vitals,
+				lifetime: &lifetimeAPIResponse{},
+				version:  &versionAPIResponse{SerialNumber: "1234ASDF"},
+			}
+
+			wall := cs.toDevice().GetEvCharger().GetWallPower().GetState()
+			assert.InDelta(t, tc.wantW, wall.GetPowerW(), 0.001)
+			// Voltage and current are still reported alongside the derived power.
+			assert.Equal(t, tc.vitals.GridVoltage, wall.GetVoltageV())
+		})
 	}
 }

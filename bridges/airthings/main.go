@@ -22,7 +22,7 @@ func main() {
 	}
 
 	viper.SetConfigType("yaml")
-	viper.SetDefault("bridge.refresh_interval", 300)
+	viper.SetDefault("bridge.refresh_interval", 3600)
 	viper.SetDefault("bridge.listen_port", 17002)
 
 	configPath, err := configutil.FindConfigFile("airthings", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})

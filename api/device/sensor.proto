@@ -4,6 +4,7 @@ package faltung.house.api.device;
 
 option go_package = "github.com/rmrobinson/house/api/device";
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
 import "api/trait/air_properties.proto";
@@ -27,6 +28,17 @@ message Sensor {
     bool low_battery = 3;
     // Is the device charging?
     bool charging = 4;
+
+    // History advertises that the device records samples itself and the
+    // bridge can fetch them via BridgeService.GetDeviceHistory.
+    message History {
+      // The furthest back from now a single request can reach.
+      google.protobuf.Duration max_window = 1;
+      // The spacing between recorded samples.
+      google.protobuf.Duration sample_interval = 2;
+    }
+    // Unset if the device has no retrievable history.
+    optional History history = 5;
   }
 
   message PowerConsumption {

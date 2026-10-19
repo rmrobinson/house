@@ -29,6 +29,7 @@ var (
 	tz             = flag.String("tz", "UTC", "The timezone")
 	roomType       = flag.Int("room_type", 0, "Which room type this is")
 	sortOrder      = flag.Int("sort_order", 0, "Floor sort order")
+	exterior       = flag.Bool("exterior", false, "Floor is an outdoor area")
 	availableModes = flag.String("available_modes", "", "Comma-separated modes the building accepts, e.g. home,away,vacation")
 	mode           = flag.String("mode", "", "Mode to set via SetHouseMode")
 )
@@ -191,6 +192,7 @@ func main() {
 			BuildingID: *buildingID,
 			Name:       *name,
 			SortOrder:  int32(*sortOrder),
+			Exterior:   *exterior,
 		}
 		res, err := buildingDB.CreateFloor(ctx, floor)
 		if err != nil {
@@ -204,6 +206,7 @@ func main() {
 			Version:   *version,
 			Name:      *name,
 			SortOrder: int32(*sortOrder),
+			Exterior:  *exterior,
 		}
 		res, err := buildingDB.UpdateFloor(ctx, floor)
 		if err != nil {

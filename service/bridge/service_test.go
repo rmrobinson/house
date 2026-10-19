@@ -65,4 +65,14 @@ func TestCompleteCommand_Failure(t *testing.T) {
 	require.NotNil(t, cu)
 	assert.Equal(t, int32(codes.DeadlineExceeded), cu.Result.Code)
 	assert.Empty(t, cu.ResultingVersion)
+
+	// The CommandEvent follows the CommandUpdate and carries the command body.
+	msg = <-sink.Messages()
+	event := msg.(*api2.Update)
+	require.Equal(t, api2.Update_COMMAND, event.Action)
+	ce := event.GetCommandEvent()
+	require.NotNil(t, ce)
+	assert.Equal(t, "cmd1", ce.GetCommand().GetId())
+	assert.Equal(t, "d1", ce.GetCommand().GetDeviceId())
+	assert.Equal(t, int32(codes.DeadlineExceeded), ce.GetResult().GetCode())
 }

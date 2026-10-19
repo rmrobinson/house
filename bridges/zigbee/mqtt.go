@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -334,13 +335,17 @@ func (m *mqttConn) subscribeWaiter(topic string) (<-chan []byte, func()) {
 func (m *mqttConn) publish(topic string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("zigbee: encode payload for %s: %w", topic, err)
+		return notSentError{fmt.Errorf("zigbee: encode payload for %s: %w", topic, err)}
 	}
 	tok := m.client.Publish(topic, 0, false, b)
 	if !tok.WaitTimeout(writeTimeout) {
+		// Deliberately NOT a notSentError: the client may still deliver it once the broker is back.
 		return fmt.Errorf("zigbee: publish to %s timed out", topic)
 	}
-	return tok.Error()
+	if err := tok.Error(); err != nil {
+		return notSentError{err}
+	}
+	return nil
 }
 
 // stateTopic returns the full-state topic zigbee2mqtt publishes for friendlyName. Despite
@@ -351,6 +356,32 @@ func (m *mqttConn) publish(topic string, payload any) error {
 // topic to redeliver a device's last-known state the way it does for bridge/devices.
 func (m *mqttConn) stateTopic(friendlyName string) string {
 	return m.cfg.BaseTopic + "/" + friendlyName
+}
+
+// notSentError marks a WriteState failure where nothing reached the broker: the caller's context
+// had already ended, the payload couldn't be encoded, or the publish itself failed. Distinct from
+// ErrCommandTimeout and from a context ending mid-wait, where the command WAS sent and may still
+// take effect - a bridge that updated its cached state when it accepted a command rolls that back
+// only for a notSentError (see networkConn.applyCommand).
+type notSentError struct{ err error }
+
+func (e notSentError) Error() string { return e.err.Error() }
+func (e notSentError) Unwrap() error { return e.err }
+
+// commandNotSent reports whether err means the command never left this process.
+func commandNotSent(err error) bool {
+	var ns notSentError
+	return errors.As(err, &ns)
+}
+
+type acceptedHookKey struct{}
+
+// withAcceptedHook returns a context carrying fn, which WriteState calls once it has decided to
+// send but just before it does. A builder that has already updated its device to the state the
+// command asks for uses this to have that state published at the moment the command is accepted,
+// not after the device confirms - see networkConn.applyCommand for why that matters.
+func withAcceptedHook(ctx context.Context, fn func()) context.Context {
+	return context.WithValue(ctx, acceptedHookKey{}, fn)
 }
 
 // WriteState publishes set (a partial state object, e.g. {"state":"ON","brightness":150}) to
@@ -375,12 +406,16 @@ func (m *mqttConn) WriteState(ctx context.Context, friendlyName string, set map[
 	// device) must not still publish: the command would reach the device long after anyone
 	// stopped caring, and then be applied on top of whatever happened since.
 	if err := ctx.Err(); err != nil {
-		return err
+		return notSentError{err}
 	}
 
 	topic := m.stateTopic(friendlyName)
 	ch, cancel := m.subscribeWaiter(topic)
 	defer cancel()
+
+	if hook, ok := ctx.Value(acceptedHookKey{}).(func()); ok {
+		hook()
+	}
 
 	start := time.Now()
 	if err := m.publish(topic+"/set", set); err != nil {

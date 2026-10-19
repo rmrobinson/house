@@ -228,6 +228,7 @@ func (s *Service) CreateFloor(ctx context.Context, req *api2.CreateFloorRequest)
 		BuildingID: req.GetBuildingId(),
 		Name:       req.GetName(),
 		SortOrder:  req.GetSortOrder(),
+		Exterior:   req.GetExterior(),
 	}
 
 	res, err := s.db.CreateFloor(ctx, f)
@@ -245,6 +246,7 @@ func (s *Service) UpdateFloor(ctx context.Context, req *api2.UpdateFloorRequest)
 		Version:   req.GetVersion(),
 		Name:      req.GetName(),
 		SortOrder: req.GetSortOrder(),
+		Exterior:  req.GetExterior(),
 	}
 
 	res, err := s.db.UpdateFloor(ctx, f)
@@ -536,6 +538,7 @@ func floorDBToAPI(f db.Floor) *api2.Floor {
 		Id:         f.ID,
 		Name:       f.Name,
 		SortOrder:  f.SortOrder,
+		Exterior:   f.Exterior,
 		BuildingId: f.BuildingID,
 		Version:    f.Version,
 	}

@@ -17,6 +17,11 @@ type Reading struct {
 	Value string
 	// Alert marks a reading that wants attention (water detected).
 	Alert bool
+	// Metric is the "<trait>.<leaf>" key this reading's value is recorded
+	// under in metricsd (the device message's field name for the trait, then
+	// the state field), set only for numeric readings that make sense as a
+	// time series. Empty for text and bool readings.
+	Metric string
 }
 
 // Readings collects the measurements d reports across whichever of its traits
@@ -62,23 +67,28 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 	add := func(label, format string, args ...any) {
 		out = append(out, Reading{Label: prefix + label, Value: fmt.Sprintf(format, args...)})
 	}
+	// addM is add for a numeric reading recorded under the state field leaf.
+	addM := func(leaf, label, format string, args ...any) {
+		add(label, format, args...)
+		out[len(out)-1].Metric = fieldName + "." + leaf
+	}
 	switch t := m.(type) {
 	case *apiTrait.Temperature:
 		unit := "°C"
 		if strings.HasPrefix(strings.ToLower(t.GetAttributes().GetUnit()), "f") {
 			unit = "°F"
 		}
-		add("Temp", "%.1f%s", t.GetState().GetValue(), unit)
+		addM("value", "Temp", "%.1f%s", t.GetState().GetValue(), unit)
 	case *apiTrait.AirProperties:
 		s := t.GetState()
 		if s.GetTemperatureC() != 0 || s.GetHumidityPercentage() != 0 || s.GetPressureHpa() != 0 {
-			add("Temp", "%.1f°C", s.GetTemperatureC())
+			addM("temperature_c", "Temp", "%.1f°C", s.GetTemperatureC())
 		}
 		if s.GetHumidityPercentage() != 0 {
-			add("Humidity", "%.0f%%", s.GetHumidityPercentage())
+			addM("humidity_percentage", "Humidity", "%.0f%%", s.GetHumidityPercentage())
 		}
 		if s.GetPressureHpa() != 0 {
-			add("Pressure", "%.0f hPa", s.GetPressureHpa())
+			addM("pressure_hpa", "Pressure", "%.0f hPa", s.GetPressureHpa())
 		}
 	case *apiTrait.AirQuality:
 		s := t.GetState()
@@ -86,54 +96,54 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 			add("Air quality", "%s", s.GetAirQuality())
 		}
 		if s.Aqi != nil {
-			add("AQI", "%d", s.GetAqi())
+			addM("aqi", "AQI", "%d", s.GetAqi())
 		}
 		if s.Co2Ppm != nil {
-			add("CO2", "%d ppm", s.GetCo2Ppm())
+			addM("co2_ppm", "CO2", "%d ppm", s.GetCo2Ppm())
 		}
 		if s.VolatileOrganicCompoundsPpb != nil {
-			add("VOC", "%d ppb", s.GetVolatileOrganicCompoundsPpb())
+			addM("volatile_organic_compounds_ppb", "VOC", "%d ppb", s.GetVolatileOrganicCompoundsPpb())
 		}
 		if s.Pm2_5 != nil {
-			add("PM2.5", "%d µg/m³", s.GetPm2_5())
+			addM("pm2_5", "PM2.5", "%d µg/m³", s.GetPm2_5())
 		}
 		if s.Pm10 != nil {
-			add("PM10", "%d µg/m³", s.GetPm10())
+			addM("pm10", "PM10", "%d µg/m³", s.GetPm10())
 		}
 		if s.RadonBqM3 != nil {
-			add("Radon", "%d Bq/m³", s.GetRadonBqM3())
+			addM("radon_bq_m3", "Radon", "%d Bq/m³", s.GetRadonBqM3())
 		}
 		if s.CarbonMonoxideDetected != nil {
 			out = append(out, Reading{Label: prefix + "CO", Value: detected(s.GetCarbonMonoxideDetected()), Alert: s.GetCarbonMonoxideDetected()})
 		}
 	case *apiTrait.Position:
 		if t.GetAttributes().GetUnit() != "" {
-			add("Position", "%.0f %s", t.GetState().GetValue(), t.GetAttributes().GetUnit())
+			addM("value", "Position", "%.0f %s", t.GetState().GetValue(), t.GetAttributes().GetUnit())
 		}
 	case *apiTrait.Power:
 		s := t.GetState()
 		if s.GetPowerW() != 0 {
-			add("Power", "%.1f W", s.GetPowerW())
+			addM("power_w", "Power", "%.1f W", s.GetPowerW())
 		}
 		if s.GetVoltageV() != 0 {
-			add("Voltage", "%.1f V", s.GetVoltageV())
+			addM("voltage_v", "Voltage", "%.1f V", s.GetVoltageV())
 		}
 		if s.GetCurrentA() != 0 {
-			add("Current", "%.2f A", s.GetCurrentA())
+			addM("current_a", "Current", "%.2f A", s.GetCurrentA())
 		}
 		if s.FrequencyHz != nil && s.GetFrequencyHz() != 0 {
-			add("Frequency", "%.1f Hz", s.GetFrequencyHz())
+			addM("frequency_hz", "Frequency", "%.1f Hz", s.GetFrequencyHz())
 		}
 		if s.EnergyKwh != nil {
-			add("Energy", "%.2f kWh", s.GetEnergyKwh())
+			addM("energy_kwh", "Energy", "%.2f kWh", s.GetEnergyKwh())
 		}
 	case *apiTrait.Battery:
 		s := t.GetState()
 		if s.GetCapacityRemainingPct() != 0 {
-			add("Battery", "%d%%", s.GetCapacityRemainingPct())
+			addM("capacity_remaining_pct", "Battery", "%d%%", s.GetCapacityRemainingPct())
 		}
 		if s.GetCapacityRemainingMins() != 0 {
-			add("Runtime", "%s", formatRuntime(s.GetCapacityRemainingMins()))
+			addM("capacity_remaining_mins", "Runtime", "%s", FormatRuntime(s.GetCapacityRemainingMins()))
 		}
 		if s.GetStatus() != "" {
 			add("Status", "%s", s.GetStatus())
@@ -141,15 +151,15 @@ func traitReadings(prefix, fieldName string, m proto.Message) []Reading {
 	case *apiTrait.LightLevel:
 		s := t.GetState()
 		if s.GetLux() != 0 {
-			add("Light", "%.0f lux", s.GetLux())
+			addM("lux", "Light", "%.0f lux", s.GetLux())
 		}
 		if s.UvIndex != nil {
-			add("UV", "%d", s.GetUvIndex())
+			addM("uv_index", "UV", "%d", s.GetUvIndex())
 		}
 	case *apiTrait.Ventilation:
 		s := t.GetState()
 		if s.MinutesRemaining != nil {
-			add("Remaining", "%s", formatRuntime(s.GetMinutesRemaining()))
+			add("Remaining", "%s", FormatRuntime(s.GetMinutesRemaining()))
 		}
 		if s.GetFilterStatusMessage() != "" {
 			add("Filter", "%s", s.GetFilterStatusMessage())

@@ -42,6 +42,7 @@ func newTestNetworkConn(t *testing.T, cfg zigbeeConfig) (*networkConn, *fakeMQTT
 	// The state-query goroutine reads package-level timeouts that tests shrink and restore; make
 	// sure it has finished before any such restore (cleanups run last-in-first-out).
 	t.Cleanup(nc.queryWG.Wait)
+	t.Cleanup(nc.stopAssumedStateExpiries) // a pending revert must not fire after the test ends
 	mc.handleConnect(fc)
 	return nc, fc
 }

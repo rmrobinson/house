@@ -27,6 +27,7 @@ proto_library(
     visibility = ["//visibility:public"],
     deps = [
         "//api/trait:trait_proto",
+        "@protobuf//:duration_proto",
         "@protobuf//:timestamp_proto",
     ],
 )

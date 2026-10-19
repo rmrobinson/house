@@ -177,6 +177,19 @@ func TestDeviceSupportsCommand(t *testing.T) {
 			want: true,
 		},
 		{
+			// PlayMedia names what to play, so it must be accepted by an idle
+			// player with no can_* attributes set at all.
+			name: "media player play media supported with bare media trait",
+			d: &device.Device{
+				Id: "d1",
+				Details: &device.Device_MediaPlayer{
+					MediaPlayer: &device.MediaPlayer{Media: &trait.Media{}},
+				},
+			},
+			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_PlayMedia{PlayMedia: &command.PlayMedia{ContentUrl: "https://example.com/a.mp3"}}},
+			want: true,
+		},
+		{
 			name: "television skip forward not supported when attribute unset",
 			d:    televisionDevice("d1"),
 			cmd:  &command.Command{DeviceId: "d1", Details: &command.Command_SkipForward{SkipForward: &command.SkipForward{}}},
@@ -487,6 +500,93 @@ func TestExecuteCommand_Supported(t *testing.T) {
 	assert.Equal(t, "d1", d.GetId())
 }
 
+func TestExecuteCommand_PublishesCommandEvent(t *testing.T) {
+	after := lightDevice("d1")
+	after.Version = "v2"
+	h := &fakeHandler{
+		processCommandFn: func(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+			return after, nil
+		},
+	}
+	svc := newTestService(t, h)
+	svc.UpdateDevice(lightDevice("d1"))
+
+	sink := svc.updates.NewSink()
+	defer sink.Close()
+
+	_, err := svc.API().ExecuteCommand(context.Background(), &command.Command{
+		DeviceId: "d1",
+		Origin:   "test",
+		Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: true}},
+	})
+	require.NoError(t, err)
+
+	// The device CHANGED update precedes the command event.
+	changed := (<-sink.Messages()).(*api2.Update)
+	require.Equal(t, api2.Update_CHANGED, changed.Action)
+
+	update := (<-sink.Messages()).(*api2.Update)
+	require.Equal(t, api2.Update_COMMAND, update.Action)
+	ev := update.GetCommandEvent()
+	require.NotNil(t, ev)
+	assert.Equal(t, "test-bridge", ev.GetBridgeId())
+	assert.Equal(t, "d1", ev.GetCommand().GetDeviceId())
+	assert.Equal(t, "test", ev.GetCommand().GetOrigin())
+	assert.True(t, ev.GetCommand().GetOnOff().GetOn())
+	assert.Equal(t, int32(codes.OK), ev.GetResult().GetCode())
+	assert.Equal(t, "v2", ev.GetResultingVersion())
+	assert.NotNil(t, ev.GetTime())
+}
+
+func TestExecuteCommand_HandlerFailurePublishesCommandEvent(t *testing.T) {
+	h := &fakeHandler{
+		processCommandFn: func(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+			return nil, status.Error(codes.DeadlineExceeded, "timed out")
+		},
+	}
+	svc := newTestService(t, h)
+	svc.UpdateDevice(lightDevice("d1"))
+
+	sink := svc.updates.NewSink()
+	defer sink.Close()
+
+	_, err := svc.API().ExecuteCommand(context.Background(), &command.Command{
+		DeviceId: "d1",
+		Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: true}},
+	})
+	assert.Equal(t, codes.DeadlineExceeded, status.Code(err))
+
+	update := (<-sink.Messages()).(*api2.Update)
+	require.Equal(t, api2.Update_COMMAND, update.Action)
+	ev := update.GetCommandEvent()
+	require.NotNil(t, ev)
+	assert.Equal(t, int32(codes.DeadlineExceeded), ev.GetResult().GetCode())
+	assert.Empty(t, ev.GetResultingVersion())
+}
+
+func TestExecuteCommand_NonGRPCErrorEventIsInternal(t *testing.T) {
+	h := &fakeHandler{
+		processCommandFn: func(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+			return nil, assert.AnError
+		},
+	}
+	svc := newTestService(t, h)
+	svc.UpdateDevice(lightDevice("d1"))
+
+	sink := svc.updates.NewSink()
+	defer sink.Close()
+
+	_, err := svc.API().ExecuteCommand(context.Background(), &command.Command{
+		DeviceId: "d1",
+		Details:  &command.Command_OnOff{OnOff: &command.OnOff{On: true}},
+	})
+	assert.Equal(t, codes.Internal, status.Code(err))
+
+	ev := (<-sink.Messages()).(*api2.Update).GetCommandEvent()
+	require.NotNil(t, ev)
+	assert.Equal(t, int32(codes.Internal), ev.GetResult().GetCode())
+}
+
 func TestExecuteCommand_StaleVersionRejectedBeforeDispatch(t *testing.T) {
 	dispatched := false
 	h := &fakeHandler{
@@ -500,6 +600,9 @@ func TestExecuteCommand_StaleVersionRejectedBeforeDispatch(t *testing.T) {
 	current.Version = "v2"
 	svc.UpdateDevice(current)
 
+	sink := svc.updates.NewSink()
+	defer sink.Close()
+
 	d, err := svc.API().ExecuteCommand(context.Background(), &command.Command{
 		DeviceId: "d1",
 		Version:  "v1", // stale
@@ -508,6 +611,11 @@ func TestExecuteCommand_StaleVersionRejectedBeforeDispatch(t *testing.T) {
 	assert.Nil(t, d)
 	assert.ErrorIs(t, err, ErrVersionMismatch)
 	assert.False(t, dispatched, "handler must not be called when the version check fails")
+
+	// A conflict is recorded, matching the async path.
+	ev := (<-sink.Messages()).(*api2.Update).GetCommandEvent()
+	require.NotNil(t, ev)
+	assert.Equal(t, int32(codes.FailedPrecondition), ev.GetResult().GetCode())
 }
 
 func TestExecuteCommandAsync_StaleVersionReportedAsCommandUpdate(t *testing.T) {

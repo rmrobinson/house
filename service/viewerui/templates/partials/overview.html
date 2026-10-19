@@ -1,0 +1,63 @@
+{{/* The overview body is two swap targets with the TRENDS box between them:
+overview_top (house, status, climate) and overview_rest (media, EV charger,
+motion). TRENDS lives outside both so a live re-render doesn't reset its
+charts; see overview_trends.go. */}}
+{{define "overview_top"}}<div class="box">
+  <div class="box-title">HOUSE</div>
+  <div class="stats">{{range .Tiles}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}</div>
+</div>
+<div class="box">
+  <div class="box-title">STATUS</div>
+  <div class="stats">{{range .StatusTiles}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}</div>
+</div>
+<div class="box">
+  <div class="box-title">CLIMATE</div>
+  <div class="sub-title">Interior</div>
+  <div class="stats">{{range .Interior}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}{{range .Thermostats}}<div class="stat"><div class="label">{{.Name}}</div><div class="val">{{.Setpoint}}</div><div class="dim note">set point · now {{.Current}}{{if .Mode}} · {{.Mode}}{{end}}{{if .Hold}} · hold{{end}}</div></div>{{end}}</div>
+  <div class="sub-title">Exterior</div>
+  <div class="stats">{{range .Exterior}}<div class="stat{{if .Alert}} alert{{end}}"><div class="label">{{.Label}}</div><div class="val">{{.Value}}</div>{{if .Note}}<div class="dim note">{{.Note}}</div>{{end}}</div>{{end}}</div>
+</div>{{end}}
+
+{{define "overview_rest"}}<div class="box">
+  <div class="box-title">MEDIA PLAYING</div>
+  <div class="stats">{{range .Media}}<div class="stat"><div class="label">{{.Name}}{{if .Room}} · {{.Room}}{{end}}</div><div class="val">{{.Summary}}</div></div>
+  {{else}}<div class="pad dim">Nothing playing.</div>{{end}}</div>
+</div>
+<div class="box">
+  <div class="box-title">EV CHARGER</div>
+  <div class="stats">{{range .Chargers}}<div class="stat{{if eq .State "Offline"}} alert{{end}}"><div class="label">{{.Name}}</div><div class="val">{{.State}} · {{.Power}}</div>{{if .Session}}<div class="dim note">session {{.Session}}</div>{{end}}</div>
+  {{else}}<div class="pad dim">No EV charger.</div>{{end}}</div>
+</div>
+<div class="box">
+  <div class="box-title">MOTION</div>
+  <ul class="list">{{$b := .BuildingID}}
+  {{range .Floors}}<li><a href="/buildings/{{$b}}?floor={{.ID}}" class="row"><span class="dot dot-{{.Motion}}" role="img" aria-label="{{.MotionLabel}}" title="{{.MotionLabel}}"></span>{{.Name}}{{if .Exterior}} <span class="badge">exterior</span>{{end}}{{if .Active}} <span class="dim">· {{range $i, $n := .Active}}{{if $i}}, {{end}}{{$n}}{{end}}</span>{{end}}</a></li>
+  {{else}}<li class="pad dim">No floors.</li>{{end}}</ul>
+</div>{{end}}
+
+{{define "overview_oob"}}<div id="overview" hx-swap-oob="innerHTML">{{template "overview_top" .}}</div><div id="overview-rest" hx-swap-oob="innerHTML">{{template "overview_rest" .}}</div>{{end}}
+
+{{/* overview_trends is the TRENDS box's contents: loaded by htmx on page load
+and re-requested by the range buttons, never part of the SSE push. */}}
+{{define "overview_trends"}}<div class="box-title">TRENDS</div>
+<div class="pad"><span class="spark-range">{{range .Ranges}}<button class="action{{if .Active}} on{{end}}" aria-pressed="{{if .Active}}true{{else}}false{{end}}" hx-get="{{.Href}}" hx-target="#trends" hx-swap="innerHTML" hx-disabled-elt="this">{{.Key}}</button>{{end}}</span>
+<span class="dim">rebuilt from device history - close to, not identical to, the tiles above</span></div>
+<div class="trends">{{if .Charts}}{{template "spark_set" .Charts}}{{else}}<span class="dim">No history to chart yet.</span>{{end}}</div>{{end}}
+
+{{define "exterior_state_oob"}}<div id="exterior-state" hidden data-active="{{.Active}}" hx-swap-oob="true"></div>{{end}}
+
+{{/* popup_open_oob swaps in a #popup-slot that fetches the room's cameras as
+soon as htmx processes it. */}}
+{{define "popup_open_oob"}}<div id="popup-slot" hx-swap-oob="true" hx-get="/rooms/{{.RoomID}}/popup" hx-trigger="load" hx-target="this" hx-swap="innerHTML"></div>{{end}}
+
+{{define "motion_popup"}}<div id="motion-popup" class="popup" role="dialog" aria-modal="true" aria-label="Motion: {{.RoomName}}">
+  <div class="popup-box">
+    <div class="box-title title-bar">MOTION · {{.RoomName}} <button class="action" data-close-popup aria-label="Close">[ X ]</button></div>
+    <div class="popup-cams">{{range .Cameras}}<div class="popup-cam">
+      <div class="pad dim">{{.Name}}</div>
+      {{if .URL}}<video autoplay muted playsinline controls data-whep="{{.URL}}" data-ice="{{$.ICEServers}}"></video>
+      <div class="cam-status pad dim">connecting…</div>{{else}}<div class="pad err">{{.Message}}</div>{{end}}
+    </div>{{end}}</div>
+    <script>document.querySelectorAll('#motion-popup video').forEach(startWhep);</script>
+  </div>
+</div>{{end}}

@@ -19,10 +19,10 @@ func TestReadings(t *testing.T) {
 		Power:   &apiTrait.Power{State: &apiTrait.Power_State{VoltageV: 121.5, PowerW: 80}},
 	}}}
 	assert.Equal(t, []Reading{
-		{Label: "Battery", Value: "100%"},
-		{Label: "Runtime", Value: "1h 15m"},
-		{Label: "Power", Value: "80.0 W"},
-		{Label: "Voltage", Value: "121.5 V"},
+		{Label: "Battery", Value: "100%", Metric: "battery.capacity_remaining_pct"},
+		{Label: "Runtime", Value: "1h 15m", Metric: "battery.capacity_remaining_mins"},
+		{Label: "Power", Value: "80.0 W", Metric: "power.power_w"},
+		{Label: "Voltage", Value: "121.5 V", Metric: "power.voltage_v"},
 	}, Readings(ups))
 
 	energy := 3.5
@@ -31,14 +31,14 @@ func TestReadings(t *testing.T) {
 		Power: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 42.5, EnergyKwh: &energy}},
 	}}}
 	assert.Equal(t, []Reading{
-		{Label: "Power", Value: "42.5 W"},
-		{Label: "Energy", Value: "3.50 kWh"},
+		{Label: "Power", Value: "42.5 W", Metric: "power.power_w"},
+		{Label: "Energy", Value: "3.50 kWh", Metric: "power.energy_kwh"},
 	}, Readings(light))
 
 	fan := &apiDevice.Device{Details: &apiDevice.Device_Fan{Fan: &apiDevice.Fan{
 		Temperature: &apiTrait.Temperature{State: &apiTrait.Temperature_State{Value: 23.5}},
 	}}}
-	assert.Equal(t, []Reading{{Label: "Temp", Value: "23.5°C"}}, Readings(fan))
+	assert.Equal(t, []Reading{{Label: "Temp", Value: "23.5°C", Metric: "temperature.value"}}, Readings(fan))
 
 	sensor := &apiDevice.Device{Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
 		AirProperties: &apiTrait.AirProperties{State: &apiTrait.AirProperties_State{TemperatureC: 21, HumidityPercentage: 44}},
@@ -46,9 +46,24 @@ func TestReadings(t *testing.T) {
 		Water:         &apiDevice.Sensor_BinarySensor{IsActive: true},
 	}}}
 	assert.Equal(t, []Reading{
-		{Label: "Temp", Value: "21.0°C"},
-		{Label: "Humidity", Value: "44%"},
-		{Label: "CO2", Value: "650 ppm"},
+		{Label: "Temp", Value: "21.0°C", Metric: "air_properties.temperature_c"},
+		{Label: "Humidity", Value: "44%", Metric: "air_properties.humidity_percentage"},
+		{Label: "CO2", Value: "650 ppm", Metric: "air_quality.co2_ppm"},
 		{Label: "Water", Value: "Detected", Alert: true},
 	}, Readings(sensor))
+}
+
+// A device holding several traits of one kind prefixes the label, but the
+// metric key follows the trait's own field name, which is what metricsd tags.
+func TestReadingsMetricKeys(t *testing.T) {
+	ev := &apiDevice.Device{Details: &apiDevice.Device_EvCharger{EvCharger: &apiDevice.EVCharger{
+		WallPower: &apiTrait.Power{State: &apiTrait.Power_State{PowerW: 1200}},
+	}}}
+	assert.Equal(t, []Reading{{Label: "Wall power Power", Value: "1200.0 W", Metric: "wall_power.power_w"}}, Readings(ev))
+
+	// Text readings are not time series.
+	status := &apiDevice.Device{Details: &apiDevice.Device_Ups{Ups: &apiDevice.UPS{
+		Battery: &apiTrait.Battery{State: &apiTrait.Battery_State{Status: "charging"}},
+	}}}
+	assert.Equal(t, []Reading{{Label: "Status", Value: "charging"}}, Readings(status))
 }

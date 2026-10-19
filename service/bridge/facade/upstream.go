@@ -156,12 +156,13 @@ func (f *Facade) ingestInitial(uc *upstreamConn, iu *api2.InitialUpdate) {
 }
 
 // ingestPassthrough applies a non-initial Update (BridgeUpdate, DeviceUpdate
-// or CommandUpdate) to the cache and re-emits it to this facade's own
-// subscribers. BridgeUpdate and CommandUpdate already self-identify their
-// bridge_id/device_id and carry no per-hop address, so they're forwarded
-// unchanged. A DeviceUpdate's Device carries Address, which - like every
-// other Device this facade hands out - is rewritten via present() before
-// publishing; the cache (f.devices) still keeps the untouched original.
+// CommandUpdate or CommandEvent) to the cache and re-emits it to this facade's
+// own subscribers. BridgeUpdate, CommandUpdate and CommandEvent already
+// self-identify their bridge_id/device_id and carry no per-hop address, so
+// they're forwarded unchanged. A DeviceUpdate's Device carries Address,
+// which - like every other Device this facade hands out - is rewritten via
+// present() before publishing; the cache (f.devices) still keeps the
+// untouched original.
 func (f *Facade) ingestPassthrough(u *api2.Update) {
 	switch upd := u.Update.(type) {
 	case *api2.Update_BridgeUpdate:
@@ -202,7 +203,7 @@ func (f *Facade) ingestPassthrough(u *api2.Update) {
 
 		f.publishDeviceUpdate(u.Action, bridgeID, id, f.present(raw))
 
-	case *api2.Update_CommandUpdate:
+	case *api2.Update_CommandUpdate, *api2.Update_CommandEvent:
 		f.updates.SendMessage(u)
 	}
 }

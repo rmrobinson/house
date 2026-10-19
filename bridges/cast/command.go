@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/url"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -18,6 +19,15 @@ import (
 // device's correlated response before giving up, per B8's "5s suggested"
 // guidance.
 const commandTimeout = 5 * time.Second
+
+// playMediaTimeout bounds a PlayMedia command, which on an idle device is
+// two round trips (launch the media receiver, then load). Live, that took
+// under a second on a Home Mini from idle; the rest is headroom for a slower
+// launch or for the speaker having to stop another app first. It must stay
+// under policyd's own 15s command timeout (service/policy/bridgehome): if the
+// bridge outlasted the caller, a script would see a failure for a command
+// that then succeeded.
+const playMediaTimeout = 12 * time.Second
 
 // perStepTimeout bounds a single step's round trip within a step-synthesized
 // volume change (see setVolumeAbsolute) — a "master" controlType device
@@ -107,9 +117,67 @@ func dispatchCommand(ctx context.Context, cd *castDevice, cmd *command.Command) 
 	case cmd.GetAppLaunch() != nil:
 		return translateErr(sess.LaunchApp(ctx, cmd.GetAppLaunch().GetApplicationId()))
 
+	case cmd.GetPlayMedia() != nil:
+		pm := cmd.GetPlayMedia()
+		if err := validatePlayMedia(pm); err != nil {
+			return err
+		}
+		return translateErr(sess.LoadMedia(ctx, castctrl.LoadRequest{
+			ContentURL:  pm.GetContentUrl(),
+			ContentType: pm.GetContentType(),
+			Title:       pm.GetTitle(),
+			Artist:      pm.GetArtist(),
+			ImageURL:    pm.GetImageUrl(),
+			Repeat:      pm.GetRepeat(),
+		}))
+
 	default:
 		return status.Error(codes.InvalidArgument, "unrecognized command")
 	}
+}
+
+// maxMetadataLen bounds the free-text PlayMedia fields. They are only shown on
+// a screen or in a companion app, so anything longer is a mistake.
+const maxMetadataLen = 512
+
+// validatePlayMedia rejects a PlayMedia the device could not usefully act on,
+// before anything is sent to it. The speaker fetches content_url and
+// image_url itself, so both must be absolute http(s) URLs it can follow, and
+// neither may carry credentials (they would be sent to the device and logged
+// on the way).
+func validatePlayMedia(pm *command.PlayMedia) error {
+	if err := checkHTTPURL("content_url", pm.GetContentUrl(), true); err != nil {
+		return err
+	}
+	if err := checkHTTPURL("image_url", pm.GetImageUrl(), false); err != nil {
+		return err
+	}
+	if pm.GetContentType() == "" {
+		return status.Error(codes.InvalidArgument, "play_media content_type is required")
+	}
+	for name, v := range map[string]string{"content_type": pm.GetContentType(), "title": pm.GetTitle(), "artist": pm.GetArtist()} {
+		if len(v) > maxMetadataLen {
+			return status.Errorf(codes.InvalidArgument, "play_media %s is longer than %d bytes", name, maxMetadataLen)
+		}
+	}
+	return nil
+}
+
+func checkHTTPURL(field, raw string, required bool) error {
+	if raw == "" && !required {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return status.Errorf(codes.InvalidArgument, "play_media %s must be an absolute http(s) URL", field)
+	}
+	if u.User != nil {
+		return status.Errorf(codes.InvalidArgument, "play_media %s must not contain credentials", field)
+	}
+	if len(raw) > 2048 {
+		return status.Errorf(codes.InvalidArgument, "play_media %s is longer than 2048 bytes", field)
+	}
+	return nil
 }
 
 // setVolumeAbsolute sets the device to targetLevel, an integer step count in
@@ -162,6 +230,9 @@ func setVolumeAbsolute(ctx context.Context, cd *castDevice, targetLevel int32) e
 // enough budget for every step a "master" controlType step-synthesis
 // sequence will need, whichever is larger.
 func commandDeadline(cd *castDevice, cmd *command.Command) time.Duration {
+	if cmd.GetPlayMedia() != nil {
+		return playMediaTimeout
+	}
 	steps := estimatedVolumeSteps(cd, cmd)
 	if d := time.Duration(steps) * perStepTimeout; d > commandTimeout {
 		return d
