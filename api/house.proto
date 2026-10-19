@@ -92,6 +92,10 @@ message Floor {
   int32 sort_order = 3;  // controls level-list position; not physical elevation
   string building_id = 4;
   string version = 5;    // optimistic concurrency
+  // True for an outdoor area ("Property", "Back Yard") rather than a level of
+  // the house. Clients use it to treat the floor's rooms' motion as exterior
+  // activity (e.g. viewerui's overview pops up the camera).
+  bool exterior = 6;
 }
 
 message Building {
@@ -172,12 +176,14 @@ message CreateFloorRequest {
   string building_id = 1;
   string name = 2;
   int32 sort_order = 3;
+  bool exterior = 4;
 }
 message UpdateFloorRequest {
   string id = 1;
   string version = 2;
   string name = 10;
   int32 sort_order = 11;
+  bool exterior = 12;
 }
 message DeleteFloorRequest {
   string id = 1;

@@ -76,8 +76,10 @@ to 24h old, which a last-hour-only task would never aggregate. Re-aggregating
 a window is idempotent.
 
 Query `house` for recent detail and `house_1h` for anything older than 30
-days. The `metricsd` token cannot read `house_1h`; point dashboards at their
-own read token.
+days. The `metricsd` token cannot read `house_1h`; the setup script creates a
+separate read-only `metricsd-grafana` token for dashboards, and
+[`grafana/`](grafana/README.md) holds a ready-made dashboard that uses it.
+The same token works for `metricsd.influx.read_token`.
 
 ## Overview
 
@@ -85,8 +87,10 @@ own read token.
 
 - `BridgeService.StreamUpdates` — device state, plus `CommandEvent`s for every
   command a bridge processed (see `api/bridge.proto`).
-- `HouseService.ListDeviceLinks` — refreshed every `room_refresh_interval` to
-  tag points with their room.
+- `HouseService.ListBuildings` / `ListRooms` — scanned every
+  `room_refresh_interval` to tag points with their room. This is the same
+  lookup the policy engine's `home.getDeviceRoom` uses, done once for every
+  device per refresh.
 
 It issues no commands and writes nothing back to house.
 
@@ -96,7 +100,7 @@ Bucket `house`, two measurements:
 
 | Measurement | Tags | Fields |
 |---|---|---|
-| `state` | `bridge_id`, `device_id`, `device_name`, `room_id`, `trait`, `source` (`live`) | one field per numeric/bool/enum leaf of the trait's `State`, e.g. `co2_ppm`, `temperature_c`, `power_w` |
+| `state` | `bridge_id`, `device_id`, `device_name`, `device_label`, `room_id`, `trait`, `source` (`live`) | one field per numeric/bool/enum leaf of the trait's `State`, e.g. `co2_ppm`, `temperature_c`, `power_w` |
 | `command` | `bridge_id`, `device_id`, `command_type`, `origin` | `outcome` (gRPC code), `detail` (JSON command body), `command_id`, `resulting_version` |
 
 - One `state` point per trait per update, tagged `trait=air_quality`,
@@ -105,8 +109,16 @@ Bucket `house`, two measurements:
 - Strings, lists, timestamps and trait `Attributes` are not written; a
   sensor's `Metadata` is skipped as bookkeeping.
 - Bools are written as booleans, enums as their integer value.
-- `device_name` and `room_id` are resolved at write time; points written
-  before a rename or room move keep the old values.
+- `device_label` is the name to show on a chart: the device's name followed
+  by its room in parentheses, e.g. `Airthings Wave Plus (Office)` - the same
+  form the policy engine's notifications use. Device names alone aren't
+  unique (two Wave Plus sensors are both "Airthings Wave Plus"), so group
+  charts by `device_id`/`device_label`, not `device_name`. A device in no room
+  is just its name, and one with no name falls back to its ID. `device_name`
+  is still written unchanged.
+- `device_name`, `device_label` and `room_id` are resolved at write time;
+  points written before a rename or room move - and all points written
+  before `device_label` existed - keep the old values (or have none).
 - `Command.origin` is advisory and unauthenticated; don't use it for access
   control.
 - A `command` point exists only if the bridge that executed the command runs
@@ -186,3 +198,52 @@ Config is `metricsd.yaml` in `/etc/house`, `$HOME/.config/house` or `.`; see
 
 The bucket and token must exist before metricsd starts (see Setup above); it
 does not create buckets.
+
+## Reading history back: `MetricsService.GetSeries`
+
+metricsd also serves `api/metrics.proto` on `metricsd.listen_port` (default
+17050), so other services never hold an Influx token or write Flux:
+
+```sh
+grpcurl -cert ... -key ... -cacert ... \
+  -d '{"device_id":"<id>","attribute":"air_quality.co2_ppm",
+       "start":"2026-10-13T00:00:00Z","max_points":144}' \
+  metricsd.example.com:17050 faltung.house.api.MetricsService/GetSeries
+```
+
+- `attribute` is `<trait>.<leaf>` (the `trait` tag and Influx field key), the
+  same key convention as the policy engine's `GetState`.
+- The series is the mean per window, capped at `max_points` (default 120,
+  max 1000). `resolution` in the response is the window actually used.
+- A range starting more than 28 days ago is read from `house_1h` (hourly
+  means, so `resolution` is at least 1h); anything newer comes from `house`.
+  The rollup lags the present by about an hour, so such a range has no data
+  for its most recent ~1h05m.
+- Points are stamped at the start of their window in both buckets.
+- Bool and enum leaves come back as 0/1 / the enum number (a bool's rollup
+  value is the last of the hour); whether to chart them is the caller's call.
+- No data (including a non-numeric attribute) is an empty `points`, not an
+  error. A store failure is `Unavailable`.
+- **Several devices as one series.** Pass `device_ids` (instead of `device_id`)
+  and a `combine` of `COMBINE_MEAN` (the default), `COMBINE_MAX` or
+  `COMBINE_SUM`: every device is averaged over each window on its own, then the
+  per-window values are merged across devices. That gives "average indoor
+  temperature", "worst CO₂" and "total power" as one chart from one query.
+  Duplicates are ignored, one distinct device behaves exactly like `device_id`,
+  and at most 64 devices (ids up to 256 bytes) are accepted. Pass devices that
+  report the attribute as the same kind of value: past 28 days the rollup holds a
+  numeric leaf's hourly mean but a bool's only last, and a request that finds
+  any mean leaves bool-only devices out. A device with no points in a window adds
+  nothing to it, which understates a `SUM`; the 5 minute heartbeat means this
+  only bites windows narrower than that, and callers charting power should ask
+  for coarser ones. This is built from per-device history, so it tracks but does
+  not exactly equal house's room-level aggregates (which apply each room's own
+  strategy).
+
+The API serves with the `metricsd.tls.*` cert and requires client certs. If
+`metricsd.tls.cert_file` is unset it is unauthenticated, so it listens on
+loopback only (with a warning at startup).
+
+The API uses `metricsd.influx.read_token`, which must read **both** buckets -
+the `metricsd-grafana` token from the setup script does. Without it the write
+token is used and ranges older than 28 days fail.

@@ -32,6 +32,7 @@
     <form hx-post="{{url "/buildings/" .Building.ID "/floors"}}" hx-target="#page-content" hx-swap="outerHTML">
       <label>Name <input type="text" name="name" required></label>
       <label>Sort order <input type="number" name="sort_order" value="0"></label>
+      <label><input type="checkbox" name="exterior" value="true"> Exterior (outdoor area)</label>
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Create</button>
@@ -40,16 +41,17 @@
   </dialog>
 
   <table>
-    <thead><tr><th>Name</th><th>Sort order</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Sort order</th><th>Exterior</th><th></th></tr></thead>
     <tbody>
     {{range .Floors}}
       <tr>
         <td><a href="{{url "/floors/" .ID}}">{{.Name}}</a></td>
         <td>{{.SortOrder}}</td>
+        <td>{{if .Exterior}}yes{{end}}</td>
         <td><button type="button" class="link-btn" onclick="document.getElementById('edit-floor-dialog-{{.ID}}').showModal()">edit</button></td>
       </tr>
     {{else}}
-      <tr><td colspan="3">No floors yet.</td></tr>
+      <tr><td colspan="4">No floors yet.</td></tr>
     {{end}}
     </tbody>
   </table>
@@ -61,6 +63,7 @@
       <input type="hidden" name="version" value="{{.Version}}">
       <label>Name <input type="text" name="name" value="{{.Name}}" required></label>
       <label>Sort order <input type="number" name="sort_order" value="{{.SortOrder}}"></label>
+      <label><input type="checkbox" name="exterior" value="true" {{if .Exterior}}checked{{end}}> Exterior (outdoor area)</label>
       <div class="dialog-actions">
         <button type="button" class="btn-secondary" onclick="this.closest('dialog').close()">Cancel</button>
         <button type="submit">Save</button>

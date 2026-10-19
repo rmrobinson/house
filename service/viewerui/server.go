@@ -30,6 +30,14 @@ type Server struct {
 	// player's RTCPeerConnection; "[]" (host candidates only) suits a LAN.
 	iceServersJSON string
 
+	// weather is the exterior-conditions feed; nil when no weather server
+	// is configured.
+	weather *weatherFeed
+
+	// metrics reads recorded device history from metricsd for the readings
+	// sparklines; nil when no metrics server is configured.
+	metrics *metricsFeed
+
 	// ctx is what the hubs run under.
 	ctx context.Context
 
@@ -105,8 +113,13 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /buildings/{id}", s.handleBuilding)
 	mux.HandleFunc("GET /buildings/{id}/floors/{floor_id}", s.handleFloor)
 	mux.HandleFunc("GET /buildings/{id}/events", s.handleEvents)
+	mux.HandleFunc("GET /buildings/{id}/overview", s.handleOverview)
+	mux.HandleFunc("GET /buildings/{id}/overview/events", s.handleOverviewEvents)
+	mux.HandleFunc("GET /buildings/{id}/overview/trends", s.handleTrends)
+	mux.HandleFunc("GET /rooms/{id}/popup", s.handlePopup)
 	mux.HandleFunc("GET /rooms/{id}", s.handleRoom)
 	mux.HandleFunc("GET /rooms/{id}/camera/{device_id}", s.handleCamera)
+	mux.HandleFunc("GET /devices/{id}/sparklines", s.handleSparklines)
 	mux.HandleFunc("POST /devices/{id}/commands", s.handleDeviceCommand)
 	return protect(mux)
 }

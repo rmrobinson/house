@@ -23,6 +23,7 @@ func (s *Server) handleFloorCreate(w http.ResponseWriter, r *http.Request) {
 		BuildingId: buildingID,
 		Name:       name,
 		SortOrder:  int32(sortOrder),
+		Exterior:   r.FormValue("exterior") == "true",
 	})
 	flash, isError := successOrError(err, fmt.Sprintf("Floor %q created", name))
 
@@ -84,6 +85,7 @@ func (s *Server) handleFloorUpdate(w http.ResponseWriter, r *http.Request) {
 		Version:   r.FormValue("version"),
 		Name:      r.FormValue("name"),
 		SortOrder: int32(sortOrder),
+		Exterior:  r.FormValue("exterior") == "true",
 	})
 	flash, isError := successOrError(err, "Floor updated")
 

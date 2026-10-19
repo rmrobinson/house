@@ -197,7 +197,7 @@ func PropertiesToView(p *api2.Room_Properties) Properties {
 		pv.PowerDrawW = fmt.Sprintf("%.1f W", p.GetPowerDrawW())
 	}
 	if p.BatteryRuntimeMins != nil {
-		pv.BatteryRuntime = formatRuntime(p.GetBatteryRuntimeMins())
+		pv.BatteryRuntime = FormatRuntime(p.GetBatteryRuntimeMins())
 	}
 	if p.WaterDetected != nil {
 		if p.GetWaterDetected() {
@@ -209,8 +209,8 @@ func PropertiesToView(p *api2.Room_Properties) Properties {
 	return pv
 }
 
-// formatRuntime renders a runtime in minutes as "N min" or, from an hour up, "Hh Mm".
-func formatRuntime(mins int32) string {
+// FormatRuntime renders a runtime in minutes as "N min" or, from an hour up, "Hh Mm".
+func FormatRuntime(mins int32) string {
 	if mins < 60 {
 		return fmt.Sprintf("%d min", mins)
 	}

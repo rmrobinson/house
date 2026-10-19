@@ -607,3 +607,23 @@ func TestGetBuilding_OccupiedReflectsRoomMotion(t *testing.T) {
 	require.NotNil(t, after.State.Occupied)
 	assert.True(t, *after.State.Occupied)
 }
+
+func TestFloor_ExteriorFlagRoundTripsThroughCreateAndUpdate(t *testing.T) {
+	s := newTestService(t, nil)
+	ctx := context.Background()
+
+	b, err := s.CreateBuilding(ctx, &api2.CreateBuildingRequest{Config: &api2.Building_Config{Name: "Home"}})
+	require.NoError(t, err)
+	f, err := s.CreateFloor(ctx, &api2.CreateFloorRequest{BuildingId: b.Id, Name: "Property", Exterior: true})
+	require.NoError(t, err)
+	assert.True(t, f.Exterior)
+
+	got, err := s.GetFloor(ctx, &api2.GetFloorRequest{Id: f.Id})
+	require.NoError(t, err)
+	assert.True(t, got.Exterior)
+
+	// UpdateFloor replaces wholesale: a caller that omits the flag clears it.
+	upd, err := s.UpdateFloor(ctx, &api2.UpdateFloorRequest{Id: f.Id, Version: f.Version, Name: "Property"})
+	require.NoError(t, err)
+	assert.False(t, upd.Exterior)
+}
