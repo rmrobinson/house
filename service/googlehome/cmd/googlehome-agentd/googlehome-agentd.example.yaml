@@ -1,0 +1,24 @@
+googlehome:
+  # BridgeService endpoint to translate against - a single bridge, a
+  # standalone bridgefacaded, or a housed process with the facade embedded
+  # (this agent doesn't distinguish, same convention as service/policy/
+  # bridgehome.Adapter).
+  bridge_addr: "<bridge-service-host>:1337"
+
+  # googlehomed's RelayService address - see cmd/googlehomed's own
+  # googlehomed.example.yaml.
+  relay_addr: "<public-host>:17060"
+
+  # Must match googlehome.agent_user_id in googlehomed's config.
+  agent_id: "<agent user id>"
+
+  # Optional: mutual TLS, one identity for both dialing bridge_addr and
+  # relay_addr - same convention as policyd's --tls-cert/--tls-key/--tls-ca.
+  # Leave all blank (the default) to speak plaintext gRPC.
+  tls:
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    # Required only if bridge_addr/relay_addr isn't the hostname the peer's
+    # own certificate was actually issued for.
+    server_name: ""

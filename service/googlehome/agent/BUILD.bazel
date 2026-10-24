@@ -1,0 +1,36 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "agent",
+    srcs = [
+        "agent.go",
+        "translate.go",
+    ],
+    importpath = "github.com/rmrobinson/house/service/googlehome/agent",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//api",
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "//service/googlehome/relay",
+        "//service/lib/bridgeconn",
+        "//service/lib/grpcutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_rmrobinson_google_smart_home_action_go//:google-smart-home-action-go",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "agent_test",
+    srcs = ["translate_test.go"],
+    embed = [":agent"],
+    deps = [
+        "//api/command",
+        "//api/device",
+        "//api/trait",
+        "@com_github_rmrobinson_google_smart_home_action_go//:google-smart-home-action-go",
+        "@com_github_stretchr_testify//assert",
+    ],
+)

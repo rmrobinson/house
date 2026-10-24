@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package faltung.house.service.googlehome.relay;
+
+option go_package = "github.com/rmrobinson/house/service/googlehome/relay";
+
+// This is the wire contract between googlehomed (public-facing: hosts the
+// Google Smart Home fulfillment webhook and calls HomeGraph) and
+// googlehome-agentd (runs alongside housed: translates to/from BridgeService
+// and executes commands against real devices). It exists so the fulfillment
+// webhook never needs a direct network path to the home network - the agent
+// always dials out to googlehomed, never the reverse.
+//
+// Unlike nerves' equivalent (services/domotics/integrations/googlehome),
+// this doesn't support multiple simultaneous agents multiplexed by agent ID -
+// house is a single-building system, so there is exactly one agent and one
+// registered user. agent_id is kept (rather than dropped) purely so the
+// relay protocol's shape doesn't have to change if that ever stops being
+// true.
+//
+// Devices are identified solely by their house Device.id; no opaque
+// "customData" round-trips through Google the way the Smart Home Action SDK
+// allows, since the agent can always resolve a device.id back to a real
+// device via BridgeService itself.
+
+message SyncRequest {
+}
+message SyncResponse {
+  bytes payload = 1;
+  string error_details = 2;
+}
+message DisconnectRequest {
+}
+
+message QueryRequest {
+  repeated string device_ids = 1;
+}
+message QueryResponse {
+  bytes payload = 1;
+  string error_details = 2;
+}
+
+message ExecuteRequest {
+  message Command {
+    message ExecutionContext {
+      bytes payload = 1;
+    }
+
+    repeated string device_ids = 1;
+    repeated ExecutionContext execution_context = 2;
+  }
+
+  repeated Command commands = 1;
+}
+message ExecuteResponse {
+  enum CommandStatus {
+    UNSPECIFIED = 0;
+    SUCCESS = 1;
+    PENDING = 2;
+    OFFLINE = 3;
+    EXCEPTIONS = 4;
+    ERROR = 5;
+  }
+  message CommandResult {
+    repeated string device_ids = 1;
+    CommandStatus status = 2;
+    bytes states = 3;
+    string error_code = 4;
+  }
+
+  repeated CommandResult results = 1;
+  string error_details = 2;
+}
+
+message RegisterAgentRequest {
+  string agent_id = 1;
+}
+message RequestSyncRequest {
+}
+message ReportStateRequest {
+  bytes payload = 1;
+}
+
+message ServerRequest {
+  string request_id = 1;
+  oneof field {
+    SyncRequest sync_request = 2;
+    QueryRequest query_request = 3;
+    ExecuteRequest execute_request = 4;
+    DisconnectRequest disconnect_request = 5;
+  }
+}
+
+message ClientRequest {
+  string request_id = 1;
+  oneof field {
+    RegisterAgentRequest register_agent = 2;
+    RequestSyncRequest request_sync = 3;
+    ReportStateRequest report_state = 4;
+    SyncResponse sync_response = 5;
+    QueryResponse query_response = 6;
+    ExecuteResponse execute_response = 7;
+  }
+}
+
+// RelayService lets googlehomed multiplex handling of an agent running on a
+// non-directly-Internet-reachable host (the home network): the agent dials
+// in, registers, and the bidirectional stream carries both directions of
+// traffic from then on - googlehomed's fulfillment webhook pushing SYNC/
+// QUERY/EXECUTE down to the agent, and the agent pushing device state
+// reports (and sync requests, when its device list changes) up to
+// googlehomed to forward to HomeGraph.
+service RelayService {
+  // StateSync must start with the client sending a RegisterAgent request.
+  rpc StateSync(stream ClientRequest) returns (stream ServerRequest) {}
+}

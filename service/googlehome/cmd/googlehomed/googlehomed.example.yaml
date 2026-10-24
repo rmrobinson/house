@@ -1,0 +1,33 @@
+googlehome:
+  # Port the Google Smart Home Action fulfillment webhook listens on,
+  # plain HTTP - this process is expected to sit behind a reverse proxy
+  # (Caddy, with ACME) that terminates the publicly-trusted TLS certificate
+  # Google requires. Google calls https://<your-public-host>/fulfillment.
+  fulfillment_listen_port: 8090
+
+  # Port googlehome-agentd dials into (see relay_tls below for securing it).
+  relay_listen_port: 17060
+
+  # The single agent/user ID this (single-building) deployment represents -
+  # returned by Validate below, and must match googlehome.agent_id in
+  # googlehome-agentd's own config.
+  agent_user_id: "<agent user id>"
+
+  # Shared secret Google's OAuth2 account-linking flow must be configured
+  # (in the Actions console) to always return as the bearer token - see
+  # cmd/googlehomed/auth.go's staticTokenValidator doc comment for why a
+  # single-user deployment doesn't need a real OAuth2 server here.
+  auth_token: "!secret googlehome_auth_token"
+
+  homegraph:
+    # Google service account key with HomeGraph API access, for the project
+    # this integration is registered under in the Actions console.
+    creds_file: /etc/house/googlehome-homegraph-creds.json
+
+  # Optional: mutual TLS for relay_listen_port - same convention as every
+  # other internal gRPC service in this repo. Leave all three blank (the
+  # default) to speak plaintext gRPC.
+  relay_tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""

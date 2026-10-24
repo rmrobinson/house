@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "googlehome-agentd_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/rmrobinson/house/service/googlehome/cmd/googlehome-agentd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//service/googlehome/agent",
+        "//service/googlehome/relay",
+        "//service/lib/configutil",
+        "//service/lib/grpcutil",
+        "@com_github_spf13_viper//:viper",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "googlehome-agentd",
+    embed = [":googlehome-agentd_lib"],
+    visibility = ["//visibility:public"],
+)
