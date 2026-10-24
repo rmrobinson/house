@@ -309,7 +309,10 @@ func avLikeDeviceToAction(id, googleType string, onOff *trait.OnOff, volume *tra
 
 	ad := action.NewDevice(id, googleType)
 	if onOff != nil {
-		ad.AddOnOffTrait(false, false)
+		// queryOnly when the bridge marked this on/off state read-only (e.g. a receiver whose
+		// power state is sensed but not switchable) - see addVolumeTrait's doc comment for why
+		// this can't be done the same way for Volume/Input.
+		ad.AddOnOffTrait(false, !onOff.GetAttributes().GetCanControl())
 	}
 	addVolumeTrait(ad, volume)
 	addInputTrait(ad, input)
@@ -317,17 +320,22 @@ func avLikeDeviceToAction(id, googleType string, onOff *trait.OnOff, volume *tra
 	return ad, true
 }
 
-// addVolumeTrait adds Google's Volume trait to ad if v is populated.
+// addVolumeTrait adds Google's Volume trait to ad if v is populated and controllable. Unlike
+// OnOff, this library's AddVolumeTrait has no onlyQuery-equivalent parameter, so a Volume this
+// house can't control (bridges/cast/devices.go sets CanControl false for a "fixed"-type Cast
+// group, which has no software volume path at all) is left off the SYNC response entirely
+// rather than advertised as commandable.
 func addVolumeTrait(ad *action.Device, v *trait.Volume) {
-	if v == nil {
+	if v == nil || !v.GetAttributes().GetCanControl() {
 		return
 	}
 	ad.AddVolumeTrait(int(v.GetAttributes().GetMaximumLevel()), v.GetAttributes().GetCanMute(), false)
 }
 
-// addInputTrait adds Google's InputSelector trait to ad if in is populated.
+// addInputTrait adds Google's InputSelector trait to ad if in is populated and controllable -
+// see addVolumeTrait's doc comment (AddInputSelectorTrait has the same onlyQuery gap).
 func addInputTrait(ad *action.Device, in *trait.Input) {
-	if in == nil {
+	if in == nil || !in.GetAttributes().GetCanControl() {
 		return
 	}
 
@@ -370,27 +378,27 @@ func avLikeBuildCommand(onOff *trait.OnOff, volume *trait.Volume, input *trait.I
 
 	switch {
 	case cmd.OnOff != nil:
-		if onOff == nil {
+		if onOff == nil || !onOff.GetAttributes().GetCanControl() {
 			return nil, false
 		}
 		cc.Details = &command.Command_OnOff{OnOff: &command.OnOff{On: cmd.OnOff.On}}
 	case cmd.SetVolume != nil:
-		if volume == nil {
+		if volume == nil || !volume.GetAttributes().GetCanControl() {
 			return nil, false
 		}
 		cc.Details = &command.Command_VolumeAbsolute{VolumeAbsolute: &command.VolumeAbsolute{Level: int32(cmd.SetVolume.Level)}}
 	case cmd.AdjustVolume != nil:
-		if volume == nil {
+		if volume == nil || !volume.GetAttributes().GetCanControl() {
 			return nil, false
 		}
 		cc.Details = &command.Command_VolumeRelative{VolumeRelative: &command.VolumeRelative{Delta: int32(cmd.AdjustVolume.Amount)}}
 	case cmd.Mute != nil:
-		if volume == nil {
+		if volume == nil || !volume.GetAttributes().GetCanControl() {
 			return nil, false
 		}
 		cc.Details = &command.Command_Mute{Mute: &command.Mute{IsMuted: cmd.Mute.Mute}}
 	case cmd.SetInput != nil:
-		if input == nil {
+		if input == nil || !input.GetAttributes().GetCanControl() {
 			return nil, false
 		}
 		cc.Details = &command.Command_Input{Input: &command.Input{InputId: cmd.SetInput.NewInput}}
@@ -402,18 +410,19 @@ func avLikeBuildCommand(onOff *trait.OnOff, volume *trait.Volume, input *trait.I
 }
 
 // fanToAction builds the action.Device profile for a Fan: OnOff is always added (house's
-// Fan.on_off is not optional), and Google's FanSpeed trait (as a percentage of the device's own
-// minimum_speed/maximum_speed range - see fanSpeedPercent) is added when the Speed trait is
-// populated. Mode/Timer/Toggle/Temperature aren't translated - no Google trait fits a fan's
-// named mode/timer/toggle set well enough to be worth it for this pass.
+// Fan.on_off is not optional; queryOnly if the bridge marked it read-only), and Google's
+// FanSpeed trait (as a percentage of the device's own minimum_speed/maximum_speed range - see
+// fanSpeedPercent) is added when the Speed trait is populated and controllable. Mode/Timer/
+// Toggle/Temperature aren't translated - no Google trait fits a fan's named mode/timer/toggle
+// set well enough to be worth it for this pass.
 func fanToAction(id string, f *device.Fan) (*action.Device, bool) {
 	if f == nil {
 		return nil, false
 	}
 
 	ad := action.NewDevice(id, "action.devices.types.FAN")
-	ad.AddOnOffTrait(false, false)
-	if f.GetSpeed() != nil {
+	ad.AddOnOffTrait(false, !f.GetOnOff().GetAttributes().GetCanControl())
+	if sp := f.GetSpeed(); sp != nil && sp.GetAttributes().GetCanControl() {
 		ad.Traits["action.devices.traits.FanSpeed"] = true
 		ad.Attributes["supportsFanSpeedPercent"] = true
 		ad.Attributes["reversible"] = false
@@ -443,10 +452,13 @@ func fanBuildCommand(f *device.Fan, deviceID string, cmd action.Command) (*comma
 
 	switch {
 	case cmd.OnOff != nil:
+		if !f.GetOnOff().GetAttributes().GetCanControl() {
+			return nil, false
+		}
 		cc.Details = &command.Command_OnOff{OnOff: &command.OnOff{On: cmd.OnOff.On}}
 	case cmd.SetFanSpeed != nil:
 		sp := f.GetSpeed()
-		if sp == nil || cmd.SetFanSpeed.FanSpeedPercent == nil {
+		if sp == nil || !sp.GetAttributes().GetCanControl() || cmd.SetFanSpeed.FanSpeedPercent == nil {
 			// A named fanSpeed (from availableFanSpeeds) is never sent: fanToAction only
 			// advertises supportsFanSpeedPercent, never a named-speed list.
 			return nil, false
@@ -460,20 +472,27 @@ func fanBuildCommand(f *device.Fan, deviceID string, cmd action.Command) (*comma
 }
 
 // fanSpeedPercent maps sp's current_speed from its device-defined [minimum_speed,
-// maximum_speed] range onto Google's [0, 100] currentFanSpeedPercent scale.
+// maximum_speed] range onto Google's [0, 100] currentFanSpeedPercent scale. A single-speed fan
+// (minimum_speed == maximum_speed - e.g. bridges/esphome's SupportedSpeedCount < 1, which
+// defaults both to 1) has exactly one speed, which is reported as 100%, not 0%: 0% would tell
+// Google a running single-speed fan is off-speed.
 func fanSpeedPercent(sp *trait.Speed) int {
 	lo, hi := sp.GetAttributes().GetMinimumSpeed(), sp.GetAttributes().GetMaximumSpeed()
 	if hi <= lo {
-		return 0
+		return 100
 	}
 	pct := float64(sp.GetState().GetCurrentSpeed()-lo) / float64(hi-lo) * 100.0
 	return clampInt(int(math.Round(pct)), 0, 100)
 }
 
 // fanSpeedFromPercent is fanSpeedPercent's inverse: it maps a Google fanSpeedPercent command
-// value back onto sp's device-defined [minimum_speed, maximum_speed] range.
+// value back onto sp's device-defined [minimum_speed, maximum_speed] range. A single-speed fan
+// (see fanSpeedPercent) has only one valid value regardless of the requested percent.
 func fanSpeedFromPercent(sp *trait.Speed, pct float32) int32 {
 	lo, hi := sp.GetAttributes().GetMinimumSpeed(), sp.GetAttributes().GetMaximumSpeed()
+	if hi <= lo {
+		return lo
+	}
 	val := lo + int32(math.Round(float64(pct)/100.0*float64(hi-lo)))
 	return int32(clampInt(int(val), int(lo), int(hi)))
 }
@@ -587,7 +606,7 @@ func thermostatStateToAction(online bool, t *device.Thermostat) action.DeviceSta
 // google-smart-home-action-go, so they arrive as cmd.Generic instead and are decoded by hand via
 // thermostatModeParam.
 func thermostatBuildCommand(t *device.Thermostat, deviceID string, cmd action.Command) (*command.Command, bool) {
-	if t == nil || t.GetThermostat() == nil {
+	if t == nil || t.GetThermostat() == nil || !t.GetThermostat().GetAttributes().GetCanControl() {
 		return nil, false
 	}
 
@@ -633,13 +652,15 @@ func thermostatModeParam(params map[string]interface{}) (trait.Thermostat_Mode, 
 // controllable trait house's model exposes - wall_power, vehicle_power, exterior_conditions and
 // charging_session (see api/device/ev_charger.proto) are all read-only measurements with no
 // Google Smart Home trait to report them through. Google's CHARGER device type accepts a bare
-// OnOff trait.
+// OnOff trait. queryOnly when the bridge marked on/off read-only (bridges/tesla-charger sets
+// CanControl false: the wall connector's contactor state is sensed from vehicle vitals, not
+// something house can command).
 func evChargerToAction(id string, e *device.EVCharger) (*action.Device, bool) {
 	if e == nil {
 		return nil, false
 	}
 	ad := action.NewDevice(id, "action.devices.types.CHARGER")
-	ad.AddOnOffTrait(false, false)
+	ad.AddOnOffTrait(false, !e.GetOnOff().GetAttributes().GetCanControl())
 	return ad, true
 }
 
@@ -653,7 +674,7 @@ func evChargerStateToAction(online bool, e *device.EVCharger) action.DeviceState
 // evChargerBuildCommand converts an OnOff action.Command into the house command.Command it
 // corresponds to - the only command an EVCharger supports, see evChargerToAction.
 func evChargerBuildCommand(e *device.EVCharger, deviceID string, cmd action.Command) (*command.Command, bool) {
-	if e == nil || cmd.OnOff == nil {
+	if e == nil || cmd.OnOff == nil || !e.GetOnOff().GetAttributes().GetCanControl() {
 		return nil, false
 	}
 	return &command.Command{

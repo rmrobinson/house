@@ -134,13 +134,16 @@ func avReceiver(id, name string, on bool, volumeLevel int32, muted bool, current
 		Id:     id,
 		Config: &device.Device_Config{Name: name},
 		Details: &device.Device_AvReceiver{AvReceiver: &device.AVReceiver{
-			OnOff: &trait.OnOff{State: &trait.OnOff_State{IsOn: on}},
+			OnOff: &trait.OnOff{
+				Attributes: &trait.OnOff_Attributes{CanControl: true},
+				State:      &trait.OnOff_State{IsOn: on},
+			},
 			Volume: &trait.Volume{
-				Attributes: &trait.Volume_Attributes{CanMute: true, MaximumLevel: 100},
+				Attributes: &trait.Volume_Attributes{CanControl: true, CanMute: true, MaximumLevel: 100},
 				State:      &trait.Volume_State{Level: volumeLevel, IsMuted: muted},
 			},
 			Input: &trait.Input{
-				Attributes: &trait.Input_Attributes{Inputs: []*trait.Input_InputDetails{
+				Attributes: &trait.Input_Attributes{CanControl: true, Inputs: []*trait.Input_InputDetails{
 					{Id: "hdmi1", Name: "Blu-ray"},
 					{Id: "hdmi2", Name: "Game Console"},
 				}},
@@ -216,9 +219,12 @@ func fan(id string, on bool, min, max, cur int32) *device.Device {
 	return &device.Device{
 		Id: id,
 		Details: &device.Device_Fan{Fan: &device.Fan{
-			OnOff: &trait.OnOff{State: &trait.OnOff_State{IsOn: on}},
+			OnOff: &trait.OnOff{
+				Attributes: &trait.OnOff_Attributes{CanControl: true},
+				State:      &trait.OnOff_State{IsOn: on},
+			},
 			Speed: &trait.Speed{
-				Attributes: &trait.Speed_Attributes{MinimumSpeed: min, MaximumSpeed: max},
+				Attributes: &trait.Speed_Attributes{CanControl: true, MinimumSpeed: min, MaximumSpeed: max},
 				State:      &trait.Speed_State{CurrentSpeed: cur},
 			},
 		}},
@@ -250,12 +256,48 @@ func TestBuildCommand_FanSpeed(t *testing.T) {
 	assert.Equal(t, int32(2), sp.Speed.Value)
 }
 
+// TestStateToAction_FanSingleSpeed mirrors bridges/esphome, which sets MinimumSpeed==
+// MaximumSpeed==1 for a fan entity with no variable speed (SupportedSpeedCount < 1). A running
+// single-speed fan must report 100%, not 0%.
+func TestStateToAction_FanSingleSpeed(t *testing.T) {
+	d := fan("fan1", true, 1, 1, 1)
+	ds, err := stateToAction(d)
+	assert.NoError(t, err)
+	assert.Equal(t, 100, ds.State["currentFanSpeedPercent"])
+}
+
+func TestBuildCommand_FanSpeedSingleSpeed(t *testing.T) {
+	d := fan("fan1", true, 1, 1, 1)
+	pct := float32(40)
+	cmd, ok := buildCommand(d, "fan1", action.Command{SetFanSpeed: &action.CommandSetFanSpeed{FanSpeedPercent: &pct}})
+	assert.True(t, ok)
+	sp, ok := cmd.Details.(*command.Command_Speed)
+	assert.True(t, ok)
+	assert.Equal(t, int32(1), sp.Speed.Value)
+}
+
+// TestFan_ReadOnlySpeed covers a fan whose Speed trait is present but not controllable - the
+// FanSpeed trait must not be advertised, and a SetFanSpeed command must be rejected.
+func TestFan_ReadOnlySpeed(t *testing.T) {
+	d := fan("fan1", true, 0, 5, 3)
+	d.GetDetails().(*device.Device_Fan).Fan.Speed.Attributes.CanControl = false
+
+	ad, ok := deviceToAction(d)
+	assert.True(t, ok)
+	assert.False(t, ad.Traits["action.devices.traits.FanSpeed"])
+
+	pct := float32(40)
+	_, ok = buildCommand(d, "fan1", action.Command{SetFanSpeed: &action.CommandSetFanSpeed{FanSpeedPercent: &pct}})
+	assert.False(t, ok)
+}
+
 func thermostat(id string, targetMode trait.Thermostat_Mode, heatC, coolC, curC float32) *device.Device {
 	return &device.Device{
 		Id: id,
 		Details: &device.Device_Thermostat{Thermostat: &device.Thermostat{
 			Thermostat: &trait.Thermostat{
 				Attributes: &trait.Thermostat_Attributes{
+					CanControl:     true,
 					SupportedModes: []trait.Thermostat_Mode{trait.Thermostat_OFF, trait.Thermostat_HEAT, trait.Thermostat_COOL, trait.Thermostat_AUTO},
 				},
 				State: &trait.Thermostat_State{
@@ -324,17 +366,37 @@ func TestBuildCommand_ThermostatSetModeUnrecognized(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func evCharger(id string, on bool) *device.Device {
+func TestBuildCommand_ThermostatReadOnly(t *testing.T) {
+	d := thermostat("tstat1", trait.Thermostat_HEAT, 20, 24, 21)
+	d.GetDetails().(*device.Device_Thermostat).Thermostat.Thermostat.Attributes.CanControl = false
+
+	_, ok := buildCommand(d, "tstat1", action.Command{ThermostatTemperatureSetpoint: &action.CommandThermostatTemperatureSetpoint{
+		ThermostatTemperatureSetpointCelcius: 22,
+	}})
+	assert.False(t, ok)
+
+	cmd := action.Command{Generic: &action.CommandGeneric{
+		Command: "action.devices.commands.ThermostatSetMode",
+		Params:  map[string]interface{}{"thermostatMode": "cool"},
+	}}
+	_, ok = buildCommand(d, "tstat1", cmd)
+	assert.False(t, ok)
+}
+
+func evCharger(id string, on, canControl bool) *device.Device {
 	return &device.Device{
 		Id: id,
 		Details: &device.Device_EvCharger{EvCharger: &device.EVCharger{
-			OnOff: &trait.OnOff{State: &trait.OnOff_State{IsOn: on}},
+			OnOff: &trait.OnOff{
+				Attributes: &trait.OnOff_Attributes{CanControl: canControl},
+				State:      &trait.OnOff_State{IsOn: on},
+			},
 		}},
 	}
 }
 
 func TestDeviceToAction_EVCharger(t *testing.T) {
-	d := evCharger("ev1", true)
+	d := evCharger("ev1", true, true)
 	ad, ok := deviceToAction(d)
 	assert.True(t, ok)
 	assert.Equal(t, "action.devices.types.CHARGER", ad.Type)
@@ -342,7 +404,7 @@ func TestDeviceToAction_EVCharger(t *testing.T) {
 }
 
 func TestBuildCommand_EVCharger(t *testing.T) {
-	d := evCharger("ev1", false)
+	d := evCharger("ev1", false, true)
 	cmd, ok := buildCommand(d, "ev1", action.Command{OnOff: &action.CommandOnOff{On: true}})
 	assert.True(t, ok)
 	onOff, ok := cmd.Details.(*command.Command_OnOff)
@@ -356,6 +418,34 @@ func TestBuildCommand_EVCharger(t *testing.T) {
 func TestBuildCommand_EVChargerNilSubMessage(t *testing.T) {
 	d := &device.Device{Id: "ev1", Details: &device.Device_EvCharger{EvCharger: nil}}
 	_, ok := buildCommand(d, "ev1", action.Command{OnOff: &action.CommandOnOff{On: true}})
+	assert.False(t, ok)
+}
+
+// TestEVCharger_ReadOnlyOnOff mirrors bridges/tesla-charger, which sets OnOff.Attributes.
+// CanControl false: the wall connector's contactor state is sensed, not commandable.
+func TestEVCharger_ReadOnlyOnOff(t *testing.T) {
+	d := evCharger("ev1", true, false)
+
+	ad, ok := deviceToAction(d)
+	assert.True(t, ok)
+	assert.True(t, ad.Traits["action.devices.traits.OnOff"])
+	assert.Equal(t, true, ad.Attributes["queryOnlyOnOff"])
+
+	_, ok = buildCommand(d, "ev1", action.Command{OnOff: &action.CommandOnOff{On: false}})
+	assert.False(t, ok)
+}
+
+// TestAVReceiver_ReadOnlyVolume mirrors bridges/cast's "fixed" ControlType, which sets
+// Volume.Attributes.CanControl false: no software volume path exists at all.
+func TestAVReceiver_ReadOnlyVolume(t *testing.T) {
+	d := avReceiver("avr1", "Living Room Receiver", true, 20, false, "hdmi1")
+	d.GetDetails().(*device.Device_AvReceiver).AvReceiver.Volume.Attributes.CanControl = false
+
+	ad, ok := deviceToAction(d)
+	assert.True(t, ok)
+	assert.False(t, ad.Traits["action.devices.traits.Volume"])
+
+	_, ok = buildCommand(d, "avr1", action.Command{SetVolume: &action.CommandSetVolume{Level: 50}})
 	assert.False(t, ok)
 }
 
