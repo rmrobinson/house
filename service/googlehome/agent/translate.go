@@ -121,7 +121,7 @@ func stateToAction(d *device.Device) (action.DeviceState, error) {
 		}
 		return fanStateToAction(online, dd.Fan), nil
 	case *device.Device_Thermostat:
-		if dd.Thermostat == nil {
+		if dd.Thermostat == nil || dd.Thermostat.GetThermostat() == nil {
 			return action.DeviceState{}, unsupported
 		}
 		return thermostatStateToAction(online, dd.Thermostat), nil
@@ -161,7 +161,7 @@ func buildCommand(d *device.Device, deviceID string, cmd action.Command) (cc *co
 		return thermostatBuildCommand(dd.Thermostat, deviceID, cmd)
 	case *device.Device_EvCharger:
 		// Sensor falls through to the default case below: it's read-only, no command applies.
-		return evChargerBuildCommand(deviceID, cmd)
+		return evChargerBuildCommand(dd.EvCharger, deviceID, cmd)
 	default:
 		return nil, false
 	}
@@ -295,6 +295,13 @@ func lightBuildCommand(light *device.Light, deviceID string, cmd action.Command)
 // trait.Volume, trait.Input) are identical either way. ok is false only if all three are nil -
 // a Television with nothing populated isn't translatable, but an AVReceiver always has at least
 // OnOff.
+//
+// This deliberately doesn't call the library's own action.NewSimpleAVReceiver, even for the
+// AVReceiver case where it would otherwise fit: that constructor passes canMute into
+// AddInputSelectorTrait's "ordered" parameter instead of AddVolumeTrait's "canMute" one (see
+// device.go's NewSimpleAVReceiver), which is wrong often enough (any canMute=true receiver gets
+// mis-declared as having an ordered input list) that building the trait set by hand here is
+// safer than depending on it.
 func avLikeDeviceToAction(id, googleType string, onOff *trait.OnOff, volume *trait.Volume, input *trait.Input) (*action.Device, bool) {
 	if onOff == nil && volume == nil && input == nil {
 		return nil, false
@@ -580,7 +587,7 @@ func thermostatStateToAction(online bool, t *device.Thermostat) action.DeviceSta
 // google-smart-home-action-go, so they arrive as cmd.Generic instead and are decoded by hand via
 // thermostatModeParam.
 func thermostatBuildCommand(t *device.Thermostat, deviceID string, cmd action.Command) (*command.Command, bool) {
-	if t == nil {
+	if t == nil || t.GetThermostat() == nil {
 		return nil, false
 	}
 
@@ -645,8 +652,8 @@ func evChargerStateToAction(online bool, e *device.EVCharger) action.DeviceState
 
 // evChargerBuildCommand converts an OnOff action.Command into the house command.Command it
 // corresponds to - the only command an EVCharger supports, see evChargerToAction.
-func evChargerBuildCommand(deviceID string, cmd action.Command) (*command.Command, bool) {
-	if cmd.OnOff == nil {
+func evChargerBuildCommand(e *device.EVCharger, deviceID string, cmd action.Command) (*command.Command, bool) {
+	if e == nil || cmd.OnOff == nil {
 		return nil, false
 	}
 	return &command.Command{

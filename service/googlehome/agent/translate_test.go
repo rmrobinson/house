@@ -353,6 +353,34 @@ func TestBuildCommand_EVCharger(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestBuildCommand_EVChargerNilSubMessage(t *testing.T) {
+	d := &device.Device{Id: "ev1", Details: &device.Device_EvCharger{EvCharger: nil}}
+	_, ok := buildCommand(d, "ev1", action.Command{OnOff: &action.CommandOnOff{On: true}})
+	assert.False(t, ok)
+}
+
+func TestBuildCommand_ThermostatNilNestedTrait(t *testing.T) {
+	d := &device.Device{Id: "tstat1", Details: &device.Device_Thermostat{Thermostat: &device.Thermostat{}}}
+
+	_, ok := buildCommand(d, "tstat1", action.Command{ThermostatTemperatureSetpoint: &action.CommandThermostatTemperatureSetpoint{
+		ThermostatTemperatureSetpointCelcius: 22,
+	}})
+	assert.False(t, ok)
+
+	cmd := action.Command{Generic: &action.CommandGeneric{
+		Command: "action.devices.commands.ThermostatSetMode",
+		Params:  map[string]interface{}{"thermostatMode": "cool"},
+	}}
+	_, ok = buildCommand(d, "tstat1", cmd)
+	assert.False(t, ok)
+}
+
+func TestStateToAction_ThermostatNilNestedTrait(t *testing.T) {
+	d := &device.Device{Id: "tstat1", Details: &device.Device_Thermostat{Thermostat: &device.Thermostat{}}}
+	_, err := stateToAction(d)
+	assert.Error(t, err)
+}
+
 func sensorWithAQI(id string, aqi int32) *device.Device {
 	return &device.Device{
 		Id: id,
