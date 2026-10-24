@@ -278,13 +278,28 @@ func (a *Agent) processExecuteRequest(ctx context.Context, req *relay.ExecuteReq
 	resp := &relay.ExecuteResponse{}
 	for _, cmdGroup := range req.GetCommands() {
 		var actionCmds []action.Command
+		decodeFailed := false
 		for _, ec := range cmdGroup.GetExecutionContext() {
 			var cmd action.Command
 			if err := json.Unmarshal(ec.GetPayload(), &cmd); err != nil {
 				a.logger.Error("unable to deserialize command", zap.Error(err))
+				decodeFailed = true
 				continue
 			}
 			actionCmds = append(actionCmds, cmd)
+		}
+
+		// A command that failed to decode must not be silently dropped: with
+		// actionCmds left short (or empty), executeOne's loop would just
+		// apply whatever commands DID decode (or none at all) and then
+		// report SUCCESS with the device's unchanged state - telling Google
+		// the command worked when part or all of it never reached the
+		// bridge.
+		if decodeFailed {
+			for _, deviceID := range cmdGroup.GetDeviceIds() {
+				appendResult(resp, relay.ExecuteResponse_ERROR, deviceID, "commandInsertFailed")
+			}
+			continue
 		}
 
 		for _, deviceID := range cmdGroup.GetDeviceIds() {
