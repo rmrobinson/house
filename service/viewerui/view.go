@@ -94,6 +94,28 @@ type deviceView struct {
 	Error    string
 }
 
+// doorPINForm is a garage-door control which asks for the PIN before it sends
+// Door ("open" or "trigger").
+type doorPINForm struct {
+	Door  string
+	Label string
+	// Aria says what the button does, for assistive tech.
+	Aria string
+}
+
+// DoorPINForm is the PIN-protected control this device offers, or nil: OPEN
+// when the door is known closed, TRIGGER when its position is unknown. CLOSE
+// isn't here - it never asks for a PIN.
+func (dv deviceView) DoorPINForm() *doorPINForm {
+	switch {
+	case dv.CanOperateDoor && !dv.DoorOpen:
+		return &doorPINForm{Door: "open", Label: "OPEN", Aria: "open"}
+	case dv.CanTriggerDoor:
+		return &doorPINForm{Door: "trigger", Label: "TRIGGER", Aria: "press opener button (position unknown)"}
+	}
+	return nil
+}
+
 // presetView is one Mode value offered as a button.
 type presetView struct {
 	Value string

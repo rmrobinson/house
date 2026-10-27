@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strconv"
 
+	"go.uber.org/zap"
+
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/service/lib/houseview"
@@ -201,7 +203,8 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 // (0-100) sends BrightnessAbsolute, "playback" (play|pause) sends Playback,
 // "skip" (forward|backward) sends SkipForward/SkipBackward, "volume" (0-N)
 // sends VolumeAbsolute, "mode" (a Mode value, e.g. a standing desk preset)
-// sends Mode, "door" (open|close|trigger) sends OpenClose.
+// sends Mode, "door" (open|close|trigger) sends OpenClose - open and trigger
+// also need the "pin" field to match viewerui.door_pin_hash.
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -228,12 +231,23 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		cmd.Details = &command.Command_SkipForward{SkipForward: &command.SkipForward{}}
 	case r.PostForm.Get("skip") == "backward":
 		cmd.Details = &command.Command_SkipBackward{SkipBackward: &command.SkipBackward{}}
-	case r.PostForm.Get("door") == "open":
-		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_OPEN}}
+	case r.PostForm.Get("door") == "open", r.PostForm.Get("door") == "trigger":
+		// OPEN can let someone in and TRIGGER may do the same (it presses the button whatever
+		// the door is doing), so both need the PIN. CLOSE doesn't: it is never the risk, and is
+		// the one wanted in a hurry.
+		action := command.OpenClose_ACTION_OPEN
+		if r.PostForm.Get("door") == "trigger" {
+			action = command.OpenClose_ACTION_TRIGGER
+		}
+		if err := s.doorPIN.check(r.PostForm.Get("pin")); err != nil {
+			s.logger.Warn("door command refused", zap.String("device_id", id), zap.String("action", action.String()), zap.Error(err))
+			s.renderDeviceRow(w, r, id, err)
+			return
+		}
+		s.logger.Info("door command authorised", zap.String("device_id", id), zap.String("action", action.String()))
+		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: action}}
 	case r.PostForm.Get("door") == "close":
 		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_CLOSE}}
-	case r.PostForm.Get("door") == "trigger":
-		cmd.Details = &command.Command_OpenClose{OpenClose: &command.OpenClose{Action: command.OpenClose_ACTION_TRIGGER}}
 	case r.PostForm.Get("mode") != "":
 		cmd.Details = &command.Command_Mode{Mode: &command.Mode{Value: r.PostForm.Get("mode")}}
 	case r.PostForm.Has("volume"):
@@ -250,19 +264,22 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 
 	d, err := s.bridge.ExecuteCommand(r.Context(), cmd)
 	if err != nil {
-		// Re-render the row from current state with the error inline, so
-		// the controls reflect reality rather than the click. If even the
-		// current state can't be read there's no row to show: surface the
-		// command's own error instead.
-		cur, getErr := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: id})
-		if getErr != nil {
-			s.httpError(w, r, err)
-			return
-		}
-		dv := deviceToView(cur)
-		dv.Error = houseview.Message(err)
-		s.renderFragment(w, "device_row", dv)
+		s.renderDeviceRow(w, r, id, err)
 		return
 	}
 	s.renderFragment(w, "device_row", deviceToView(d))
+}
+
+// renderDeviceRow re-renders id's row from current state with err inline, so
+// the controls reflect reality rather than the click. If even the current
+// state can't be read there's no row to show: surface err itself instead.
+func (s *Server) renderDeviceRow(w http.ResponseWriter, r *http.Request, id string, err error) {
+	cur, getErr := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: id})
+	if getErr != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	dv := deviceToView(cur)
+	dv.Error = houseview.Message(err)
+	s.renderFragment(w, "device_row", dv)
 }

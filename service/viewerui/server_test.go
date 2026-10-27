@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
+	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -205,6 +206,9 @@ func (f *fakeBridge) ExecuteCommand(_ context.Context, c *command.Command) (*api
 	}
 	if b := c.GetBrightnessAbsolute(); b != nil {
 		return dimLamp(true, b.GetBrightnessPercent()), nil
+	}
+	if c.GetOpenClose() != nil {
+		return garageDoor(apiTrait.OpenClose_POSITION_OPEN, true), nil
 	}
 	return lamp(c.GetOnOff().GetOn()), nil
 }
@@ -729,28 +733,35 @@ func garageDoor(pos apiTrait.OpenClose_Position, canControl bool) *apiDevice.Dev
 	}
 }
 
-func TestGarageDoorButtonOffersTheOppositeActionWithConfirm(t *testing.T) {
-	tests := []struct {
-		pos         apiTrait.OpenClose_Position
-		wantVals    string
-		wantLabel   string
-		wantReading string
-	}{
-		{apiTrait.OpenClose_POSITION_CLOSED, `{"door": "open"}`, "[ OPEN ]", "Closed"},
-		{apiTrait.OpenClose_POSITION_OPEN, `{"door": "close"}`, "[ CLOSE ]", "Open"},
-	}
-	for _, tc := range tests {
-		dv := deviceToView(garageDoor(tc.pos, true))
-		assert.True(t, dv.CanOperateDoor)
-		assert.Equal(t, "Garage Door", dv.Kind)
-		var sb strings.Builder
-		require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
-		assert.Contains(t, sb.String(), tc.wantVals)
-		assert.Contains(t, sb.String(), tc.wantLabel)
-		assert.Contains(t, sb.String(), `hx-confirm=`)
-		require.Len(t, dv.Readings, 1)
-		assert.Equal(t, houseview.Reading{Label: "Door", Value: tc.wantReading}, dv.Readings[0])
-	}
+func renderRow(t *testing.T, dv deviceView) string {
+	t.Helper()
+	var sb strings.Builder
+	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
+	return sb.String()
+}
+
+// A closed door offers OPEN behind a PIN field; an open one offers a plain CLOSE with no PIN.
+func TestGarageDoorButtonOffersTheOppositeAction(t *testing.T) {
+	closed := deviceToView(garageDoor(apiTrait.OpenClose_POSITION_CLOSED, true))
+	assert.True(t, closed.CanOperateDoor)
+	assert.Equal(t, "Garage Door", closed.Kind)
+	require.Len(t, closed.Readings, 1)
+	assert.Equal(t, houseview.Reading{Label: "Door", Value: "Closed"}, closed.Readings[0])
+	html := renderRow(t, closed)
+	assert.Contains(t, html, `name="door" value="open"`)
+	assert.Contains(t, html, `type="password"`)
+	assert.Contains(t, html, "[ OPEN ]")
+	assert.NotContains(t, html, "[ CLOSE ]")
+
+	open := deviceToView(garageDoor(apiTrait.OpenClose_POSITION_OPEN, true))
+	require.Len(t, open.Readings, 1)
+	assert.Equal(t, houseview.Reading{Label: "Door", Value: "Open"}, open.Readings[0])
+	html = renderRow(t, open)
+	assert.Contains(t, html, `{"door": "close"}`)
+	assert.Contains(t, html, "[ CLOSE ]")
+	assert.Contains(t, html, `hx-confirm=`)
+	assert.NotContains(t, html, `type="password"`, "closing never asks for a PIN")
+	assert.NotContains(t, html, "[ OPEN ]")
 }
 
 func TestGarageDoorUnknownPositionOffersOnlyTrigger(t *testing.T) {
@@ -759,13 +770,87 @@ func TestGarageDoorUnknownPositionOffersOnlyTrigger(t *testing.T) {
 	assert.True(t, dv.CanTriggerDoor)
 	require.Len(t, dv.Readings, 1)
 	assert.Equal(t, houseview.Reading{Label: "Door", Value: "Unknown"}, dv.Readings[0])
-	var sb strings.Builder
-	require.NoError(t, fragments.ExecuteTemplate(&sb, "device_row", dv))
-	assert.Contains(t, sb.String(), `{"door": "trigger"}`)
-	assert.Contains(t, sb.String(), "[ TRIGGER ]")
-	assert.Contains(t, sb.String(), `hx-confirm=`)
-	assert.NotContains(t, sb.String(), "[ OPEN ]")
-	assert.NotContains(t, sb.String(), "[ CLOSE ]")
+	html := renderRow(t, dv)
+	assert.Contains(t, html, `name="door" value="trigger"`)
+	assert.Contains(t, html, `type="password"`)
+	assert.Contains(t, html, "[ TRIGGER ]")
+	assert.NotContains(t, html, "[ OPEN ]")
+	assert.NotContains(t, html, "[ CLOSE ]")
+}
+
+// testPINGate is a gate for pin, hashed at bcrypt's minimum cost to keep tests fast.
+func testPINGate(t *testing.T, pin string) *pinGate {
+	t.Helper()
+	h, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.MinCost)
+	require.NoError(t, err)
+	g, err := newPINGate(string(h))
+	require.NoError(t, err)
+	return g
+}
+
+func TestDoorOpenAndTriggerNeedTheRightPIN(t *testing.T) {
+	for _, tc := range []struct {
+		door   string
+		action command.OpenClose_Action
+	}{
+		{"open", command.OpenClose_ACTION_OPEN},
+		{"trigger", command.OpenClose_ACTION_TRIGGER},
+	} {
+		t.Run(tc.door, func(t *testing.T) {
+			s, _, br := startTestServer(t)
+			s.doorPIN = testPINGate(t, "1234")
+			br.devices = map[string]*apiDevice.Device{"garage1": garageDoor(apiTrait.OpenClose_POSITION_CLOSED, true)}
+
+			// Wrong and missing PINs never reach the bridge, and say why.
+			for _, body := range []string{"door=" + tc.door + "&pin=0000", "door=" + tc.door} {
+				rec := post(s, "/devices/garage1/commands", body, true)
+				assert.Equal(t, 200, rec.Code, "htmx only swaps 2xx, so the row must carry the error")
+				assert.Contains(t, rec.Body.String(), "incorrect PIN")
+				assert.Nil(t, br.gotCmd, body)
+			}
+
+			rec := post(s, "/devices/garage1/commands", "door="+tc.door+"&pin=1234", true)
+			assert.Equal(t, 200, rec.Code)
+			assert.NotContains(t, rec.Body.String(), "PIN")
+			require.NotNil(t, br.gotCmd)
+			assert.Equal(t, tc.action, br.gotCmd.GetOpenClose().GetAction())
+			assert.Equal(t, "garage1", br.gotCmd.GetDeviceId())
+		})
+	}
+}
+
+func TestDoorCloseNeverNeedsPIN(t *testing.T) {
+	s, _, br := startTestServer(t)
+	s.doorPIN = testPINGate(t, "1234")
+	rec := post(s, "/devices/garage1/commands", "door=close", true)
+	assert.Equal(t, 200, rec.Code)
+	require.NotNil(t, br.gotCmd)
+	assert.Equal(t, command.OpenClose_ACTION_CLOSE, br.gotCmd.GetOpenClose().GetAction())
+}
+
+// With no PIN configured the gated actions fail closed rather than open to anyone.
+func TestDoorOpenRefusedWhenNoPINConfigured(t *testing.T) {
+	s, _, br := startTestServer(t)
+	br.devices = map[string]*apiDevice.Device{"garage1": garageDoor(apiTrait.OpenClose_POSITION_CLOSED, true)}
+	for _, body := range []string{"door=open&pin=1234", "door=open", "door=trigger&pin="} {
+		rec := post(s, "/devices/garage1/commands", body, true)
+		assert.Contains(t, rec.Body.String(), "no door PIN is configured")
+		assert.Nil(t, br.gotCmd, body)
+	}
+}
+
+func TestDoorPINLocksAfterRepeatedMisses(t *testing.T) {
+	s, _, br := startTestServer(t)
+	s.doorPIN = testPINGate(t, "1234")
+	br.devices = map[string]*apiDevice.Device{"garage1": garageDoor(apiTrait.OpenClose_POSITION_CLOSED, true)}
+
+	for i := 0; i < pinFreeAttempts; i++ {
+		post(s, "/devices/garage1/commands", "door=open&pin=0000", true)
+	}
+	// Even the right PIN is refused while locked.
+	rec := post(s, "/devices/garage1/commands", "door=open&pin=1234", true)
+	assert.Contains(t, rec.Body.String(), "too many incorrect PINs")
+	assert.Nil(t, br.gotCmd)
 }
 
 func TestGarageDoorKnownPositionHasNoTriggerButton(t *testing.T) {

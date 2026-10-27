@@ -38,6 +38,10 @@ type Server struct {
 	// sparklines; nil when no metrics server is configured.
 	metrics *metricsFeed
 
+	// doorPIN guards opening the garage door (see handleDeviceCommand). Nil
+	// until configured, which refuses every gated action.
+	doorPIN *pinGate
+
 	// ctx is what the hubs run under.
 	ctx context.Context
 

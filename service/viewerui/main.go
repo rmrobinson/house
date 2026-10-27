@@ -78,6 +78,14 @@ func main() {
 		logger.Fatal("unable to start viewer ui", zap.Error(err))
 	}
 
+	// Opening the garage door asks for this PIN; unset, those actions are refused.
+	if s.doorPIN, err = newPINGate(viper.GetString("viewerui.door_pin_hash")); err != nil {
+		logger.Fatal("invalid viewerui.door_pin_hash", zap.Error(err))
+	}
+	if s.doorPIN.hash == nil {
+		logger.Warn("viewerui.door_pin_hash is not set: opening the garage door from the viewer is disabled")
+	}
+
 	if ice := viper.GetStringSlice("viewerui.ice_servers"); len(ice) > 0 {
 		j, err := json.Marshal(ice)
 		if err != nil {
