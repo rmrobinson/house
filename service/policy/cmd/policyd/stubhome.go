@@ -145,3 +145,13 @@ func (h *stubHomeAPI) Notify(event string, payload map[string]any) error {
 }
 
 var _ policy.HomeAPI = (*stubHomeAPI)(nil)
+
+// GetDetections reports no detections: the stub has no real device data.
+func (h *stubHomeAPI) GetDetections(id string) ([]policy.Detection, error) {
+	return nil, nil
+}
+
+// GetStillImage is not implemented by the stub.
+func (h *stubHomeAPI) GetStillImage(id string, maxHeight int) (*policy.StillImage, error) {
+	return nil, policy.ErrNotImplemented
+}

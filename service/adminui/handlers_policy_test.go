@@ -38,6 +38,10 @@ func (noopHomeAPI) GetDeviceName(id string) (string, error)           { return i
 func (noopHomeAPI) HasState(id, key string) (bool, error)             { return false, nil }
 func (noopHomeAPI) GetLastSeen(id string) (time.Time, error)          { return time.Time{}, nil }
 func (noopHomeAPI) IsReachable(id string) (bool, error)               { return true, nil }
+func (noopHomeAPI) GetDetections(id string) ([]policy.Detection, error) { return nil, nil }
+func (noopHomeAPI) GetStillImage(id string, maxHeight int) (*policy.StillImage, error) {
+	return nil, policy.ErrNotImplemented
+}
 func (noopHomeAPI) GetDeviceRoom(id string) (string, error)           { return "", nil }
 
 // testTrigger is a manually-flippable condition, registered under

@@ -27,12 +27,13 @@ type fakeNotifyAPI struct {
 type notifySendCall struct {
 	recipientIDs           []string
 	subject, body, content string
+	attachments            []NotifyAttachment
 }
 
-func (f *fakeNotifyAPI) Send(recipientIDs []string, subject, body, contentType string) error {
+func (f *fakeNotifyAPI) Send(recipientIDs []string, msg NotifyMessage) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, notifySendCall{recipientIDs, subject, body, contentType})
+	f.calls = append(f.calls, notifySendCall{recipientIDs, msg.Subject, msg.Body, msg.ContentType, msg.Attachments})
 	return f.err
 }
 

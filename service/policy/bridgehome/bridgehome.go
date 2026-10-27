@@ -22,6 +22,7 @@ import (
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
 	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/bridge"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
@@ -420,6 +421,72 @@ func (a *Adapter) IsReachable(id string) (bool, error) {
 		return true, nil
 	}
 	return d.GetAddress().GetIsReachable(), nil
+}
+
+// stillImageTimeout bounds GetStillImage. The bridge may itself wait a few seconds for a fresh
+// detection's snapshot before falling back to the latest frame.
+const stillImageTimeout = 8 * time.Second
+
+// GetDetections implements policy.HomeAPI from the device's cached Detection trait.
+func (a *Adapter) GetDetections(id string) ([]policy.Detection, error) {
+	d, err := a.getDevice(id)
+	if err != nil {
+		return nil, err
+	}
+	det := d.GetCamera().GetDetection()
+	if det == nil {
+		return nil, fmt.Errorf("device %q has no detection trait", id)
+	}
+
+	out := make([]policy.Detection, 0, len(det.GetState().GetVisible()))
+	for _, o := range det.GetState().GetVisible() {
+		pd := policy.Detection{
+			Label:         o.GetLabel(),
+			Score:         float64(o.GetScore()),
+			EventID:       o.GetEventId(),
+			HasStillImage: o.GetHasStillImage(),
+			Zones:         o.GetZones(),
+			SubLabel:      o.GetSubLabel(),
+			SubLabelScore: float64(o.GetSubLabelScore()),
+		}
+		if o.GetFirstSeen() != nil {
+			pd.FirstSeen = o.GetFirstSeen().AsTime()
+		}
+		out = append(out, pd)
+	}
+	return out, nil
+}
+
+// GetStillImage implements policy.HomeAPI via BridgeService.GetStillImage.
+func (a *Adapter) GetStillImage(id string, maxHeight int) (*policy.StillImage, error) {
+	a.mu.Lock()
+	ctx := a.ctx
+	live := a.live
+	a.mu.Unlock()
+
+	client := a.conn.Client()
+	if !live || client == nil || ctx == nil {
+		return nil, ErrNotReady
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, stillImageTimeout)
+	defer cancel()
+
+	resp, err := client.GetStillImage(reqCtx, &api2.GetStillImageRequest{DeviceId: id, MaxHeight: int32(maxHeight)})
+	if err != nil {
+		return nil, err
+	}
+
+	source := "latest_frame"
+	if resp.GetSource() == trait.StillImage_EVENT_SNAPSHOT {
+		source = "event_snapshot"
+	}
+	return &policy.StillImage{
+		Data:        resp.GetData(),
+		ContentType: resp.GetContentType(),
+		Source:      source,
+		EventID:     resp.GetEventId(),
+	}, nil
 }
 
 // HasState implements policy.HomeAPI, walking the same dot-path as GetState

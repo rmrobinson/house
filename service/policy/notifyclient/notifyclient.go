@@ -8,6 +8,7 @@ import (
 	"context"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/service/policy"
 )
 
 // Client implements policy.NotifyAPI by calling NotificationServiceClient.
@@ -22,12 +23,22 @@ func New(client api2.NotificationServiceClient) *Client {
 }
 
 // Send implements policy.NotifyAPI.
-func (c *Client) Send(recipientIDs []string, subject, body, contentType string) error {
-	_, err := c.client.SendMessage(context.Background(), &api2.SendMessageRequest{
+func (c *Client) Send(recipientIDs []string, msg policy.NotifyMessage) error {
+	req := &api2.SendMessageRequest{
 		RecipientIds: recipientIDs,
-		Subject:      subject,
-		Body:         body,
-		ContentType:  contentType,
-	})
+		Subject:      msg.Subject,
+		Body:         msg.Body,
+		ContentType:  msg.ContentType,
+	}
+	for _, a := range msg.Attachments {
+		req.Attachments = append(req.Attachments, &api2.Attachment{
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			Data:        a.Data,
+			ContentId:   a.ContentID,
+		})
+	}
+
+	_, err := c.client.SendMessage(context.Background(), req)
 	return err
 }
