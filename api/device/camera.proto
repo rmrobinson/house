@@ -4,11 +4,15 @@ package faltung.house.api.device;
 
 option go_package = "github.com/rmrobinson/house/api/device";
 
+import "api/trait/detection.proto";
 import "api/trait/media_stream.proto";
 import "api/trait/presence.proto";
+import "api/trait/still_image.proto";
 
 // Camera is a device which is exposes a video stream to the network.
 message Camera {
   faltung.house.api.trait.MediaStream media_stream = 1;
   faltung.house.api.trait.Presence presence = 2;
+  faltung.house.api.trait.StillImage still_image = 3;
+  faltung.house.api.trait.Detection detection = 4;
 }

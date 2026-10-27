@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+import "google/protobuf/timestamp.proto";
+
+// Detection describes a device that recognises objects (people, cars, ...) in
+// what it sees, as opposed to Presence which only says that something is there.
+message Detection {
+  message Attributes {
+    // Object labels the device can report, e.g. "person".
+    repeated string labels = 1;
+  }
+
+  // Object is one thing the device is currently tracking.
+  message Object {
+    string label = 1;
+    // Classifier confidence, 0..1. Not a reliable real/false discriminator on its own.
+    float score = 2;
+    // Device-local identifier of the detection event; can be passed to GetStillImage.
+    string event_id = 3;
+    google.protobuf.Timestamp first_seen = 4;
+    // True once a picture of this object can be fetched for event_id.
+    bool has_still_image = 5;
+    // Zones of the device's view the object is currently in.
+    repeated string zones = 6;
+    // Recognised identity (e.g. a face match), when the device provides one.
+    // It usually arrives after the object first appears, or never.
+    string sub_label = 7;
+    float sub_label_score = 8;
+  }
+
+  message State {
+    // Objects currently visible: moving (not stationary) and not judged false.
+    repeated Object visible = 1;
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

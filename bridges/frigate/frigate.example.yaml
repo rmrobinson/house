@@ -22,6 +22,11 @@ frigate:
   # someone sitting still does not. Defaults to just "person".
   occupancy_labels:
     - person
+  # How long after a detection ends its picture can still be fetched without naming the event, and how long
+  # GetStillImage waits for Frigate to attach a snapshot to a fresh detection before falling back to the
+  # camera's latest frame. Go durations; defaults 2m and 3s.
+  still_image_retention: 2m
+  still_image_wait: 3s
   cameras:
     - name: "camera-one"
       manufacturer: "Manufacturer 1"

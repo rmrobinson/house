@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 
@@ -73,6 +74,13 @@ type FrigateBridge struct {
 
 	// presenceGrace overrides the package default; tests shorten it.
 	presenceGrace time.Duration
+
+	// last is each camera's most recent qualifying detection, for GetStillImage. stillRetention and
+	// snapshotWait override the package defaults; now is a field so tests can move time.
+	last           map[string]*lastEvent
+	stillRetention time.Duration
+	snapshotWait   time.Duration
+	now            func() time.Time
 }
 
 // NewFrigateBridge returns a new instance of the Frigate bridge.
@@ -108,6 +116,23 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		active:                 map[string]map[string]int{},
 		publish:                func(c *Camera) { svc.UpdateDevice(c.ToDevice()) },
 		presenceGrace:          presenceGrace,
+		last:                   map[string]*lastEvent{},
+		stillRetention:         defaultStillRetention,
+		snapshotWait:           defaultSnapshotWait,
+		now:                    time.Now,
+	}
+}
+
+// SetStillImageTiming overrides how long a finished detection's picture stays fetchable and how long
+// GetStillImage waits for a detection's snapshot. A zero value keeps the default. Call before Run.
+func (fb *FrigateBridge) SetStillImageTiming(retention, wait time.Duration) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	if retention > 0 {
+		fb.stillRetention = retention
+	}
+	if wait > 0 {
+		fb.snapshotWait = wait
 	}
 }
 
@@ -208,7 +233,19 @@ func (fb *FrigateBridge) newCamera(config CameraConfig) *Camera {
 		ModelID:      config.ModelID,
 		Enabled:      false,
 		Active:       false,
+
+		DetectionLabels: fb.labelsLocked(),
 	}
+}
+
+// labelsLocked returns the sorted occupancy labels. fb.mu must be held.
+func (fb *FrigateBridge) labelsLocked() []string {
+	labels := make([]string, 0, len(fb.occupancyLabels))
+	for l := range fb.occupancyLabels {
+		labels = append(labels, l)
+	}
+	sort.Strings(labels)
+	return labels
 }
 
 // ProcessCommandAsync is present to conform to the bridge.Handler interface. This bridge has no
@@ -249,6 +286,9 @@ func (fb *FrigateBridge) SetOccupancyLabels(labels []string) {
 	fb.occupancyLabels = map[string]bool{}
 	for _, l := range labels {
 		fb.occupancyLabels[l] = true
+	}
+	for _, c := range fb.cameras {
+		c.DetectionLabels = fb.labelsLocked()
 	}
 }
 
@@ -345,6 +385,19 @@ func (fb *FrigateBridge) applySnapshot(cameras map[string]frigate.CameraActivity
 		fb.active[name] = counts
 		fb.updateOccupancyLocked(name, camera)
 
+		// A tracked detection the snapshot no longer lists as moving has ended (its end event may have
+		// been missed during a drop). Snapshot counts carry no ids, so only a fully idle camera is
+		// reconciled; a still-busy one is left to the event stream.
+		idle := true
+		for l, n := range counts {
+			if n > 0 && fb.occupancyLabels[l] {
+				idle = false
+			}
+		}
+		if idle && fb.clearVisibleLocked(camera) {
+			fb.publish(camera)
+		}
+
 		if camera.MotionDetected != activity.Motion {
 			camera.MotionDetected = activity.Motion
 			fb.publish(camera)
@@ -366,8 +419,10 @@ func (fb *FrigateBridge) clearPresence(gen uint64) {
 	}
 
 	fb.active = map[string]map[string]int{}
+	fb.last = map[string]*lastEvent{}
 	for _, camera := range fb.cameras {
-		if camera.MotionDetected || camera.OccupancyDetected {
+		cleared := fb.clearVisibleLocked(camera)
+		if camera.MotionDetected || camera.OccupancyDetected || cleared {
 			camera.MotionDetected = false
 			camera.OccupancyDetected = false
 			fb.publish(camera)
@@ -405,6 +460,7 @@ func (fb *FrigateBridge) watchMotion(ctx context.Context) {
 			OnSnapshot:    fb.applySnapshot,
 			OnMotion:      fb.setMotion,
 			OnActiveCount: fb.setActiveCount,
+			OnEvent:       fb.handleEvent,
 		})
 		if ctx.Err() != nil {
 			return

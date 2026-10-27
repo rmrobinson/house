@@ -70,6 +70,10 @@ func (f *fakeBridgeServer) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, s
 	return nil
 }
 
+func (f *fakeBridgeServer) GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error) {
+	return nil, nil
+}
+
 func (f *fakeBridgeServer) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {
 	for _, u := range f.updates {
 		if err := stream.Send(u); err != nil {

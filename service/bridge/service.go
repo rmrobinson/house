@@ -56,6 +56,17 @@ type HistoryHandler interface {
 	GetHistory(ctx context.Context, deviceID string, since, until time.Time) ([]*api2.HistorySample, error)
 }
 
+// StillImageHandler is an optional interface a Handler may also implement to
+// serve BridgeService.GetStillImage. A bridge whose handler doesn't implement
+// it answers that RPC with ErrStillImageNotSupported. A bridge should only
+// implement it for devices carrying the StillImage trait.
+type StillImageHandler interface {
+	// GetStillImage returns one picture from the device. An unknown deviceID
+	// should be reported as ErrDeviceNotFound; a device that is known but
+	// can't produce a picture right now as codes.Unavailable.
+	GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error)
+}
+
 // Service contains the relevant fields to allow management of devices on the bridge.
 type Service struct {
 	logger *zap.Logger

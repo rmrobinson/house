@@ -75,6 +75,10 @@ func (f *fakeFrigate) bridge(t *testing.T) (*FrigateBridge, *publishLog) {
 		active:          map[string]map[string]int{},
 		publish:         log.record,
 		presenceGrace:   time.Hour,
+		last:            map[string]*lastEvent{},
+		stillRetention:  time.Minute,
+		snapshotWait:    200 * time.Millisecond,
+		now:             time.Now,
 	}, log
 }
 
