@@ -81,6 +81,37 @@ message ReportStateRequest {
   bytes payload = 1;
 }
 
+// StartMediaSession tells the agent to begin pulling a camera's local WHEP
+// stream and forwarding it (via the separate RelayService.PushMediaSession
+// RPC) so googlehomed can answer a Google CameraStream (webrtc) request -
+// see relay/session_manager.go's doc comment for the full session
+// lifecycle. Sent down the existing control stream and matched by
+// request_id the same way SyncRequest/QueryRequest/ExecuteRequest are -
+// doRequest needs no changes to support this.
+message StartMediaSession {
+  string session_id = 1;
+  string device_id = 2;
+}
+// StopMediaSession tells the agent to tear down session_id: stop pulling
+// WHEP and close its PushMediaSession stream. Idempotent - the agent may
+// already have stopped (e.g. it sent MediaSessionFailed itself).
+message StopMediaSession {
+  string session_id = 1;
+}
+// MediaSessionReady is the agent's reply once it has successfully started
+// pulling WHEP for session_id and is about to open PushMediaSession.
+message MediaSessionReady {
+  string session_id = 1;
+}
+// MediaSessionFailed is the agent's reply (in place of MediaSessionReady)
+// when it can't start or sustain the session - e.g. the device has no WHEP
+// endpoint, the WHEP pull failed, or the received codec doesn't match what
+// googlehomed requires (see session_manager.go).
+message MediaSessionFailed {
+  string session_id = 1;
+  string error = 2;
+}
+
 message ServerRequest {
   string request_id = 1;
   oneof field {
@@ -88,6 +119,8 @@ message ServerRequest {
     QueryRequest query_request = 3;
     ExecuteRequest execute_request = 4;
     DisconnectRequest disconnect_request = 5;
+    StartMediaSession start_media_session = 6;
+    StopMediaSession stop_media_session = 7;
   }
 }
 
@@ -100,7 +133,20 @@ message ClientRequest {
     SyncResponse sync_response = 5;
     QueryResponse query_response = 6;
     ExecuteResponse execute_response = 7;
+    MediaSessionReady media_session_ready = 8;
+    MediaSessionFailed media_session_failed = 9;
   }
+}
+
+// MediaPacket carries one forwarded RTP packet for session_id, pushed by
+// the agent over PushMediaSession. session_id is stamped on every packet
+// (not just the first) so the server can validate/demux without relying on
+// stream identity surviving an agent reconnect.
+message MediaPacket {
+  string session_id = 1;
+  bytes rtp = 2;
+}
+message MediaPacketAck {
 }
 
 // RelayService lets googlehomed multiplex handling of an agent running on a
@@ -113,4 +159,15 @@ message ClientRequest {
 service RelayService {
   // StateSync must start with the client sending a RegisterAgent request.
   rpc StateSync(stream ClientRequest) returns (stream ServerRequest) {}
+
+  // PushMediaSession carries one camera session's forwarded RTP, opened by
+  // the agent only after it receives a StartMediaSession on the StateSync
+  // stream, and closed when that session ends. Kept as its own RPC rather
+  // than more ServerRequest/ClientRequest oneof cases on StateSync so a
+  // burst of RTP can never head-of-line-block a control message (e.g.
+  // StopMediaSession, or an unrelated ExecuteRequest for a different
+  // device) - gRPC delivers one stream's messages to Recv() strictly in
+  // send order, but this is a second HTTP/2 stream on the same mTLS
+  // connection, so it's independently flow-controlled.
+  rpc PushMediaSession(stream MediaPacket) returns (MediaPacketAck) {}
 }

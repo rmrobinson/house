@@ -15,14 +15,22 @@
 // no Google Smart Home trait to report them through); Sensor (read-only AQI
 // via SensorState, the one measurement this device kind translates).
 //
-// Camera is next on the plan but deliberately not started here: Google's
-// CameraStream trait needs its own response shape (a stream URL/token, not
-// a DeviceState) and this house's cameras are local-only (go2rtc/WHEP) -
-// proxying that through googlehomed's public fulfillment webhook needs its
-// own design discussion before writing code. No good Google Smart Home
-// type exists for UPS/ConnectedDevice/Clock/StandingDesk/Generic/MediaPlayer
-// (MediaPlayer's casting/now-playing model doesn't fit a voice-control
-// trait) - those are permanently out of scope, not pending work.
+// Camera (CameraStream, webrtc only, video-only - no audio track in this
+// first cut) is the one kind that doesn't fit this package's usual
+// deviceToAction/stateToAction/buildCommand shape: GetCameraStream has no
+// device state to mutate, so relay.RemoteProvider.Execute intercepts it
+// before it ever reaches this agent's generic BridgeService command path
+// (see its doc comment) - this agent's own role is
+// agent/media_session.go's StartMediaSession handler (pulling the
+// device's local WHEP endpoint and forwarding the RTP to googlehomed),
+// not buildCommand. deviceToAction/stateToAction still have a Camera
+// case (cameraToAction/the Device_Camera case below), just a minimal one -
+// see relay/webrtc_session.go's doc comment for the WebRTC/pion side of
+// this, and relay/session_manager.go for the session lifecycle. No good
+// Google Smart Home type exists for UPS/ConnectedDevice/Clock/
+// StandingDesk/Generic/MediaPlayer (MediaPlayer's casting/now-playing
+// model doesn't fit a voice-control trait) - those are permanently out of
+// scope, not pending work.
 //
 // Extending to a new device kind means: add a case to the type switches in
 // deviceToAction/stateToAction/buildCommand, and a deviceToAction/
@@ -64,6 +72,8 @@ func deviceToAction(d *device.Device) (ad *action.Device, ok bool) {
 		ad, ok = evChargerToAction(d.GetId(), dd.EvCharger)
 	case *device.Device_Sensor:
 		ad, ok = sensorToAction(d.GetId(), dd.Sensor)
+	case *device.Device_Camera:
+		ad, ok = cameraToAction(d.GetId(), dd.Camera)
 	default:
 		return nil, false
 	}
@@ -136,6 +146,15 @@ func stateToAction(d *device.Device) (action.DeviceState, error) {
 			return action.DeviceState{}, unsupported
 		}
 		return ds, nil
+	case *device.Device_Camera:
+		if dd.Camera.GetMediaStream() == nil {
+			return action.DeviceState{}, unsupported
+		}
+		// CameraStream is request/response (GetCameraStream, handled
+		// entirely by relay.RemoteProvider.Execute and
+		// agent/media_session.go - see their doc comments) - there's
+		// nothing persistent about a stream session to report here.
+		return action.NewDeviceState(online), nil
 	default:
 		return action.DeviceState{}, unsupported
 	}
@@ -720,4 +739,26 @@ func sensorStateToAction(online bool, s *device.Sensor) (action.DeviceState, boo
 		{"name": "AirQuality", "rawValue": *st.Aqi},
 	}
 	return ds, true
+}
+
+// cameraToAction returns the Google Smart Home Action profile for a
+// Camera device: CameraStream, webrtc only, with a per-session bearer
+// token. Unlike every other kind here, GetCameraStream commands never
+// reach buildCommand/stateToAction at all - relay.RemoteProvider.Execute
+// intercepts them before anything is sent to the agent's generic
+// BridgeService command path, since there's no device state to mutate
+// (see its doc comment). This agent's own role in a stream session is
+// agent/media_session.go's StartMediaSession handler, not translate.go.
+// ok is false if c has no media stream to proxy at all.
+func cameraToAction(id string, c *device.Camera) (*action.Device, bool) {
+	if c.GetMediaStream() == nil {
+		return nil, false
+	}
+
+	ad := action.NewDevice(id, "action.devices.types.CAMERA")
+	ad.Traits["action.devices.traits.CameraStream"] = true
+	ad.Attributes["cameraStreamSupportedProtocols"] = []string{"webrtc"}
+	ad.Attributes["cameraStreamNeedAuthToken"] = true
+
+	return ad, true
 }

@@ -509,3 +509,51 @@ func TestBuildCommand_SensorNotExecutable(t *testing.T) {
 	_, ok := buildCommand(d, "sensor1", action.Command{OnOff: &action.CommandOnOff{On: true}})
 	assert.False(t, ok)
 }
+
+func cameraWithWHEP(id string) *device.Device {
+	return &device.Device{
+		Id: id,
+		Details: &device.Device_Camera{Camera: &device.Camera{
+			MediaStream: &trait.MediaStream{
+				State: &trait.MediaStream_State{
+					Endpoints: []*trait.MediaStream_Endpoint{
+						{Protocol: trait.MediaStream_WEBRTC_WHEP, Url: "https://go2rtc.example/api/webrtc?src=camera1"},
+					},
+				},
+			},
+		}},
+	}
+}
+
+func TestDeviceToAction_Camera(t *testing.T) {
+	d := cameraWithWHEP("camera1")
+	ad, ok := deviceToAction(d)
+	assert.True(t, ok)
+	assert.Equal(t, "action.devices.types.CAMERA", ad.Type)
+	assert.True(t, ad.Traits["action.devices.traits.CameraStream"])
+	assert.Equal(t, []string{"webrtc"}, ad.Attributes["cameraStreamSupportedProtocols"])
+	assert.Equal(t, true, ad.Attributes["cameraStreamNeedAuthToken"])
+}
+
+func TestDeviceToAction_CameraNoMediaStream(t *testing.T) {
+	d := &device.Device{Id: "camera1", Details: &device.Device_Camera{Camera: &device.Camera{}}}
+	_, ok := deviceToAction(d)
+	assert.False(t, ok)
+}
+
+func TestStateToAction_Camera(t *testing.T) {
+	d := cameraWithWHEP("camera1")
+	ds, err := stateToAction(d)
+	assert.NoError(t, err)
+	assert.True(t, ds.Online)
+	assert.Empty(t, ds.State)
+}
+
+func TestBuildCommand_CameraNotExecutable(t *testing.T) {
+	// GetCameraStream is intercepted entirely on the googlehomed side (see
+	// relay.RemoteProvider.Execute) before it would ever reach buildCommand
+	// - Camera has no buildCommand case at all, so any command is rejected.
+	d := cameraWithWHEP("camera1")
+	_, ok := buildCommand(d, "camera1", action.Command{OnOff: &action.CommandOnOff{On: true}})
+	assert.False(t, ok)
+}

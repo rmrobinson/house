@@ -47,8 +47,19 @@ type Agent struct {
 
 	updates chan *api2.Update
 
+	// sendMu serializes every stream.Send call on the one relay stream:
+	// grpc-go's ClientStream.SendMsg is documented unsafe to call
+	// concurrently, but this stream is driven by three independent
+	// goroutines - processRelayRequests' own Recv loop, processUpdates,
+	// and (once media_session.go is in play) each in-flight
+	// startMediaSession call replying asynchronously.
+	sendMu sync.Mutex
+
 	mu                 sync.Mutex
 	unsupportedDevices map[string]bool
+
+	sessionsMu    sync.Mutex
+	mediaSessions map[string]context.CancelFunc
 }
 
 // New creates an Agent that will connect to bridgeAddr (BridgeService) and
@@ -62,7 +73,16 @@ func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSCon
 		relayClient:        relayClient,
 		updates:            make(chan *api2.Update, updateQueueSize),
 		unsupportedDevices: map[string]bool{},
+		mediaSessions:      map[string]context.CancelFunc{},
 	}
+}
+
+// send serializes every ClientRequest sent on stream - see sendMu's doc
+// comment on Agent for why this is needed.
+func (a *Agent) send(stream relay.RelayService_StateSyncClient, req *relay.ClientRequest) error {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	return stream.Send(req)
 }
 
 // Run opens the relay stream, registers as a.agentID, starts the
@@ -74,7 +94,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("agent: unable to open relay stream: %w", err)
 	}
 
-	if err := stream.Send(&relay.ClientRequest{
+	if err := a.send(stream, &relay.ClientRequest{
 		RequestId: uuid.New().String(),
 		Field:     &relay.ClientRequest_RegisterAgent{RegisterAgent: &relay.RegisterAgentRequest{AgentId: a.agentID}},
 	}); err != nil {
@@ -128,7 +148,7 @@ func (a *Agent) applyBridgeUpdate(stream relay.RelayService_StateSyncClient, u *
 
 	switch u.Action {
 	case api2.Update_ADDED, api2.Update_REMOVED:
-		if err := stream.Send(&relay.ClientRequest{
+		if err := a.send(stream, &relay.ClientRequest{
 			RequestId: uuid.New().String(),
 			Field:     &relay.ClientRequest_RequestSync{RequestSync: &relay.RequestSyncRequest{}},
 		}); err != nil {
@@ -157,7 +177,7 @@ func (a *Agent) applyBridgeUpdate(stream relay.RelayService_StateSyncClient, u *
 			a.logger.Error("unable to serialize device state", zap.String("device_id", d.GetId()), zap.Error(err))
 			return
 		}
-		if err := stream.Send(&relay.ClientRequest{
+		if err := a.send(stream, &relay.ClientRequest{
 			RequestId: uuid.New().String(),
 			Field:     &relay.ClientRequest_ReportState{ReportState: &relay.ReportStateRequest{Payload: payload}},
 		}); err != nil {
@@ -171,7 +191,7 @@ func (a *Agent) applyBridgeUpdate(stream relay.RelayService_StateSyncClient, u *
 func (a *Agent) processRelayRequests(ctx context.Context, stream relay.RelayService_StateSyncClient) error {
 	// Google re-syncs on request; ask once up front too, so this agent
 	// restarting picks up any device changes it missed while it was down.
-	if err := stream.Send(&relay.ClientRequest{
+	if err := a.send(stream, &relay.ClientRequest{
 		RequestId: uuid.New().String(),
 		Field:     &relay.ClientRequest_RequestSync{RequestSync: &relay.RequestSyncRequest{}},
 	}); err != nil {
@@ -193,13 +213,26 @@ func (a *Agent) processRelayRequests(ctx context.Context, stream relay.RelayServ
 			return nil
 		case req.GetSyncRequest() != nil:
 			resp := a.processSyncRequest(ctx)
-			sendErr = stream.Send(&relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_SyncResponse{SyncResponse: resp}})
+			sendErr = a.send(stream, &relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_SyncResponse{SyncResponse: resp}})
 		case req.GetQueryRequest() != nil:
 			resp := a.processQueryRequest(ctx, req.GetQueryRequest())
-			sendErr = stream.Send(&relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_QueryResponse{QueryResponse: resp}})
+			sendErr = a.send(stream, &relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_QueryResponse{QueryResponse: resp}})
 		case req.GetExecuteRequest() != nil:
 			resp := a.processExecuteRequest(ctx, req.GetExecuteRequest())
-			sendErr = stream.Send(&relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_ExecuteResponse{ExecuteResponse: resp}})
+			sendErr = a.send(stream, &relay.ClientRequest{RequestId: req.RequestId, Field: &relay.ClientRequest_ExecuteResponse{ExecuteResponse: resp}})
+		case req.GetStartMediaSession() != nil:
+			// Pulling WHEP + negotiating takes real time and has nothing
+			// to do with this stream's other traffic - handle it on its
+			// own goroutine (like processUpdates) rather than stalling
+			// SYNC/QUERY/EXECUTE for every other device while it runs.
+			// startMediaSession sends its own MediaSessionReady/
+			// MediaSessionFailed reply (tagged with req.RequestId) once
+			// it knows which.
+			go a.startMediaSession(ctx, stream, req.RequestId, req.GetStartMediaSession())
+			continue
+		case req.GetStopMediaSession() != nil:
+			a.stopMediaSession(req.GetStopMediaSession().GetSessionId())
+			continue
 		default:
 			a.logger.Info("received unhandled relay request type")
 			continue

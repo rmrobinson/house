@@ -4,6 +4,7 @@ go_library(
     name = "googlehomed_lib",
     srcs = [
         "auth.go",
+        "camera_signaling.go",
         "main.go",
     ],
     importpath = "github.com/rmrobinson/house/service/googlehome/cmd/googlehomed",

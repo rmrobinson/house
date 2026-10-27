@@ -22,6 +22,13 @@
 // googlehome.homegraph.creds_file must point at a Google service account
 // key with HomeGraph API access, configured in the Actions console project
 // this integration is registered under.
+//
+// googlehome.public_base_url is this process's own publicly-reachable
+// origin (e.g. "https://googlehome.example.com", matching whatever Caddy
+// terminates above it) - used to build each camera session's
+// cameraStreamSignalingUrl (see relay.CameraSignalingPath and
+// service/googlehome/relay/session_manager.go for the Camera/WebRTC
+// session this feeds).
 package main
 
 import (
@@ -69,8 +76,9 @@ func main() {
 	agentUserID := viper.GetString("googlehome.agent_user_id")
 	authToken := viper.GetString("googlehome.auth_token")
 	credsFile := viper.GetString("googlehome.homegraph.creds_file")
-	if agentUserID == "" || authToken == "" || credsFile == "" {
-		logger.Fatal("googlehome.agent_user_id, googlehome.auth_token and googlehome.homegraph.creds_file are all required")
+	publicBaseURL := viper.GetString("googlehome.public_base_url")
+	if agentUserID == "" || authToken == "" || credsFile == "" || publicBaseURL == "" {
+		logger.Fatal("googlehome.agent_user_id, googlehome.auth_token, googlehome.homegraph.creds_file and googlehome.public_base_url are all required")
 	}
 
 	ctx := context.Background()
@@ -82,10 +90,21 @@ func main() {
 	validator := &staticTokenValidator{token: authToken, agentUserID: agentUserID}
 	providerSvc := relay.NewProviderService(logger)
 	actionSvc := action.NewService(logger, validator, providerSvc, hgService)
-	relayAPI := relay.NewAPI(logger, providerSvc, actionSvc)
+
+	sessionMgr := relay.NewSessionManager()
+	webrtcMgr := relay.NewWebRTCSessionManager(logger, sessionMgr, func(sessionID string) {
+		// Called from whichever trigger (end/ICE failure/idle timeout)
+		// tore the PeerConnection down first - expire the token record and
+		// best-effort tell the owning agent to stop pulling WHEP.
+		if agentID, ok := sessionMgr.Expire(sessionID); ok {
+			providerSvc.StopMediaSession(agentID, sessionID)
+		}
+	})
+	relayAPI := relay.NewAPI(logger, providerSvc, actionSvc, sessionMgr, webrtcMgr, publicBaseURL)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(action.GoogleFulfillmentPath, actionSvc.GoogleFulfillmentHandler)
+	mux.HandleFunc(relay.CameraSignalingPath, newCameraSignalingHandler(logger, sessionMgr, webrtcMgr))
 
 	fulfillmentPort := viper.GetInt("googlehome.fulfillment_listen_port")
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", fulfillmentPort), Handler: mux}

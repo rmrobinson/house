@@ -24,6 +24,12 @@ googlehome:
     # this integration is registered under in the Actions console.
     creds_file: /etc/house/googlehome-homegraph-creds.json
 
+  # This process's own publicly-reachable origin (matching whatever Caddy
+  # terminates above fulfillment_listen_port) - used to build each Camera
+  # GetCameraStream session's cameraStreamSignalingUrl, which Google's
+  # client POSTs to directly.
+  public_base_url: "https://<your-public-host>"
+
   # Optional: mutual TLS for relay_listen_port - same convention as every
   # other internal gRPC service in this repo. Leave all three blank (the
   # default) to speak plaintext gRPC.
