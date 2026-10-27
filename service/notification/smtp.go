@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net/smtp"
+	"net/textproto"
 	"strings"
 	"time"
+
+	api2 "github.com/rmrobinson/house/api"
 )
 
 // SMTPSender implements Sender for the "email" channel type, relaying
@@ -25,9 +31,9 @@ type SMTPSender struct {
 }
 
 // Send implements Sender.
-func (s *SMTPSender) Send(ctx context.Context, to, subject, body, contentType string) error {
+func (s *SMTPSender) Send(ctx context.Context, to, subject, body, contentType string, attachments []*api2.Attachment) error {
 	to = stripCRLF(to)
-	msg := buildMessage(s.From, to, subject, body, contentType)
+	msg := buildMessageWithAttachments(s.From, to, subject, body, contentType, attachments)
 	if err := smtp.SendMail(s.Addr, nil, s.From, []string{to}, msg); err != nil {
 		return fmt.Errorf("notification: sending email to %q via %q: %w", to, s.Addr, err)
 	}
@@ -49,6 +55,15 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, body, contentType st
 // mail client never shows, and it also carries non-ASCII text, which an
 // unencoded "charset=utf-8" body with no declared 8-bit transport would not.
 func buildMessage(from, to, subject, body, contentType string) []byte {
+	return buildMessageWithAttachments(from, to, subject, body, contentType, nil)
+}
+
+// buildMessageWithAttachments is buildMessage plus files. With none the output is exactly buildMessage's
+// single-part message. With some, the body becomes the first part of a multipart message - multipart/related
+// for an HTML body, so cid: references resolve, otherwise multipart/mixed - and each attachment is a base64
+// part wrapped at 76 characters. The body part keeps its quoted-printable encoding and so the line-length
+// guarantee above.
+func buildMessageWithAttachments(from, to, subject, body, contentType string, attachments []*api2.Attachment) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "From: %s\r\n", stripCRLF(from))
 	fmt.Fprintf(&b, "To: %s\r\n", stripCRLF(to))
@@ -56,17 +71,73 @@ func buildMessage(from, to, subject, body, contentType string) []byte {
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	fmt.Fprintf(&b, "Message-Id: %s\r\n", newMessageID(from))
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
-	fmt.Fprintf(&b, "Content-Type: %s; charset=utf-8\r\n", stripCRLF(contentType))
-	fmt.Fprintf(&b, "Content-Transfer-Encoding: quoted-printable\r\n")
-	b.WriteString("\r\n")
 
-	// In its default (text) mode the writer turns each line break into CRLF
-	// itself, so body is passed through unmodified. Writing to a bytes.Buffer
-	// cannot fail.
-	qp := quotedprintable.NewWriter(&b)
+	if len(attachments) == 0 {
+		fmt.Fprintf(&b, "Content-Type: %s; charset=utf-8\r\n", stripCRLF(contentType))
+		fmt.Fprintf(&b, "Content-Transfer-Encoding: quoted-printable\r\n")
+		b.WriteString("\r\n")
+		writeQuotedPrintable(&b, body)
+		return b.Bytes()
+	}
+
+	subtype := "mixed"
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/html") {
+		subtype = "related"
+	}
+	mw := multipart.NewWriter(&b)
+	fmt.Fprintf(&b, "Content-Type: multipart/%s; boundary=\"%s\"\r\n\r\n", subtype, mw.Boundary())
+
+	// Writing to a bytes.Buffer cannot fail.
+	bodyPart, _ := mw.CreatePart(textproto.MIMEHeader{
+		"Content-Type":              {stripCRLF(contentType) + "; charset=utf-8"},
+		"Content-Transfer-Encoding": {"quoted-printable"},
+	})
+	writeQuotedPrintable(bodyPart, body)
+
+	for _, a := range attachments {
+		name := attachmentFilename(a.GetFilename())
+		h := textproto.MIMEHeader{
+			"Content-Type":              {fmt.Sprintf("%s; name=\"%s\"", stripCRLF(a.GetContentType()), name)},
+			"Content-Transfer-Encoding": {"base64"},
+		}
+		if id := stripCRLF(a.GetContentId()); id != "" {
+			h.Set("Content-Id", "<"+id+">")
+			h.Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", name))
+		} else {
+			h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", name))
+		}
+		part, _ := mw.CreatePart(h)
+		writeBase64Wrapped(part, a.GetData())
+	}
+	_ = mw.Close()
+	return b.Bytes()
+}
+
+// writeQuotedPrintable writes body quoted-printable encoded. In its default (text) mode the writer turns
+// each line break into CRLF itself, so body is passed through unmodified.
+func writeQuotedPrintable(w io.Writer, body string) {
+	qp := quotedprintable.NewWriter(w)
 	_, _ = qp.Write([]byte(body))
 	_ = qp.Close()
-	return b.Bytes()
+}
+
+// writeBase64Wrapped writes data base64 encoded in CRLF-terminated lines of 76 characters.
+func writeBase64Wrapped(w io.Writer, data []byte) {
+	enc := base64.StdEncoding.EncodeToString(data)
+	for len(enc) > 0 {
+		n := min(76, len(enc))
+		_, _ = io.WriteString(w, enc[:n]+"\r\n")
+		enc = enc[n:]
+	}
+}
+
+// attachmentFilename makes a display name safe to place in a quoted MIME header parameter.
+func attachmentFilename(name string) string {
+	name = strings.NewReplacer("\r", "", "\n", "", "\"", "", "\\", "").Replace(name)
+	if name == "" {
+		return "attachment"
+	}
+	return name
 }
 
 // stripCRLF removes carriage returns and line feeds so a value can't

@@ -23,10 +23,11 @@ type fakeSender struct {
 
 type sendCall struct {
 	to, subject, body, contentType string
+	attachments                    []*api2.Attachment
 }
 
-func (f *fakeSender) Send(ctx context.Context, to, subject, body, contentType string) error {
-	f.calls = append(f.calls, sendCall{to, subject, body, contentType})
+func (f *fakeSender) Send(ctx context.Context, to, subject, body, contentType string, attachments []*api2.Attachment) error {
+	f.calls = append(f.calls, sendCall{to, subject, body, contentType, attachments})
 	return f.errs[to]
 }
 
@@ -54,9 +55,9 @@ func TestSendMessageFansOutToEveryChannel(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, email.calls, 1)
-	assert.Equal(t, sendCall{"r@example.com", "subject", "body", "text/html"}, email.calls[0])
+	assert.Equal(t, sendCall{"r@example.com", "subject", "body", "text/html", nil}, email.calls[0])
 	require.Len(t, push.calls, 1)
-	assert.Equal(t, sendCall{"token-123", "subject", "body", "text/html"}, push.calls[0])
+	assert.Equal(t, sendCall{"token-123", "subject", "body", "text/html", nil}, push.calls[0])
 }
 
 func TestSendMessageDefaultsContentTypeToPlain(t *testing.T) {
@@ -133,4 +134,44 @@ func TestSendMessageEveryAttemptFailingIsInternalError(t *testing.T) {
 	_, err := svc.SendMessage(context.Background(), &api2.SendMessageRequest{RecipientIds: []string{"r"}})
 	require.Error(t, err)
 	assert.Equal(t, codes.Internal, status.Code(err))
+}
+
+func attachmentService(t *testing.T) (*Service, *fakeSender) {
+	email := &fakeSender{}
+	directory := NewDirectory([]Recipient{{ID: "r", Channels: []Channel{{Type: "email", Address: "r@example.com"}}}})
+	return newTestService(t, directory, map[string]Sender{"email": email}), email
+}
+
+func TestSendMessagePassesAttachmentsThrough(t *testing.T) {
+	svc, email := attachmentService(t)
+	att := &api2.Attachment{Filename: "a.jpg", ContentType: "image/jpeg", Data: []byte("x"), ContentId: "cam1"}
+
+	_, err := svc.SendMessage(context.Background(), &api2.SendMessageRequest{
+		RecipientIds: []string{"r"}, Subject: "s", Body: "b", Attachments: []*api2.Attachment{att},
+	})
+	require.NoError(t, err)
+	require.Len(t, email.calls, 1)
+	assert.Equal(t, []*api2.Attachment{att}, email.calls[0].attachments)
+}
+
+func TestSendMessageRejectsBadAttachments(t *testing.T) {
+	good := func() *api2.Attachment {
+		return &api2.Attachment{Filename: "a.jpg", ContentType: "image/jpeg", Data: []byte("x"), ContentId: "cam1"}
+	}
+	cases := map[string][]*api2.Attachment{
+		"empty data":        {{ContentType: "image/jpeg"}},
+		"bad content type":  {{ContentType: "image/jpeg\r\nBcc: x@y", Data: []byte("x")}},
+		"no content type":   {{Data: []byte("x")}},
+		"bad content id":    {{ContentType: "image/jpeg", Data: []byte("x"), ContentId: "a b>\r\n"}},
+		"duplicate id":      {good(), good()},
+		"over total budget": {{ContentType: "image/jpeg", Data: make([]byte, MaxAttachmentBytes/2+1)}, {ContentType: "image/jpeg", Data: make([]byte, MaxAttachmentBytes/2+1)}},
+	}
+	for name, atts := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, email := attachmentService(t)
+			_, err := svc.SendMessage(context.Background(), &api2.SendMessageRequest{RecipientIds: []string{"r"}, Attachments: atts})
+			assert.Equal(t, codes.InvalidArgument, status.Code(err))
+			assert.Empty(t, email.calls)
+		})
+	}
 }

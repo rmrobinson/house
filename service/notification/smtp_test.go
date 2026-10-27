@@ -2,7 +2,10 @@ package notification
 
 import (
 	"bytes"
+	"encoding/base64"
 	"io"
+	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
 	"strings"
@@ -10,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	api2 "github.com/rmrobinson/house/api"
 )
 
 func TestBuildMessagePlainText(t *testing.T) {
@@ -104,4 +109,96 @@ func TestBuildMessageHasDateAndMessageID(t *testing.T) {
 
 	assert.Regexp(t, `\r\nDate: \S.*\r\n`, msg, "a message missing Date is a strong spam signal to downstream filters")
 	assert.Regexp(t, `\r\nMessage-Id: <\S+@example\.com>\r\n`, msg, "a message missing Message-Id is a strong spam signal to downstream filters")
+}
+
+func parseMultipart(t *testing.T, raw []byte) (*mail.Message, *multipart.Reader) {
+	t.Helper()
+	m, err := mail.ReadMessage(bytes.NewReader(raw))
+	require.NoError(t, err)
+	mt, params, err := mime.ParseMediaType(m.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(mt, "multipart/"), mt)
+	return m, multipart.NewReader(m.Body, params["boundary"])
+}
+
+func TestBuildMessageNoAttachmentsIsUnchanged(t *testing.T) {
+	// The attachment-aware builder must be byte-identical for the common case apart from the volatile
+	// Date and Message-Id headers.
+	strip := func(b []byte) string {
+		var out []string
+		for _, l := range strings.Split(string(b), "\r\n") {
+			if strings.HasPrefix(l, "Date:") || strings.HasPrefix(l, "Message-Id:") {
+				continue
+			}
+			out = append(out, l)
+		}
+		return strings.Join(out, "\r\n")
+	}
+	a := buildMessage("house@example.com", "r@example.com", "s", "<b>hi</b>", "text/html")
+	b := buildMessageWithAttachments("house@example.com", "r@example.com", "s", "<b>hi</b>", "text/html", nil)
+	assert.Equal(t, strip(a), strip(b))
+}
+
+func TestBuildMessageWithInlineImage(t *testing.T) {
+	img := make([]byte, 1000)
+	for i := range img {
+		img[i] = byte(i)
+	}
+	body := "<html><body><img src=\"cid:cam1\">" + strings.Repeat("x", 2000) + "</body></html>"
+	raw := buildMessageWithAttachments("house@example.com", "r@example.com", "Motion", body, "text/html", []*api2.Attachment{
+		{Filename: "back\"yard.jpg", ContentType: "image/jpeg", Data: img, ContentId: "cam1"},
+		{Filename: "plain.txt", ContentType: "text/plain", Data: []byte("note")},
+	})
+
+	m, mr := parseMultipart(t, raw)
+	mt, _, _ := mime.ParseMediaType(m.Header.Get("Content-Type"))
+	assert.Equal(t, "multipart/related", mt)
+
+	for _, line := range strings.Split(string(raw), "\r\n") {
+		assert.LessOrEqual(t, len(line), 998)
+	}
+
+	p, err := mr.NextRawPart()
+	require.NoError(t, err)
+	assert.Equal(t, "quoted-printable", p.Header.Get("Content-Transfer-Encoding"))
+	text, err := io.ReadAll(quotedprintable.NewReader(p))
+	require.NoError(t, err)
+	assert.Equal(t, body, string(text))
+
+	p, err = mr.NextRawPart()
+	require.NoError(t, err)
+	assert.Equal(t, "<cam1>", p.Header.Get("Content-Id"))
+	assert.Contains(t, p.Header.Get("Content-Disposition"), "inline")
+	assert.NotContains(t, p.Header.Get("Content-Disposition"), "back\"yard")
+	enc, err := io.ReadAll(p)
+	require.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimRight(string(enc), "\r\n"), "\r\n") {
+		assert.LessOrEqual(t, len(line), 76)
+	}
+	dec, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(string(enc), "\r\n", ""))
+	require.NoError(t, err)
+	assert.Equal(t, img, dec)
+
+	p, err = mr.NextRawPart()
+	require.NoError(t, err)
+	assert.Empty(t, p.Header.Get("Content-Id"))
+	assert.Contains(t, p.Header.Get("Content-Disposition"), "attachment")
+
+	_, err = mr.NextRawPart()
+	assert.Equal(t, io.EOF, err)
+}
+
+func TestBuildMessagePlainTextWithAttachmentIsMixed(t *testing.T) {
+	raw := buildMessageWithAttachments("house@example.com", "r@example.com", "s", "hi", "text/plain",
+		[]*api2.Attachment{{ContentType: "image/jpeg", Data: []byte("x")}})
+	m, _ := parseMultipart(t, raw)
+	mt, _, _ := mime.ParseMediaType(m.Header.Get("Content-Type"))
+	assert.Equal(t, "multipart/mixed", mt)
+	assert.Contains(t, string(raw), `filename="attachment"`)
+}
+
+func TestBuildMessageAttachmentHeadersCannotInject(t *testing.T) {
+	raw := buildMessageWithAttachments("house@example.com", "r@example.com", "s", "hi", "text/html",
+		[]*api2.Attachment{{Filename: "a\r\nBcc: evil@example.com", ContentType: "image/jpeg", Data: []byte("x"), ContentId: "id\r\nBcc: evil@example.com"}})
+	assert.NotContains(t, string(raw), "\r\nBcc:")
 }
