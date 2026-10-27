@@ -24,6 +24,13 @@ viewerui:
   # host in the address), since tls.server_name names housed.
   metrics_addr: ""
   metrics_server_name: ""
+  # bcrypt hash of the PIN asked for before the viewer opens the garage door
+  # (OPEN, and the position-unknown TRIGGER; CLOSE never asks). Unset = those
+  # buttons are refused. Make one with: htpasswd -bnBC 10 "" 1234 | tr -d ':\n'
+  # Keep it in the sibling secrets file: door_pin_hash: !secret door_pin_hash
+  # After 5 wrong PINs in a row it locks for 30s, doubling each further miss
+  # (max 15m) - for everyone, since requests arrive via the reverse proxy.
+  door_pin_hash: ""
   # Optional: mutual TLS for every dial above - same shape as adminui.tls.
   tls:
     cert_file: ""

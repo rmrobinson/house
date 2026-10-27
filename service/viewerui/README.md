@@ -128,6 +128,33 @@ sensor), house power, and one power chart per EV charger, with the same 24h / 7d
   whose history can't be read shows "history unavailable" instead of a partial
   total.
 
+## Garage door PIN
+
+The viewer asks for a shared PIN before it opens the garage door: the `[ OPEN ]`
+button, and the `[ TRIGGER ]` button shown while the door's position is
+unknown (TRIGGER presses the opener's button whatever the door is doing, so it
+can open it too). `[ CLOSE ]` never asks.
+
+- **Config.** `viewerui.door_pin_hash` is a bcrypt hash, never the PIN
+  (`htpasswd -bnBC 10 "" 1234 | tr -d ':\n'`); put it in the sibling secrets
+  file with `!secret`. Unset, those buttons are refused with "no door PIN is
+  configured" and the startup log warns - it fails closed. A value that isn't a
+  bcrypt hash (a plain PIN pasted in by mistake) stops the service starting.
+- **Every time.** The PIN is sent with each request and nothing remembers it:
+  no session or cookie. It is sent over the viewer's connection, so this
+  assumes the viewer is served over TLS.
+- **Lockout.** 5 wrong PINs in a row lock the gate for 30s, doubling with each
+  further miss up to 15 minutes; a correct PIN resets it, and a locked gate
+  refuses even the right PIN. The lock is global, not per client - requests
+  arrive via the reverse proxy, so the client address isn't trustworthy - which
+  means anyone who can reach the viewer can lock the family out of OPEN for a
+  while. CLOSE and everything else keep working.
+- **Scope.** This guards the viewer only. policyd, `bridgecli`, or anything
+  else with a client certificate for the bridge facade can still send the door
+  commands directly; the bridge's mTLS is its trust boundary. Commands from the
+  viewer carry `origin: "viewerui"`, and accepted/refused attempts are logged
+  (never the PIN).
+
 ## Notes
 
 - **Hardening.** Every response carries `X-Frame-Options: DENY`/CSP

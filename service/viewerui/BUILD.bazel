@@ -9,6 +9,7 @@ go_library(
         "overview.go",
         "overview_metrics.go",
         "overview_trends.go",
+        "pin.go",
         "server.go",
         "sse.go",
         "templates.go",
@@ -47,6 +48,7 @@ go_library(
         "@org_golang_google_grpc//metadata",
         "@org_golang_google_protobuf//reflect/protoreflect",
         "@org_golang_google_protobuf//types/known/timestamppb",
+        "@org_golang_x_crypto//bcrypt",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -62,6 +64,7 @@ go_test(
     srcs = [
         "metrics_test.go",
         "overview_trends_test.go",
+        "pin_test.go",
         "server_test.go",
     ],
     embed = [":viewerui_lib"],
@@ -80,6 +83,7 @@ go_test(
         "@org_golang_google_grpc//status",
         "@org_golang_google_protobuf//proto",
         "@org_golang_google_protobuf//types/known/timestamppb",
+        "@org_golang_x_crypto//bcrypt",
         "@org_uber_go_zap//zaptest",
     ],
 )
