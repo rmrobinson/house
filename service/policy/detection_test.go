@@ -118,5 +118,6 @@ func TestNotifySendRejectsBadAttachments(t *testing.T) {
 	n := &fakeNotifyAPI{}
 	assert.Error(t, runWithHome(t, newFakeHomeAPI(), n, `notify.send({to={"r"}, attachments={{content_type="image/jpeg"}}})`))
 	assert.Error(t, runWithHome(t, newFakeHomeAPI(), n, `notify.send({to={"r"}, attachments={"nope"}})`))
+	assert.Error(t, runWithHome(t, newFakeHomeAPI(), n, `notify.send({to={"r"}, attachments="x"})`))
 	assert.Zero(t, n.callCount())
 }

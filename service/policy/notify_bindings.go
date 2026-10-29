@@ -53,12 +53,17 @@ func registerNotifyTable(L *lua.LState, n NotifyAPI) {
 			contentType := luaStringField(L, tbl, "content_type")
 
 			msg := NotifyMessage{Subject: subject, Body: body, ContentType: contentType}
-			if attTbl, ok := L.GetField(tbl, "attachments").(*lua.LTable); ok {
+			switch att := L.GetField(tbl, "attachments").(type) {
+			case *lua.LNilType:
+			case *lua.LTable:
 				var err error
-				if msg.Attachments, err = luaAttachments(attTbl); err != nil {
+				if msg.Attachments, err = luaAttachments(att); err != nil {
 					raiseBindingError(L, fmt.Errorf("notify.send: %w", err))
 					return 0
 				}
+			default:
+				raiseBindingError(L, fmt.Errorf(`notify.send: "attachments" must be a table`))
+				return 0
 			}
 
 			if err := n.Send(recipientIDs, msg); err != nil {

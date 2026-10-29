@@ -29,8 +29,9 @@ const (
 	// wsEventsTopic carries tracked-object lifecycle events (new, update, end).
 	wsEventsTopic = "events"
 
-	// maxImageBytes caps an image response; a 720p JPEG is ~25 KB, so this is generous.
-	maxImageBytes = 8 << 20
+	// maxImageBytes caps an image response; a 720p JPEG is ~25 KB. Kept under gRPC's default 4 MB message
+	// limit so an oversized image fails here with a clear error rather than as ResourceExhausted upstream.
+	maxImageBytes = 3 << 20
 
 	// wsReadTimeout bounds how long the websocket may stay silent before it's considered dead. Frigate
 	// publishes its stats topic every mqtt.stats_interval (60s by default), so a healthy connection is
@@ -404,21 +405,19 @@ func parseEvent(raw json.RawMessage) (Event, error) {
 }
 
 // LatestFrame fetches the camera's most recent frame as a JPEG, scaled to height pixels if height > 0.
+// (Frigate's parameter is "height"; the "h" alias is silently ignored.)
 func (c *Client) LatestFrame(ctx context.Context, camera string, height int) ([]byte, error) {
 	q := url.Values{}
 	if height > 0 {
-		q.Set("h", strconv.Itoa(height))
+		q.Set("height", strconv.Itoa(height))
 	}
 	return c.imageRequest(ctx, "/api/"+url.PathEscape(camera)+"/latest.jpg", q)
 }
 
-// EventSnapshot fetches the best captured frame of an event as a JPEG, scaled to height pixels if height > 0.
-func (c *Client) EventSnapshot(ctx context.Context, eventID string, height int) ([]byte, error) {
-	q := url.Values{}
-	if height > 0 {
-		q.Set("h", strconv.Itoa(height))
-	}
-	return c.imageRequest(ctx, "/api/events/"+url.PathEscape(eventID)+"/snapshot.jpg", q)
+// EventSnapshot fetches the best captured frame of an event as a JPEG at the size Frigate stored it: the
+// snapshot endpoint (checked against 0.16) does not scale, so there is no height parameter.
+func (c *Client) EventSnapshot(ctx context.Context, eventID string) ([]byte, error) {
+	return c.imageRequest(ctx, "/api/events/"+url.PathEscape(eventID)+"/snapshot.jpg", nil)
 }
 
 func (c *Client) imageRequest(ctx context.Context, path string, q url.Values) ([]byte, error) {

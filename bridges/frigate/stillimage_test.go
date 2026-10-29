@@ -227,7 +227,7 @@ func TestGetStillImagePrefersEventSnapshot(t *testing.T) {
 	assert.Equal(t, "ev1", resp.GetEventId())
 	assert.Equal(t, "image/jpeg", resp.GetContentType())
 	assert.Equal(t, "snap/api/events/ev1/snapshot.jpg", string(resp.GetData()))
-	assert.Contains(t, imgs.hits, "/api/events/ev1/snapshot.jpg?h=720")
+	assert.Contains(t, imgs.hits, "/api/events/ev1/snapshot.jpg")
 }
 
 func TestGetStillImageWaitsForSnapshot(t *testing.T) {
@@ -313,4 +313,22 @@ func TestGetStillImageByEventIDAndErrors(t *testing.T) {
 	imgs.badType.Store(true)
 	_, err = fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestFalsePositiveEndDropsItsPicture(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	imgs.snapshots["/api/events/ev1/snapshot.jpg"] = true
+	fb.handleEvent(personEvent("new", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true }))
+	fb.handleEvent(personEvent("end", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true; o.FalsePositive = true }))
+
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, trait.StillImage_LATEST_FRAME, resp.GetSource(), "a false positive's snapshot must not be served")
+}
+
+func TestLatestFrameUsesHeightParameter(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	_, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid", MaxHeight: 720, PreferredSource: trait.StillImage_LATEST_FRAME})
+	require.NoError(t, err)
+	assert.Contains(t, imgs.hits, "/api/garage_camera/latest.jpg?height=720")
 }

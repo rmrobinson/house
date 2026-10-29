@@ -133,8 +133,17 @@ func writeBase64Wrapped(w io.Writer, data []byte) {
 
 // attachmentFilename makes a display name safe to place in a quoted MIME header parameter.
 func attachmentFilename(name string) string {
-	name = strings.NewReplacer("\r", "", "\n", "", "\"", "", "\\", "").Replace(name)
-	if name == "" {
+	name = strings.Map(func(r rune) rune {
+		switch {
+		case r == '"' || r == '\\' || r < 0x20 || r == 0x7f:
+			return -1
+		case r > 0x7e:
+			// Raw non-ASCII in a header parameter is not portable across mail clients.
+			return '_'
+		}
+		return r
+	}, name)
+	if strings.TrimSpace(name) == "" {
 		return "attachment"
 	}
 	return name

@@ -101,8 +101,9 @@ func (s *Service) SendMessage(ctx context.Context, req *api2.SendMessageRequest)
 }
 
 const (
-	// MaxAttachmentBytes caps the total size of the data in one request's attachments.
-	MaxAttachmentBytes = 8 << 20
+	// MaxAttachmentBytes caps the total size of the data in one request's attachments. base64 inflates it by a
+	// third, and relays commonly refuse messages over ~10 MB, so this keeps the whole message under that.
+	MaxAttachmentBytes = 5 << 20
 	// MaxRequestBytes is the largest SendMessage request a server should accept: the attachment cap plus
 	// room for the subject and body. gRPC's default of 4 MB would reject a request the cap allows.
 	MaxRequestBytes = MaxAttachmentBytes + 2<<20

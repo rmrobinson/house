@@ -68,8 +68,16 @@ func (fb *FrigateBridge) handleEvent(e frigate.Event) {
 			camera.Visible = slices.Delete(camera.Visible, idx, idx+1)
 			changed = true
 		}
-		if last := fb.last[o.Camera]; last != nil && last.id == o.ID && last.ended.IsZero() {
-			last.ended = fb.now()
+		if last := fb.last[o.Camera]; last != nil && last.id == o.ID {
+			if e.Type == "end" && fb.qualifies(o) {
+				// A real detection that finished: keep its picture fetchable for the retention window.
+				if last.ended.IsZero() {
+					last.ended = fb.now()
+				}
+			} else {
+				// Judged false or stationary: its picture must not be served as "the person".
+				delete(fb.last, o.Camera)
+			}
 		}
 		if changed {
 			fb.publish(camera)
@@ -156,7 +164,7 @@ func (fb *FrigateBridge) GetStillImage(ctx context.Context, req *api2.GetStillIm
 	height := int(req.GetMaxHeight())
 
 	if id := req.GetEventId(); id != "" {
-		data, err := fb.client.EventSnapshot(ctx, id, height)
+		data, err := fb.client.EventSnapshot(ctx, id)
 		if err != nil {
 			fb.logger.Warn("unable to fetch event snapshot", zap.String("event_id", id), zap.Error(err))
 			return nil, status.Error(codes.Unavailable, "unable to fetch the event snapshot")
@@ -166,7 +174,7 @@ func (fb *FrigateBridge) GetStillImage(ctx context.Context, req *api2.GetStillIm
 
 	if req.GetPreferredSource() != trait.StillImage_LATEST_FRAME {
 		if id, ok := fb.waitForSnapshot(ctx, camera.Name); ok {
-			data, err := fb.client.EventSnapshot(ctx, id, height)
+			data, err := fb.client.EventSnapshot(ctx, id)
 			if err == nil {
 				return stillResponse(data, trait.StillImage_EVENT_SNAPSHOT, id), nil
 			}

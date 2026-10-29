@@ -197,6 +197,12 @@ func TestBuildMessagePlainTextWithAttachmentIsMixed(t *testing.T) {
 	assert.Contains(t, string(raw), `filename="attachment"`)
 }
 
+func TestAttachmentFilenameIsASCIISafe(t *testing.T) {
+	assert.Equal(t, "back_yard.jpg", attachmentFilename("back\u00e9yard.jpg"))
+	assert.Equal(t, "attachment", attachmentFilename("\r\n"))
+	assert.Equal(t, "ab.jpg", attachmentFilename("a\"b\\.jpg"))
+}
+
 func TestBuildMessageAttachmentHeadersCannotInject(t *testing.T) {
 	raw := buildMessageWithAttachments("house@example.com", "r@example.com", "s", "hi", "text/html",
 		[]*api2.Attachment{{Filename: "a\r\nBcc: evil@example.com", ContentType: "image/jpeg", Data: []byte("x"), ContentId: "id\r\nBcc: evil@example.com"}})
