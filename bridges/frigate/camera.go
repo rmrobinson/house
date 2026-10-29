@@ -26,6 +26,39 @@ type Camera struct {
 	MotionDetected    bool
 	OccupancyDetected bool
 	LastActivity      time.Time
+
+	// DetectionLabels are the object labels this camera reports in Detection, and Visible the qualifying
+	// objects (moving, not judged false) Frigate is currently tracking on it.
+	DetectionLabels []string
+	Visible         []DetectedObject
+}
+
+// DetectedObject is one qualifying tracked object on a camera.
+type DetectedObject struct {
+	Label         string
+	Score         float64
+	EventID       string
+	FirstSeen     time.Time
+	HasStillImage bool
+	Zones         []string
+	SubLabel      string
+	SubLabelScore float64
+}
+
+func (o DetectedObject) toProto() *trait.Detection_Object {
+	obj := &trait.Detection_Object{
+		Label:         o.Label,
+		Score:         float32(o.Score),
+		EventId:       o.EventID,
+		HasStillImage: o.HasStillImage,
+		Zones:         append([]string(nil), o.Zones...),
+		SubLabel:      o.SubLabel,
+		SubLabelScore: float32(o.SubLabelScore),
+	}
+	if !o.FirstSeen.IsZero() {
+		obj.FirstSeen = timestamppb.New(o.FirstSeen)
+	}
+	return obj
 }
 
 func (c *Camera) ToDevice() *device.Device {
@@ -41,6 +74,41 @@ func (c *Camera) ToDevice() *device.Device {
 		Url:      c.Endpoint.String(),
 	})
 
+	visible := make([]*trait.Detection_Object, 0, len(c.Visible))
+	for _, o := range c.Visible {
+		visible = append(visible, o.toProto())
+	}
+
+	cam := &device.Camera{
+		MediaStream: &trait.MediaStream{
+			State: &trait.MediaStream_State{
+				Url:       c.Endpoint.String(),
+				Endpoints: endpoints,
+			},
+		},
+		Presence: &trait.Presence{
+			State: &trait.Presence_State{
+				MotionDetected:    c.MotionDetected,
+				OccupancyDetected: proto.Bool(c.OccupancyDetected),
+			},
+		},
+	}
+	if c.Enabled {
+		cam.StillImage = &trait.StillImage{
+			Attributes: &trait.StillImage_Attributes{
+				ContentTypes: []string{"image/jpeg"},
+				SupportedSources: []trait.StillImage_Source{
+					trait.StillImage_EVENT_SNAPSHOT,
+					trait.StillImage_LATEST_FRAME,
+				},
+			},
+		}
+		cam.Detection = &trait.Detection{
+			Attributes: &trait.Detection_Attributes{Labels: c.DetectionLabels},
+			State:      &trait.Detection_State{Visible: visible},
+		}
+	}
+
 	return &device.Device{
 		Id:           c.ID,
 		ModelId:      c.ModelID,
@@ -51,21 +119,6 @@ func (c *Camera) ToDevice() *device.Device {
 			Address:     c.Endpoint.String(),
 			IsReachable: c.Active,
 		},
-		Details: &device.Device_Camera{
-			Camera: &device.Camera{
-				MediaStream: &trait.MediaStream{
-					State: &trait.MediaStream_State{
-						Url:       c.Endpoint.String(),
-						Endpoints: endpoints,
-					},
-				},
-				Presence: &trait.Presence{
-					State: &trait.Presence_State{
-						MotionDetected:    c.MotionDetected,
-						OccupancyDetected: proto.Bool(c.OccupancyDetected),
-					},
-				},
-			},
-		},
+		Details: &device.Device_Camera{Camera: cam},
 	}
 }

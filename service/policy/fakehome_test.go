@@ -26,6 +26,10 @@ type fakeHomeAPI struct {
 	lastSeen    map[string]time.Time
 	unreachable map[string]bool
 
+	detections map[string][]Detection
+	stills     map[string]*StillImage
+	stillErr   error
+
 	sensorErr error
 	roomErr   error
 
@@ -202,4 +206,31 @@ func (f *fakeHomeAPI) notifyCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.notifications)
+}
+
+func (f *fakeHomeAPI) GetDetections(id string) ([]Detection, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Detection(nil), f.detections[id]...), nil
+}
+
+func (f *fakeHomeAPI) setDetections(id string, d ...Detection) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.detections == nil {
+		f.detections = map[string][]Detection{}
+	}
+	f.detections[id] = d
+}
+
+func (f *fakeHomeAPI) GetStillImage(id string, maxHeight int) (*StillImage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stillErr != nil {
+		return nil, f.stillErr
+	}
+	if img, ok := f.stills[id]; ok {
+		return img, nil
+	}
+	return nil, ErrNotImplemented
 }

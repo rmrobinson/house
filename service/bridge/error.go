@@ -32,6 +32,9 @@ var (
 	// ErrHistoryNotSupported is returned by GetDeviceHistory when the bridge's handler
 	// doesn't implement HistoryHandler.
 	ErrHistoryNotSupported = status.Error(codes.Unimplemented, "bridge does not support device history")
+	// ErrStillImageNotSupported is returned by GetStillImage when the bridge's handler
+	// doesn't implement StillImageHandler.
+	ErrStillImageNotSupported = status.Error(codes.Unimplemented, "bridge does not support still images")
 	// ErrStreamFellBehind ends a StreamUpdates stream whose client stopped keeping up with
 	// updates (see Source.SendMessage). The client should reconnect to resync from a fresh
 	// initial snapshot.

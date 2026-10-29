@@ -89,6 +89,7 @@ func main() {
 		logger.Fatal("error listening", zap.Error(err), zap.Int("port", listenPort))
 	}
 
+	opts = append(opts, grpc.MaxRecvMsgSize(notification.MaxRequestBytes))
 	grpcServer := grpc.NewServer(opts...)
 	api2.RegisterNotificationServiceServer(grpcServer, notification.NewService(logger, directory, senders))
 

@@ -12,6 +12,7 @@ go_library(
         "mute.go",
         "onoff.go",
         "playmedia.go",
+        "stillimage.go",
         "temperature.go",
         "thermostatmode.go",
         "time.go",

@@ -80,6 +80,8 @@ func main() {
 
 	fb.SetOccupancyLabels(viper.GetStringSlice("frigate.occupancy_labels"))
 
+	fb.SetStillImageTiming(viper.GetDuration("frigate.still_image_retention"), viper.GetDuration("frigate.still_image_wait"))
+
 	var cameraConfigs []CameraConfig
 	if err := viper.UnmarshalKey("frigate.cameras", &cameraConfigs); err != nil {
 		logger.Fatal("unable to parse 'cameras' key from config")

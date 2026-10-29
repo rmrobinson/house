@@ -72,6 +72,14 @@ type HomeAPI interface {
 	// signal isn't evidence of a connectivity problem.
 	IsReachable(id string) (bool, error)
 
+	// GetDetections returns the objects id's Detection trait currently reports as visible; empty (no
+	// error) if it reports none. A device without the trait is an error.
+	GetDetections(id string) ([]Detection, error)
+	// GetStillImage fetches one picture from id's StillImage trait, scaled to at most maxHeight pixels
+	// (0 for native size). It prefers the picture of the device's latest detection and says in
+	// StillImage.Source what it returned.
+	GetStillImage(id string, maxHeight int) (*StillImage, error)
+
 	// House state
 	GetHouseState(key string) (any, error)
 	SetHouseState(key string, value any) error
@@ -398,6 +406,35 @@ func registerHomeTable(L *lua.LState, api HomeAPI, devicesOfKind func(kind strin
 				return 0
 			}
 			L.Push(goToLua(L, v))
+			return 1
+		},
+		"getDetections": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			detections, err := api.GetDetections(id)
+			if err != nil {
+				fail(L, err, "home.getDetections(%q)", id)
+				return 0
+			}
+			tbl := L.NewTable()
+			for _, d := range detections {
+				tbl.Append(detectionToLua(L, d))
+			}
+			L.Push(tbl)
+			return 1
+		},
+		"stillImage": func(L *lua.LState) int {
+			id := L.CheckString(1)
+			maxHeight, err := stillImageMaxHeight(L, L.OptTable(2, nil))
+			if err != nil {
+				L.ArgError(2, err.Error())
+				return 0
+			}
+			img, err := api.GetStillImage(id, maxHeight)
+			if err != nil {
+				fail(L, err, "home.stillImage(%q)", id)
+				return 0
+			}
+			L.Push(stillImageToLua(L, img))
 			return 1
 		},
 		"findDevices": func(L *lua.LState) int {

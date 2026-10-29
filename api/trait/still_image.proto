@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// StillImage marks a device that can produce a single still picture on demand
+// (a camera frame, an event snapshot). The image itself is NOT device state -
+// it is fetched with the BridgeService.GetStillImage RPC - so this trait has
+// no State and a read-only device carries only Attributes.
+message StillImage {
+  // Source says where a picture came from, or which one a caller prefers.
+  enum Source {
+    SOURCE_UNSPECIFIED = 0;
+    // The most recent frame the device has.
+    LATEST_FRAME = 1;
+    // The best frame the device captured for a detection event.
+    EVENT_SNAPSHOT = 2;
+  }
+
+  message Attributes {
+    // MIME types the device can return, e.g. "image/jpeg".
+    repeated string content_types = 1;
+    // Largest image the device can return, in pixels; 0 means unknown.
+    int32 max_width = 2;
+    int32 max_height = 3;
+    repeated Source supported_sources = 4;
+  }
+
+  Attributes attributes = 1;
+}

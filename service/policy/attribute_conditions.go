@@ -177,6 +177,7 @@ func RegisterBuiltinConditionTypes(e *Engine) {
 	})
 
 	registerDeviceConditionTypes(e)
+	registerDetectionConditionTypes(e)
 }
 
 // toFloat64 coerces a HomeAPI.GetState result into a float64 for

@@ -45,6 +45,7 @@ go_test(
         "pump_test.go",
         "service_test.go",
         "source_test.go",
+        "still_image_test.go",
     ],
     embed = [":bridge"],
     deps = [

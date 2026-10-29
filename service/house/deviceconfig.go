@@ -178,6 +178,11 @@ func (o *DeviceConfigOverlay) GetDeviceHistory(req *api2.GetDeviceHistoryRequest
 	return o.inner.GetDeviceHistory(req, stream)
 }
 
+// GetStillImage relays inner's picture untouched.
+func (o *DeviceConfigOverlay) GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error) {
+	return o.inner.GetStillImage(ctx, req)
+}
+
 // StreamUpdates relays inner's stream through overlayUpdateStream, which
 // overlays each outgoing Update's device(s) before it reaches the real
 // client - a live rename (UpdateDeviceConfig) is then visible on the very

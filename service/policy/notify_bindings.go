@@ -52,10 +52,62 @@ func registerNotifyTable(L *lua.LState, n NotifyAPI) {
 			body := luaStringField(L, tbl, "body")
 			contentType := luaStringField(L, tbl, "content_type")
 
-			if err := n.Send(recipientIDs, subject, body, contentType); err != nil {
+			msg := NotifyMessage{Subject: subject, Body: body, ContentType: contentType}
+			switch att := L.GetField(tbl, "attachments").(type) {
+			case *lua.LNilType:
+			case *lua.LTable:
+				var err error
+				if msg.Attachments, err = luaAttachments(att); err != nil {
+					raiseBindingError(L, fmt.Errorf("notify.send: %w", err))
+					return 0
+				}
+			default:
+				raiseBindingError(L, fmt.Errorf(`notify.send: "attachments" must be a table`))
+				return 0
+			}
+
+			if err := n.Send(recipientIDs, msg); err != nil {
 				raiseBindingError(L, fmt.Errorf("notify.send: %w", err))
 			}
 			return 0
 		},
 	})
+}
+
+// luaAttachments reads notify.send's "attachments" list: a table of {filename, content_type, data, cid}
+// tables. data and content_type are required.
+func luaAttachments(list *lua.LTable) ([]NotifyAttachment, error) {
+	var out []NotifyAttachment
+	var err error
+	list.ForEach(func(k, v lua.LValue) {
+		if err != nil {
+			return
+		}
+		t, ok := v.(*lua.LTable)
+		if !ok {
+			err = fmt.Errorf("attachments[%v] must be a table", k)
+			return
+		}
+		a := NotifyAttachment{
+			Filename:    stringField(t, "filename"),
+			ContentType: stringField(t, "content_type"),
+			Data:        []byte(stringField(t, "data")),
+			ContentID:   cidSafe(stringField(t, "cid")),
+		}
+		if len(a.Data) == 0 || a.ContentType == "" {
+			err = fmt.Errorf("attachments[%v] needs non-empty data and a content_type", k)
+			return
+		}
+		out = append(out, a)
+	})
+	return out, err
+}
+
+// stringField is luaStringField for callers with no LState at hand.
+func stringField(t *lua.LTable, field string) string {
+	s, ok := t.RawGetString(field).(lua.LString)
+	if !ok {
+		return ""
+	}
+	return string(s)
 }

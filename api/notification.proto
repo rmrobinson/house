@@ -18,6 +18,25 @@ message SendMessageRequest {
   // MIME type of body, e.g. "text/plain" or "text/html". Empty means
   // "text/plain".
   string content_type = 4;
+  // Files to send with the message. The total size of all data is capped
+  // (see service/notification); channels that can't carry attachments
+  // deliver the message without them.
+  repeated Attachment attachments = 5;
+}
+
+// Attachment is a file delivered with a message. An attachment with a
+// content_id can be referenced from an HTML body as <img src="cid:...">,
+// and is shown inline there; others arrive as ordinary attachments.
+message Attachment {
+  // Display name, e.g. "back-yard.jpg".
+  string filename = 1;
+  // MIME type of data, e.g. "image/jpeg". Required.
+  string content_type = 2;
+  // The file's bytes. Required, and must not be empty.
+  bytes data = 3;
+  // Optional Content-ID (without angle brackets) HTML bodies refer to with a
+  // cid: URL. Must be unique within a request.
+  string content_id = 4;
 }
 
 message SendMessageResponse {

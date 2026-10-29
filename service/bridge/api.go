@@ -379,6 +379,39 @@ func (a *API) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2.Br
 	return nil
 }
 
+// GetStillImage returns a picture from the handler's StillImageHandler implementation.
+func (a *API) GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error) {
+	if a.svc.bridge == nil {
+		return nil, ErrBridgeNotReady
+	}
+	if req.GetMaxHeight() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "max_height must not be negative")
+	}
+
+	d := a.svc.getDevice(req.GetDeviceId())
+	if d == nil {
+		a.logger.Debug("still image requested for unknown device", zap.String("device_id", req.GetDeviceId()))
+		return nil, ErrDeviceNotFound
+	}
+	if d.GetCamera().GetStillImage() == nil {
+		return nil, status.Error(codes.FailedPrecondition, "device does not have the still image trait")
+	}
+	sh, ok := a.svc.handler.(StillImageHandler)
+	if !ok {
+		return nil, ErrStillImageNotSupported
+	}
+
+	resp, err := sh.GetStillImage(ctx, req)
+	if err != nil {
+		if _, ok := status.FromError(err); !ok {
+			a.logger.Info("received a non-gRPC status error when fetching a still image. rewriting to internal", zap.Error(err))
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		return nil, err
+	}
+	return resp, nil
+}
+
 func (a *API) StreamUpdates(req *api2.StreamUpdatesRequest, stream api2.BridgeService_StreamUpdatesServer) error {
 	peer, ok := peer.FromContext(stream.Context())
 	addr := "unknown"

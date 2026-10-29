@@ -9,6 +9,7 @@ import "google/rpc/status.proto";
 
 import "api/command/command.proto";
 import "api/device/device.proto";
+import "api/trait/still_image.proto";
 
 message Address {
   message Ip {
@@ -165,6 +166,32 @@ message HistorySample {
   faltung.house.api.device.Device snapshot = 2;
 }
 
+// GetStillImageRequest asks a bridge for one picture from a device carrying
+// the StillImage trait; others return UNIMPLEMENTED.
+message GetStillImageRequest {
+  string device_id = 1;
+  // Scale the picture down to at most this height (aspect ratio kept). 0
+  // means the device's native size.
+  int32 max_height = 2;
+  // Preferred source. The bridge falls back to another one if it can't
+  // satisfy this; the response says which it used.
+  faltung.house.api.trait.StillImage.Source preferred_source = 3;
+  // Optional: a Detection.Object.event_id to fetch the picture of. Unset
+  // means the device's most recent qualifying detection, if any.
+  string event_id = 4;
+}
+
+message GetStillImageResponse {
+  bytes data = 1;
+  // MIME type of data, e.g. "image/jpeg".
+  string content_type = 2;
+  // When the picture was captured, if the device says; otherwise when it was fetched.
+  google.protobuf.Timestamp captured_at = 3;
+  faltung.house.api.trait.StillImage.Source source = 4;
+  // The detection event the picture shows, when source is EVENT_SNAPSHOT.
+  string event_id = 5;
+}
+
 message ExecuteCommandAsyncResponse {
 }
 
@@ -216,6 +243,11 @@ service BridgeService {
 
   // GetDeviceHistory streams a device's recorded samples, oldest first.
   rpc GetDeviceHistory(GetDeviceHistoryRequest) returns (stream HistorySample) {}
+
+  // GetStillImage returns one picture from a device with the StillImage trait.
+  // Pictures are fetched on demand rather than carried in device state so they
+  // never fan out to every StreamUpdates subscriber.
+  rpc GetStillImage(GetStillImageRequest) returns (GetStillImageResponse) {}
 
   rpc StreamUpdates(StreamUpdatesRequest) returns (stream Update) {}
 }

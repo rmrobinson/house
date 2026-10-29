@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +26,12 @@ const (
 	wsOnConnectTopic = "onConnect"
 	// wsActivityTopic carries every camera's current motion and tracked objects.
 	wsActivityTopic = "camera_activity"
+	// wsEventsTopic carries tracked-object lifecycle events (new, update, end).
+	wsEventsTopic = "events"
+
+	// maxImageBytes caps an image response; a 720p JPEG is ~25 KB. Kept under gRPC's default 4 MB message
+	// limit so an oversized image fails here with a clear error rather than as ResourceExhausted upstream.
+	maxImageBytes = 3 << 20
 
 	// wsReadTimeout bounds how long the websocket may stay silent before it's considered dead. Frigate
 	// publishes its stats topic every mqtt.stats_interval (60s by default), so a healthy connection is
@@ -187,6 +194,50 @@ type ActivityObject struct {
 	Stationary bool   `json:"stationary"`
 }
 
+// Event is one tracked-object event from Frigate's "events" topic, reduced to the fields this bridge uses.
+type Event struct {
+	// Type is "new", "update" or "end".
+	Type string
+	// After is the object's state once this event applied.
+	After EventObject
+}
+
+// EventObject is a tracked object as Frigate reports it in an event. This is only a partial definition.
+type EventObject struct {
+	ID            string   `json:"id"`
+	Camera        string   `json:"camera"`
+	Label         string   `json:"label"`
+	SubLabel      any      `json:"sub_label"`
+	Score         float64  `json:"score"`
+	TopScore      float64  `json:"top_score"`
+	StartTime     float64  `json:"start_time"`
+	HasSnapshot   bool     `json:"has_snapshot"`
+	Stationary    bool     `json:"stationary"`
+	Active        bool     `json:"active"`
+	FalsePositive bool     `json:"false_positive"`
+	CurrentZones  []string `json:"current_zones"`
+}
+
+// SubLabelName returns the recognised identity and its score. Frigate reports sub_label as null, a string
+// or a [name, score] pair depending on version and source.
+func (o EventObject) SubLabelName() (string, float64) {
+	switch v := o.SubLabel.(type) {
+	case string:
+		return v, 0
+	case []any:
+		if len(v) == 0 {
+			return "", 0
+		}
+		name, _ := v[0].(string)
+		var score float64
+		if len(v) > 1 {
+			score, _ = v[1].(float64)
+		}
+		return name, score
+	}
+	return "", 0
+}
+
 // FeedHandlers receives the updates StreamFeed extracts from Frigate's websocket feed. Either may be nil.
 type FeedHandlers struct {
 	// OnMotion is called when a camera's raw pixel-motion state changes. That signal also fires on
@@ -205,6 +256,9 @@ type FeedHandlers struct {
 	// Frigate's "<camera>/<label>/active" topics. "Active" excludes objects Frigate has judged
 	// stationary (a parked car, someone sitting still).
 	OnActiveCount func(camera, label string, count int)
+
+	// OnEvent is called for each tracked-object event Frigate publishes.
+	OnEvent func(e Event)
 }
 
 // StreamFeed connects to Frigate's websocket feed and dispatches its motion and active-object updates to h
@@ -265,6 +319,18 @@ func (c *Client) StreamFeed(ctx context.Context, h FeedHandlers) error {
 			continue
 		}
 
+		if msg.Topic == wsEventsTopic {
+			e, err := parseEvent(msg.Payload)
+			if err != nil {
+				c.logger.Warn("unparseable event", zap.Error(err))
+				continue
+			}
+			if h.OnEvent != nil {
+				h.OnEvent(e)
+			}
+			continue
+		}
+
 		parts := strings.Split(msg.Topic, "/")
 		switch {
 		case len(parts) == 2 && parts[1] == "motion":
@@ -319,4 +385,69 @@ func parseActivity(raw json.RawMessage) (map[string]CameraActivity, error) {
 		return nil, err
 	}
 	return cameras, nil
+}
+
+// parseEvent decodes an events payload, which like camera_activity may be wrapped in a JSON string.
+func parseEvent(raw json.RawMessage) (Event, error) {
+	var wrapped string
+	if err := json.Unmarshal(raw, &wrapped); err == nil {
+		raw = json.RawMessage(wrapped)
+	}
+
+	var e struct {
+		Type  string      `json:"type"`
+		After EventObject `json:"after"`
+	}
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return Event{}, err
+	}
+	return Event{Type: e.Type, After: e.After}, nil
+}
+
+// LatestFrame fetches the camera's most recent frame as a JPEG, scaled to height pixels if height > 0.
+// (Frigate's parameter is "height"; the "h" alias is silently ignored.)
+func (c *Client) LatestFrame(ctx context.Context, camera string, height int) ([]byte, error) {
+	q := url.Values{}
+	if height > 0 {
+		q.Set("height", strconv.Itoa(height))
+	}
+	return c.imageRequest(ctx, "/api/"+url.PathEscape(camera)+"/latest.jpg", q)
+}
+
+// EventSnapshot fetches the best captured frame of an event as a JPEG at the size Frigate stored it: the
+// snapshot endpoint (checked against 0.16) does not scale, so there is no height parameter.
+func (c *Client) EventSnapshot(ctx context.Context, eventID string) ([]byte, error) {
+	return c.imageRequest(ctx, "/api/events/"+url.PathEscape(eventID)+"/snapshot.jpg", nil)
+}
+
+func (c *Client) imageRequest(ctx context.Context, path string, q url.Values) ([]byte, error) {
+	u := url.URL{Scheme: c.apiEndpoint.Scheme, Host: c.apiEndpoint.Host, Path: path, RawQuery: q.Encode()}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("frigate returned status %d for %s", resp.StatusCode, path)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		return nil, fmt.Errorf("frigate returned content type %q for %s, want image/jpeg", ct, path)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxImageBytes {
+		return nil, fmt.Errorf("image from %s exceeds %d bytes", path, maxImageBytes)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty image from %s", path)
+	}
+	return data, nil
 }

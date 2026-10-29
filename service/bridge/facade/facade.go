@@ -300,6 +300,16 @@ func (f *Facade) GetDeviceHistory(req *api2.GetDeviceHistoryRequest, stream api2
 	}
 }
 
+// GetStillImage forwards req, unchanged, to the bridge that owns req.DeviceId
+// and returns its picture.
+func (f *Facade) GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error) {
+	client, _, err := f.upstreamClientFor(req.GetDeviceId())
+	if err != nil {
+		return nil, err
+	}
+	return client.GetStillImage(ctx, req)
+}
+
 // StreamUpdates never forwards a raw upstream InitialUpdate: a downstream
 // client connecting to the facade has no visibility into when each upstream
 // bridge last reconnected, so replaying one verbatim would be ambiguous. It
