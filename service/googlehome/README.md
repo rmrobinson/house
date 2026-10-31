@@ -48,11 +48,18 @@ belong in this repo (see `AGENTS.md`'s "No deployment-specific addressing"):
 
 - Register a Smart Home Action project in the Google Actions console,
   pointing its fulfillment URL at wherever `googlehomed` ends up publicly
-  reachable (`https://<your-public-host>/fulfillment`), and configure its
-  OAuth2 account-linking authorization/token endpoints to always issue the
-  same shared-secret token `googlehomed`'s config holds - see
+  reachable (`https://<your-public-host>/fulfillment`). `googlehomed`
+  itself now serves the account-linking OAuth2 endpoints (`oauth.go`'s
+  `/oauth/authorize` and `/oauth/token` - every grant they issue just
+  hands back the one static `auth_token`, see
   `cmd/googlehomed/auth.go`'s `staticTokenValidator` doc comment for why a
-  single-user deployment doesn't need a real OAuth2 server.
+  single-user deployment doesn't need a real multi-user OAuth2 server
+  behind them) - paste `googlehome.oauth.client_id`/`client_secret` into
+  the console's "OAuth Client Information" section along with
+  `https://<your-public-host>/oauth/authorize` and `/oauth/token` as the
+  Authorization/Token URLs, and copy the console's own
+  `redirect_uri` (`oauth-redirect[-sandbox].googleusercontent.com/r/<project-id>`)
+  back into `googlehome.oauth.redirect_uri`.
 - Create a Google service account with HomeGraph API access under that same
   project, and point `googlehome.homegraph.creds_file` at its key.
 - Put `googlehomed` behind a reverse proxy (Caddy, with ACME) for the

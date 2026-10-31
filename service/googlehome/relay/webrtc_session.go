@@ -226,11 +226,15 @@ func (w *WebRTCSessionManager) resetIdleTimer(sessionID string, sess *webrtcSess
 // teardown removes sessionID from this manager and invokes onTeardown
 // exactly once - safe to call more than once for the same session_id
 // (e.g. an "end" POST racing an ICE failure callback): only the first call
-// finds anything to do, every later one is a no-op. If sessionID still
-// names HandleOffer's placeholder (pc nil - negotiation hasn't produced a
-// real PeerConnection yet), there's nothing to close; removing the map
-// entry is enough on its own to make HandleOffer notice and back out (see
-// its "stillClaimed" check).
+// finds anything to do, every later one is a no-op. onTeardown always
+// runs if sessionID was found, even if it still only names HandleOffer's
+// placeholder (pc nil - negotiation hasn't produced a real PeerConnection
+// yet): onTeardown is what expires the SessionManager token and tells the
+// agent to stop pulling WHEP, neither of which HandleOffer's own
+// "stillClaimed" check (which only reacts to the map entry disappearing)
+// does on its own - skipping onTeardown here would leave both the token
+// and the agent's WHEP pull/PushMediaSession stream running indefinitely
+// for an end/failure that arrived before an offer ever did.
 func (w *WebRTCSessionManager) teardown(sessionID, reason string) {
 	w.mu.Lock()
 	sess, ok := w.sessions[sessionID]
@@ -238,19 +242,21 @@ func (w *WebRTCSessionManager) teardown(sessionID, reason string) {
 		delete(w.sessions, sessionID)
 	}
 	w.mu.Unlock()
-	if !ok || sess.pc == nil {
+	if !ok {
 		return
 	}
 
-	sess.mu.Lock()
-	if sess.idleTimer != nil {
-		sess.idleTimer.Stop()
-	}
-	sess.mu.Unlock()
+	if sess.pc != nil {
+		sess.mu.Lock()
+		if sess.idleTimer != nil {
+			sess.idleTimer.Stop()
+		}
+		sess.mu.Unlock()
 
-	if reason != "" {
-		w.logger.Info("tearing down media session", zap.String("session_id", sessionID), zap.String("reason", reason))
+		if reason != "" {
+			w.logger.Info("tearing down media session", zap.String("session_id", sessionID), zap.String("reason", reason))
+		}
+		_ = sess.pc.Close()
 	}
-	_ = sess.pc.Close()
 	w.onTeardown(sessionID)
 }

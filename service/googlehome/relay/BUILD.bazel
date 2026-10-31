@@ -40,7 +40,13 @@ go_library(
 
 go_test(
     name = "relay_test",
-    srcs = ["session_manager_test.go"],
+    srcs = [
+        "remote_provider_test.go",
+        "session_manager_test.go",
+    ],
     embed = [":relay"],
-    deps = ["@com_github_stretchr_testify//assert"],
+    deps = [
+        "@com_github_rmrobinson_google_smart_home_action_go//:google-smart-home-action-go",
+        "@com_github_stretchr_testify//assert",
+    ],
 )

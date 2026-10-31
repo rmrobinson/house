@@ -29,6 +29,13 @@
 // cameraStreamSignalingUrl (see relay.CameraSignalingPath and
 // service/googlehome/relay/session_manager.go for the Camera/WebRTC
 // session this feeds).
+//
+// googlehome.oauth.* configures the account-linking OAuth2 front door
+// (see oauth.go) - client_id/client_secret/redirect_uri here must exactly
+// match what's pasted into the Actions console's "OAuth Client
+// Information" section (redirect_uri is Google's own
+// oauth-redirect[-sandbox].googleusercontent.com/r/<project-id> URL, not
+// something this deployment picks).
 package main
 
 import (
@@ -77,9 +84,14 @@ func main() {
 	authToken := viper.GetString("googlehome.auth_token")
 	credsFile := viper.GetString("googlehome.homegraph.creds_file")
 	publicBaseURL := viper.GetString("googlehome.public_base_url")
-	if agentUserID == "" || authToken == "" || credsFile == "" || publicBaseURL == "" {
-		logger.Fatal("googlehome.agent_user_id, googlehome.auth_token, googlehome.homegraph.creds_file and googlehome.public_base_url are all required")
+	oauthClientID := viper.GetString("googlehome.oauth.client_id")
+	oauthClientSecret := viper.GetString("googlehome.oauth.client_secret")
+	oauthRedirectURI := viper.GetString("googlehome.oauth.redirect_uri")
+	if agentUserID == "" || authToken == "" || credsFile == "" || publicBaseURL == "" ||
+		oauthClientID == "" || oauthClientSecret == "" || oauthRedirectURI == "" {
+		logger.Fatal("googlehome.agent_user_id, googlehome.auth_token, googlehome.homegraph.creds_file, googlehome.public_base_url, and googlehome.oauth.client_id/client_secret/redirect_uri are all required")
 	}
+	oauthCfg := oauthConfig{clientID: oauthClientID, clientSecret: oauthClientSecret, redirectURI: oauthRedirectURI, token: authToken}
 
 	ctx := context.Background()
 	hgService, err := homegraph.NewService(ctx, option.WithCredentialsFile(credsFile))
@@ -102,9 +114,13 @@ func main() {
 	})
 	relayAPI := relay.NewAPI(logger, providerSvc, actionSvc, sessionMgr, webrtcMgr, publicBaseURL)
 
+	authCodes := newAuthCodeStore()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc(action.GoogleFulfillmentPath, actionSvc.GoogleFulfillmentHandler)
 	mux.HandleFunc(relay.CameraSignalingPath, newCameraSignalingHandler(logger, sessionMgr, webrtcMgr))
+	mux.HandleFunc("/oauth/authorize", newOAuthAuthorizeHandler(logger, oauthCfg, authCodes))
+	mux.HandleFunc("/oauth/token", newOAuthTokenHandler(logger, oauthCfg, authCodes))
 
 	fulfillmentPort := viper.GetInt("googlehome.fulfillment_listen_port")
 	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", fulfillmentPort), Handler: mux}

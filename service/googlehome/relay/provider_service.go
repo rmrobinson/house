@@ -111,8 +111,19 @@ func (s *ProviderService) StopMediaSession(agentID, sessionID string) {
 	if !found {
 		return
 	}
+	// providers is typed as the action.Provider interface (deliberately,
+	// per its own doc comment, so this map's shape doesn't have to change
+	// if something other than *RemoteProvider is ever registered) - but
+	// StopMediaSession is relay-protocol-specific, not part of that
+	// interface, so reaching it needs this downcast. Today every
+	// registration is a *RemoteProvider (see api.go's StateSync), so this
+	// never actually fails - logged rather than silently dropped so a
+	// future second implementation doesn't lose media-session teardown
+	// notifications with no visible trace of why.
 	rp, ok := p.(*RemoteProvider)
 	if !ok {
+		s.logger.Info("registered provider doesn't support StopMediaSession",
+			zap.String("agent_id", agentID), zap.String("session_id", sessionID))
 		return
 	}
 	if err := rp.StopMediaSession(sessionID); err != nil {

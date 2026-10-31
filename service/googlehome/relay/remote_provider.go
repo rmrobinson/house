@@ -337,55 +337,94 @@ func (m *RemoteProvider) getCameraStream(ctx context.Context, deviceID string, p
 // mutate) and instead needs googlehomed itself to mint a session and drive
 // a StartMediaSession/MediaSessionReady round-trip (see getCameraStream).
 // Every other command flows through to the agent exactly as before.
+// stateGroup is one set of devices that all ended up with the identical
+// resulting DeviceState after an EXECUTE batch, and whether that state
+// came from a GetCameraStream session - see mergeSuccessGroups's doc
+// comment for why that distinction matters at merge time.
+//
+// action.ExecuteResponse (google-smart-home-action-go's device.go) can
+// only carry one shared UpdatedState for every UpdatedDevices entry - it
+// has no per-device/per-group slot, a limitation the nerves precedent
+// this package is modeled on hit too (see its proxy.go's own "NOTE: not
+// really sure what to do at this point" comment on the identical
+// problem). Since our agent reports one CommandResult per device (see
+// agent.go's executeOne) - and a camera session's state is unique per
+// device by construction (distinct session_id/token) - a batch EXECUTE
+// against several devices can legitimately come back with more than one
+// distinct resulting state, which is what stateGroup/addSuccessGroup/
+// mergeSuccessGroups exist to reconcile into the one shared
+// UpdatedState/UpdatedDevices pair Execute has to return.
+type stateGroup struct {
+	deviceIDs []string
+	state     action.DeviceState
+	isCamera  bool
+}
+
+// addSuccessGroup folds deviceIDs/state into groups: merged into an
+// existing group of the same kind (isCamera) and exactly equal state, or
+// appended as a new one.
+func addSuccessGroup(groups []stateGroup, deviceIDs []string, state action.DeviceState, isCamera bool) []stateGroup {
+	for i := range groups {
+		if groups[i].isCamera == isCamera && reflect.DeepEqual(groups[i].state, state) {
+			groups[i].deviceIDs = append(groups[i].deviceIDs, deviceIDs...)
+			return groups
+		}
+	}
+	return append(groups, stateGroup{deviceIDs: append([]string{}, deviceIDs...), state: state, isCamera: isCamera})
+}
+
+// mergeSuccessGroups picks one group to supply action.ExecuteResponse's
+// single shared UpdatedState (the largest group - rather than just
+// keeping whichever result happened to be last and silently misreporting
+// every other device's state) and returns which devices are safe to
+// report as updated under it. ok is false if groups is empty.
+//
+// Every successful device is still reported as updated where it safely
+// can be (it did succeed; reporting it OFFLINE/ERROR instead would be
+// worse) with that group's state where it differs from its own actual
+// one, until the next ReportState/QUERY corrects it - EXCEPT a camera
+// group: a losing ordinary group's device getting the winner's state is
+// a harmless, self-correcting cosmetic mismatch (brightness, say), but
+// for a GetCameraStream device it would mean reporting either a foreign
+// cameraStreamAuthToken as this device's result, or this camera's own
+// unique token as some unrelated device's result - a real session token,
+// not cosmetic. So a camera-stream device is only ever included when its
+// own group is the winner, and symmetrically, nothing else (ordinary or
+// a different camera session) ever rides along under a winning camera
+// group's state either - both directions matter: it's not enough to
+// only skip a losing camera group, a losing ORDINARY group must equally
+// be skipped when the winner itself is a camera group, and a losing
+// camera group must be skipped even when the winner is a DIFFERENT
+// camera group (two distinct sessions), not just when the winner is
+// non-camera.
+func mergeSuccessGroups(groups []stateGroup) (deviceIDs []string, state action.DeviceState, ok bool) {
+	if len(groups) == 0 {
+		return nil, action.DeviceState{}, false
+	}
+
+	bestIdx := 0
+	for i := 1; i < len(groups); i++ {
+		if len(groups[i].deviceIDs) > len(groups[bestIdx].deviceIDs) {
+			bestIdx = i
+		}
+	}
+	winnerIsCamera := groups[bestIdx].isCamera
+
+	for i, g := range groups {
+		if i != bestIdx && (g.isCamera || winnerIsCamera) {
+			continue
+		}
+		deviceIDs = append(deviceIDs, g.deviceIDs...)
+	}
+	return deviceIDs, groups[bestIdx].state, true
+}
+
 func (m *RemoteProvider) Execute(ctx context.Context, req *action.ExecuteRequest) (*action.ExecuteResponse, error) {
 	actionResp := &action.ExecuteResponse{
 		FailedDevices: map[string]struct{ Devices []string }{},
 	}
 
-	// action.ExecuteResponse (google-smart-home-action-go's device.go) can
-	// only carry one shared UpdatedState for every UpdatedDevices entry - it
-	// has no per-device/per-group slot, a limitation the nerves precedent
-	// this package is modeled on hit too (see its proxy.go's own "NOTE: not
-	// really sure what to do at this point" comment on the identical
-	// problem). Since our agent reports one CommandResult per device (see
-	// agent.go's executeOne) - and a camera session's state is unique per
-	// device by construction (distinct session_id/token) - a batch EXECUTE
-	// against several devices can legitimately come back with more than
-	// one distinct resulting state. Rather than just keeping whichever
-	// result happened to be last - silently misreporting every other
-	// device's state - group identical states together and keep the
-	// largest group: every successful device is still reported as updated
-	// (it did succeed; reporting it OFFLINE/ERROR instead would be worse),
-	// just with that group's state where it differs from its own actual
-	// one, until the next ReportState/QUERY corrects it.
-	//
-	// Camera groups are the one exception to "report every successful
-	// device under the winning group's state anyway": a losing group's
-	// device getting the winner's state is a harmless, self-correcting
-	// cosmetic mismatch for an ordinary device (brightness, say), but for
-	// a GetCameraStream device it would mean reporting either a foreign
-	// cameraStreamAuthToken as this device's result, or this camera's own
-	// unique token as some unrelated device's result - a real session
-	// token, not cosmetic. isCamera marks groups that must never be
-	// unioned into a win they didn't have: a camera-stream device is only
-	// ever included in UpdatedDevices when its own group is the winner,
-	// never riding along under a foreign one (or vice versa).
-	type stateGroup struct {
-		deviceIDs []string
-		state     action.DeviceState
-		isCamera  bool
-	}
 	var successGroups []stateGroup
-	addSuccess := func(deviceIDs []string, state action.DeviceState, isCamera bool) {
-		for i := range successGroups {
-			if successGroups[i].isCamera == isCamera && reflect.DeepEqual(successGroups[i].state, state) {
-				successGroups[i].deviceIDs = append(successGroups[i].deviceIDs, deviceIDs...)
-				return
-			}
-		}
-		successGroups = append(successGroups, stateGroup{deviceIDs: append([]string{}, deviceIDs...), state: state, isCamera: isCamera})
-	}
-
 	var relayCommands []*ExecuteRequest_Command
 	for _, commandArg := range req.Commands {
 		if params, ok := getCameraStreamCommand(commandArg.Commands); ok {
@@ -395,7 +434,7 @@ func (m *RemoteProvider) Execute(ctx context.Context, req *action.ExecuteRequest
 					actionResp.OfflineDevices = append(actionResp.OfflineDevices, deviceArg.ID)
 					continue
 				}
-				addSuccess([]string{deviceArg.ID}, state, true)
+				successGroups = addSuccessGroup(successGroups, []string{deviceArg.ID}, state, true)
 			}
 			continue
 		}
@@ -441,35 +480,24 @@ func (m *RemoteProvider) Execute(ctx context.Context, req *action.ExecuteRequest
 				if err := json.Unmarshal(result.States, &state); err != nil {
 					return nil, ErrUnsupportedCommandResponseReceived
 				}
-				addSuccess(result.DeviceIds, state, false)
+				successGroups = addSuccessGroup(successGroups, result.DeviceIds, state, false)
 			case ExecuteResponse_OFFLINE:
 				actionResp.OfflineDevices = append(actionResp.OfflineDevices, result.DeviceIds...)
 			case ExecuteResponse_ERROR:
-				actionResp.FailedDevices[result.ErrorCode] = struct{ Devices []string }{Devices: result.DeviceIds}
+				// Append, not overwrite: two different devices failing
+				// with the same ErrorCode in one batch would otherwise
+				// collapse into one entry, silently dropping every
+				// device but the last from the response entirely.
+				failed := actionResp.FailedDevices[result.ErrorCode]
+				failed.Devices = append(failed.Devices, result.DeviceIds...)
+				actionResp.FailedDevices[result.ErrorCode] = failed
 			}
 		}
 	}
 
-	if len(successGroups) > 0 {
-		bestIdx := 0
-		for i := 1; i < len(successGroups); i++ {
-			if len(successGroups[i].deviceIDs) > len(successGroups[bestIdx].deviceIDs) {
-				bestIdx = i
-			}
-		}
-		actionResp.UpdatedState = successGroups[bestIdx].state
-		for i, g := range successGroups {
-			if g.isCamera && i != bestIdx {
-				// Never report a camera session's state under a foreign
-				// device's id, or a foreign state under this camera's id
-				// (see isCamera's doc comment above) - the agent already
-				// started the session regardless; it just won't show as
-				// "updated" in this particular EXECUTE response, and a
-				// retry would succeed.
-				continue
-			}
-			actionResp.UpdatedDevices = append(actionResp.UpdatedDevices, g.deviceIDs...)
-		}
+	if deviceIDs, state, ok := mergeSuccessGroups(successGroups); ok {
+		actionResp.UpdatedDevices = deviceIDs
+		actionResp.UpdatedState = state
 	}
 
 	return actionResp, nil

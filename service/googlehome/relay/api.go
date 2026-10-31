@@ -60,16 +60,23 @@ func NewAPI(logger *zap.Logger, ps *ProviderService, as *action.Service, session
 // response to one of its outstanding requests.
 func (a *API) StateSync(stream RelayService_StateSyncServer) error {
 	var provider *RemoteProvider
+	defer func() {
+		// Runs for every exit path (clean EOF, a real transport error, a
+		// cancelled context) - cleanup must not be conditional on which
+		// one it was: a non-EOF error is the common case for a real
+		// disconnect (TLS reset, client crash, context cancellation),
+		// not the exception, so leaving this only on the io.EOF branch
+		// would leak this agent's provider registration and any open
+		// camera PeerConnections/WHEP pulls for most real-world drops.
+		if provider != nil {
+			a.providerSvc.UnregisterProvider(provider.agentID)
+			a.webrtcMgr.TeardownSessions(a.sessionMgr.SweepForAgent(provider.agentID))
+		}
+	}()
+
 	for {
 		reqMsg, err := stream.Recv()
 		if err == io.EOF {
-			if provider != nil {
-				a.providerSvc.UnregisterProvider(provider.agentID)
-				// No further StopMediaSession can be delivered once this
-				// stream is gone - tear down anything still open for this
-				// agent rather than leaking a PeerConnection.
-				a.webrtcMgr.TeardownSessions(a.sessionMgr.SweepForAgent(provider.agentID))
-			}
 			return nil
 		}
 		if err != nil {
