@@ -208,13 +208,27 @@ document.addEventListener('input', function (e) {
 });
 
 // Don't let a live push redraw a row while the user is interacting with it
-// (it would snap a slider back mid-drag).
+// (it would snap a slider back mid-drag, or wipe a half-typed door PIN).
+// BEGIN oobBeforeSwap guard
 document.addEventListener('htmx:oobBeforeSwap', function (e) {
   var t = e.detail.target;
-  if (t && t.tagName === 'TR' && t.contains(document.activeElement) && document.activeElement.matches('input.dimmer, input.volume')) {
+  if (!t || t.tagName !== 'TR') return;
+  var active = document.activeElement;
+  if (t.contains(active) && active.matches('input.dimmer, input.volume')) {
     e.detail.shouldSwap = false;
+    return;
+  }
+  // A PIN being typed (focused, or holding digits): keep the row as it is,
+  // unless the incoming row no longer offers the same form - the door moved,
+  // so the old OPEN/TRIGGER form would now be wrong and must go.
+  var pin = t.querySelector('form.pin input.pin');
+  if (pin && (pin === active || pin.value !== '')) {
+    var cur = t.querySelector('form.pin input[name=door]');
+    var inc = e.detail.fragment && e.detail.fragment.querySelector('form.pin input[name=door]');
+    if (cur && inc && cur.value === inc.value) e.detail.shouldSwap = false;
   }
 });
+// END oobBeforeSwap guard
 
 // DETAILS toggle: show or hide every device's readings row. Remembered per
 // browser; the room pane is swapped in by htmx, so the button's pressed state
