@@ -174,6 +174,8 @@ type fakeBridge struct {
 	camEndpoints []*apiTrait.MediaStream_Endpoint
 	// cmdErr, when set, is returned from ExecuteCommand.
 	cmdErr error
+	// getErr, when set, is returned from GetDevice.
+	getErr error
 	// updates, when non-nil, feeds StreamUpdates - a test can push an
 	// *api2.Update onto it to simulate a live BridgeService device update.
 	updates chan *api2.Update
@@ -182,6 +184,9 @@ type fakeBridge struct {
 }
 
 func (f *fakeBridge) GetDevice(_ context.Context, r *api2.GetDeviceRequest) (*apiDevice.Device, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	if d, ok := f.devices[r.GetId()]; ok {
 		return d, nil
 	}
@@ -837,6 +842,26 @@ func TestDoorOpenRefusedWhenNoPINConfigured(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), "no door PIN is configured")
 		assert.Nil(t, br.gotCmd, body)
 	}
+}
+
+// If the device can't be read back to re-render its row, a refusal still reaches the user as a
+// proper status with its message, not a bare 500 and an Error-level log.
+func TestDoorPINRefusalSurvivesAnUnreadableDevice(t *testing.T) {
+	s, _, br := startTestServer(t)
+	s.doorPIN = testPINGate(t, "1234")
+	br.getErr = status.Error(codes.Unavailable, "bridge down")
+
+	rec := post(s, "/devices/garage1/commands", "door=open&pin=0000", true)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "incorrect PIN")
+	assert.NotContains(t, rec.Body.String(), "rpc error")
+
+	for i := 0; i < pinFreeAttempts; i++ {
+		post(s, "/devices/garage1/commands", "door=open&pin=0000", true)
+	}
+	rec = post(s, "/devices/garage1/commands", "door=open&pin=1234", true)
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Nil(t, br.gotCmd)
 }
 
 func TestDoorPINLocksAfterRepeatedMisses(t *testing.T) {

@@ -228,6 +228,23 @@ document.addEventListener('htmx:oobBeforeSwap', function (e) {
     if (cur && inc && cur.value === inc.value) e.detail.shouldSwap = false;
   }
 });
+
+// A PIN left in the box is forgotten once the field has been unfocused for
+// PIN_IDLE_MS: it shouldn't sit on a shared screen, and while it holds digits
+// the guard above holds off live updates to its row.
+var PIN_IDLE_MS = 30000;
+var pinIdleTimer = null;
+document.addEventListener('focusout', function (e) {
+  if (!e.target.matches || !e.target.matches('input.pin')) return;
+  var field = e.target;
+  clearTimeout(pinIdleTimer);
+  pinIdleTimer = setTimeout(function () {
+    if (field.isConnected && field !== document.activeElement) field.value = '';
+  }, PIN_IDLE_MS);
+});
+document.addEventListener('focusin', function (e) {
+  if (e.target.matches && e.target.matches('input.pin')) clearTimeout(pinIdleTimer);
+});
 // END oobBeforeSwap guard
 
 // DETAILS toggle: show or hide every device's readings row. Remembered per

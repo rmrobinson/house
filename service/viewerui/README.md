@@ -142,7 +142,15 @@ can open it too). `[ CLOSE ]` never asks.
   bcrypt hash (a plain PIN pasted in by mistake) stops the service starting.
 - **Every time.** The PIN is sent with each request and nothing remembers it:
   no session or cookie. It is sent over the viewer's connection, so this
-  assumes the viewer is served over TLS.
+  assumes the viewer is served over TLS. Pressing Enter in the PIN box submits
+  it - entering the PIN is the confirmation, there is no second prompt. PINs
+  over 32 characters are refused outright without counting toward the lockout.
+- **Live updates.** A row whose PIN box is focused or holds digits is not
+  redrawn by a live push (it would wipe the PIN mid-typing), unless the door
+  moved so the form itself changed. A PIN left in the box is cleared 30s after
+  the field loses focus, and live updates to that row resume. Meanwhile that
+  row's name/offline badge can lag; its readings row is separate and still
+  updates.
 - **Lockout.** 5 wrong PINs in a row lock the gate for 30s, doubling with each
   further miss up to 15 minutes; a correct PIN resets it, and a locked gate
   refuses even the right PIN. The lock is global, not per client - requests
