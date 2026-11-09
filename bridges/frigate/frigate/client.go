@@ -448,10 +448,10 @@ func (c *Client) fetchImage(ctx context.Context, base *url.URL, path string, q u
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("frigate returned status %d for %s", resp.StatusCode, path)
+		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, path)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
-		return nil, fmt.Errorf("frigate returned content type %q for %s, want image/jpeg", ct, path)
+		return nil, fmt.Errorf("unexpected content type %q for %s, want image/jpeg", ct, path)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))

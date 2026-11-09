@@ -29,9 +29,9 @@ const (
 	defaultSnapshotWait = 3 * time.Second
 
 	// defaultFullResTimeout bounds one fetch of a full resolution frame from the restream, which has to
-	// decode a keyframe and takes a few seconds at worst. On timeout GetStillImage falls back to Frigate's own
-	// pictures.
-	defaultFullResTimeout = 5 * time.Second
+	// decode a keyframe (1-3s when healthy). It is kept short enough that a hung restream followed by the
+	// snapshot wait still fits within the caller's budget (the policy engine gives GetStillImage 8s).
+	defaultFullResTimeout = 4 * time.Second
 
 	snapshotPollInterval = 50 * time.Millisecond
 )
@@ -158,9 +158,11 @@ func (fb *FrigateBridge) cameraByID(id string) *Camera {
 	return nil
 }
 
-// GetStillImage implements bridge.StillImageHandler. Unless asked for the latest frame it prefers the
-// snapshot of the camera's latest qualifying detection, waiting briefly for Frigate to produce it, and
-// falls back to the latest frame; the response says which it returned.
+// GetStillImage implements bridge.StillImageHandler. By default a person being tracked right now gets a live
+// frame from the full resolution restream (when enabled); otherwise it prefers the snapshot of the camera's
+// latest qualifying detection, waiting briefly for Frigate to produce it, and falls back to the latest
+// frame (the restream's when enabled, else Frigate's). An explicit source or event id is honoured. The
+// response says which source it returned.
 func (fb *FrigateBridge) GetStillImage(ctx context.Context, req *api2.GetStillImageRequest) (*api2.GetStillImageResponse, error) {
 	camera := fb.cameraByID(req.GetDeviceId())
 	if camera == nil {

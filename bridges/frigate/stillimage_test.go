@@ -418,7 +418,27 @@ func TestFullResFallsBackToFrigatePictures(t *testing.T) {
 	assert.Equal(t, trait.StillImage_EVENT_SNAPSHOT, resp.GetSource())
 }
 
-func TestFullResOffByDefault(t *testing.T) {
+func TestFullResFallsBackWhenRestreamHangs(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	imgs.snapshots["/api/events/ev1/snapshot.jpg"] = true
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	withRestream(t, fb, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	fb.fullResTimeout = 100 * time.Millisecond
+
+	start := time.Now()
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, "latest-garage", string(resp.GetData()))
+	assert.Less(t, time.Since(start), 2*time.Second, "a hung restream must not stall the request")
+}
+
+func TestFullResDisabledSkipsRestream(t *testing.T) {
 	fb, _, _ := newStillBridge(t)
 	hits := withRestream(t, fb, serveFullRes)
 	fb.fullResStills = false
