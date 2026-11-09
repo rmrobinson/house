@@ -332,3 +332,99 @@ func TestLatestFrameUsesHeightParameter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, imgs.hits, "/api/garage_camera/latest.jpg?height=720")
 }
+
+// withRestream points the bridge at a fake go2rtc serving full resolution frames, and records its requests.
+func withRestream(t *testing.T, fb *FrigateBridge, handler http.HandlerFunc) *[]string {
+	t.Helper()
+	var mu sync.Mutex
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, r.URL.RequestURI())
+		mu.Unlock()
+		handler(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	fb.restreamBase = u
+	fb.fullResStills = true
+	fb.fullResTimeout = time.Second
+	return &hits
+}
+
+func serveFullRes(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/api/frame.jpeg" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Write([]byte("full-" + r.URL.Query().Get("src")))
+}
+
+func TestFullResFrameForTrackedPerson(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	imgs.snapshots["/api/events/ev1/snapshot.jpg"] = true
+	hits := withRestream(t, fb, serveFullRes)
+	fb.handleEvent(personEvent("new", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true }))
+
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid", MaxHeight: 720})
+	require.NoError(t, err)
+	assert.Equal(t, trait.StillImage_LATEST_FRAME, resp.GetSource())
+	assert.Equal(t, "full-garage_camera", string(resp.GetData()))
+	assert.Contains(t, *hits, "/api/frame.jpeg?height=720&src=garage_camera")
+	assert.NotContains(t, imgs.hits, "/api/events/ev1/snapshot.jpg", "no need to wait for or fetch the snapshot")
+
+	// An explicit request for the event snapshot is still honoured.
+	resp, err = fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid", PreferredSource: trait.StillImage_EVENT_SNAPSHOT})
+	require.NoError(t, err)
+	assert.Equal(t, trait.StillImage_EVENT_SNAPSHOT, resp.GetSource())
+}
+
+func TestFullResFrameForLatestAndEndedDetection(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	imgs.snapshots["/api/events/ev1/snapshot.jpg"] = true
+	withRestream(t, fb, serveFullRes)
+
+	// No detection: the latest frame comes from the restream, not Frigate's detection frame.
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, "full-garage_camera", string(resp.GetData()))
+	assert.NotContains(t, imgs.hits, "/api/garage_camera/latest.jpg")
+
+	// A detection that has already ended keeps serving its (boxed) snapshot: the person has left the live view.
+	fb.handleEvent(personEvent("new", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true }))
+	fb.handleEvent(personEvent("end", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true }))
+	resp, err = fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, trait.StillImage_EVENT_SNAPSHOT, resp.GetSource())
+}
+
+func TestFullResFallsBackToFrigatePictures(t *testing.T) {
+	fb, _, imgs := newStillBridge(t)
+	imgs.snapshots["/api/events/ev1/snapshot.jpg"] = true
+	withRestream(t, fb, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "down", http.StatusInternalServerError) })
+
+	// Latest frame: restream down, Frigate's frame used.
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid", MaxHeight: 720})
+	require.NoError(t, err)
+	assert.Equal(t, "latest-garage", string(resp.GetData()))
+	assert.Contains(t, imgs.hits, "/api/garage_camera/latest.jpg?height=720")
+
+	// Tracked person: restream down, the event snapshot used.
+	fb.handleEvent(personEvent("new", "ev1", "garage_camera", func(o *frigate.EventObject) { o.HasSnapshot = true }))
+	resp, err = fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, trait.StillImage_EVENT_SNAPSHOT, resp.GetSource())
+}
+
+func TestFullResOffByDefault(t *testing.T) {
+	fb, _, _ := newStillBridge(t)
+	hits := withRestream(t, fb, serveFullRes)
+	fb.fullResStills = false
+
+	resp, err := fb.GetStillImage(context.Background(), &api2.GetStillImageRequest{DeviceId: "gid"})
+	require.NoError(t, err)
+	assert.Equal(t, "latest-garage", string(resp.GetData()))
+	assert.Empty(t, *hits)
+}

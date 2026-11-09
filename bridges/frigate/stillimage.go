@@ -28,6 +28,11 @@ const (
 	// that doesn't have one yet before falling back to the camera's latest frame.
 	defaultSnapshotWait = 3 * time.Second
 
+	// defaultFullResTimeout bounds one fetch of a full resolution frame from the restream, which has to
+	// decode a keyframe and takes a few seconds at worst. On timeout GetStillImage falls back to Frigate's own
+	// pictures.
+	defaultFullResTimeout = 5 * time.Second
+
 	snapshotPollInterval = 50 * time.Millisecond
 )
 
@@ -172,7 +177,18 @@ func (fb *FrigateBridge) GetStillImage(ctx context.Context, req *api2.GetStillIm
 		return stillResponse(data, trait.StillImage_EVENT_SNAPSHOT, id), nil
 	}
 
-	if req.GetPreferredSource() != trait.StillImage_LATEST_FRAME {
+	preferred := req.GetPreferredSource()
+
+	// A person who is being tracked right now is in the camera's live view, so a full resolution frame shows
+	// them much better than the detection-sized snapshot (though without Frigate's bounding box) and needs no
+	// wait for the snapshot. An explicit request for the event snapshot is still honoured below.
+	if preferred == trait.StillImage_SOURCE_UNSPECIFIED && fb.personTracked(camera.Name) {
+		if data, ok := fb.fullResFrame(ctx, camera.Name, height); ok {
+			return stillResponse(data, trait.StillImage_LATEST_FRAME, ""), nil
+		}
+	}
+
+	if preferred != trait.StillImage_LATEST_FRAME {
 		if id, ok := fb.waitForSnapshot(ctx, camera.Name); ok {
 			data, err := fb.client.EventSnapshot(ctx, id)
 			if err == nil {
@@ -183,12 +199,46 @@ func (fb *FrigateBridge) GetStillImage(ctx context.Context, req *api2.GetStillIm
 		}
 	}
 
+	if data, ok := fb.fullResFrame(ctx, camera.Name, height); ok {
+		return stillResponse(data, trait.StillImage_LATEST_FRAME, ""), nil
+	}
+
 	data, err := fb.client.LatestFrame(ctx, camera.Name, height)
 	if err != nil {
 		fb.logger.Warn("unable to fetch latest frame", zap.String("camera", camera.Name), zap.Error(err))
 		return nil, status.Error(codes.Unavailable, fmt.Sprintf("unable to fetch a picture from %s", camera.Name))
 	}
 	return stillResponse(data, trait.StillImage_LATEST_FRAME, ""), nil
+}
+
+// personTracked reports whether the camera has a qualifying detection that has not ended yet.
+func (fb *FrigateBridge) personTracked(name string) bool {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	last, ok := fb.latestEventLocked(name)
+	return ok && last.ended.IsZero()
+}
+
+// fullResFrame fetches a frame from the camera's go2rtc restream, scaled to height if positive. It reports
+// false if full resolution stills are off or the fetch failed, so the caller can fall back to Frigate's own
+// pictures.
+func (fb *FrigateBridge) fullResFrame(ctx context.Context, name string, height int) ([]byte, bool) {
+	fb.mu.Lock()
+	enabled, timeout, base := fb.fullResStills, fb.fullResTimeout, fb.restreamBase
+	fb.mu.Unlock()
+	if !enabled || base == nil {
+		return nil, false
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	data, err := fb.client.RestreamFrame(ctx, base, name, height)
+	if err != nil {
+		fb.logger.Warn("unable to fetch full resolution frame, falling back to frigate's own picture",
+			zap.String("camera", name), zap.Error(err))
+		return nil, false
+	}
+	return data, true
 }
 
 // waitForSnapshot returns the event id of the camera's latest qualifying detection once it has a snapshot,

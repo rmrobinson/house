@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -81,6 +83,12 @@ type FrigateBridge struct {
 	stillRetention time.Duration
 	snapshotWait   time.Duration
 	now            func() time.Time
+
+	// fullResStills makes GetStillImage prefer a frame from go2rtc's full resolution restream, at restreamBase,
+	// over Frigate's detection-sized frames and snapshots; fullResTimeout bounds each such fetch.
+	fullResStills  bool
+	fullResTimeout time.Duration
+	restreamBase   *url.URL
 }
 
 // NewFrigateBridge returns a new instance of the Frigate bridge.
@@ -120,7 +128,16 @@ func NewFrigateBridge(logger *zap.Logger, svc *bridge.Service, client *frigate.C
 		stillRetention:         defaultStillRetention,
 		snapshotWait:           defaultSnapshotWait,
 		now:                    time.Now,
+		fullResTimeout:         defaultFullResTimeout,
+		restreamBase:           &url.URL{Scheme: "http", Host: net.JoinHostPort(cameraRestreamHostname, strconv.Itoa(cameraRestreamHTTPPort))},
 	}
+}
+
+// SetFullResStills turns on serving still images from the camera's full resolution restream. Call before Run.
+func (fb *FrigateBridge) SetFullResStills(enabled bool) {
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	fb.fullResStills = enabled
 }
 
 // SetStillImageTiming overrides how long a finished detection's picture stays fetchable and how long
