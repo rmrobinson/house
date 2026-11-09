@@ -181,6 +181,12 @@ func (s *Server) renderFragment(w http.ResponseWriter, name string, data any) {
 }
 
 func (s *Server) httpError(w http.ResponseWriter, r *http.Request, err error) {
-	s.logger.Error("request failed", zap.String("path", r.URL.Path), zap.Error(err))
-	http.Error(w, houseview.Message(err), houseview.HTTPStatus(err))
+	code := houseview.HTTPStatus(err)
+	// A 4xx is the caller's doing (a wrong PIN, an unknown id), not a fault here.
+	if code >= http.StatusInternalServerError {
+		s.logger.Error("request failed", zap.String("path", r.URL.Path), zap.Error(err))
+	} else {
+		s.logger.Warn("request refused", zap.String("path", r.URL.Path), zap.Int("status", code), zap.Error(err))
+	}
+	http.Error(w, houseview.Message(err), code)
 }

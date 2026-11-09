@@ -90,6 +90,38 @@ func TestPINGate_LockoutIsMonotonicAndCapped(t *testing.T) {
 	assert.Equal(t, pinMaxLockout, prev)
 }
 
+func TestLockFor(t *testing.T) {
+	assert.Equal(t, pinBaseLockout, lockFor(pinFreeAttempts))
+	assert.Equal(t, 2*pinBaseLockout, lockFor(pinFreeAttempts+1))
+	assert.Equal(t, 4*pinBaseLockout, lockFor(pinFreeAttempts+2))
+	assert.Equal(t, pinMaxLockout, lockFor(pinFreeAttempts+50))
+	assert.Equal(t, pinMaxLockout, lockFor(1<<30), "no count may overflow the lock")
+}
+
+// A typo long after an earlier burst starts from a clean count, instead of inheriting it and
+// getting a doubled lock; the lock itself must still outlast attempts made inside the memory window.
+func TestPINGate_OldMissesAreForgotten(t *testing.T) {
+	g, now := clockedGate(t)
+	for i := 0; i < pinFreeAttempts; i++ {
+		_ = g.check("0000")
+	}
+	require.Positive(t, lockRemaining(g))
+
+	*now = now.Add(pinFailureMemory + time.Minute)
+	assert.Equal(t, codes.PermissionDenied, status.Code(g.check("0000")))
+	assert.LessOrEqual(t, lockRemaining(g), time.Duration(0), "one typo after a long quiet spell must not lock")
+	assert.Equal(t, 1, g.failures)
+
+	// Inside the window the count is kept: a miss right after a lock expires still doubles it.
+	g2, now2 := clockedGate(t)
+	for i := 0; i < pinFreeAttempts; i++ {
+		_ = g2.check("0000")
+	}
+	*now2 = now2.Add(pinBaseLockout)
+	_ = g2.check("0000")
+	assert.Equal(t, 2*pinBaseLockout, lockRemaining(g2))
+}
+
 func TestPINGate_OverlongPINRefusedWithoutCountingAgainstTheLock(t *testing.T) {
 	g, _ := clockedGate(t)
 	long := strings.Repeat("1", pinMaxLen+1)

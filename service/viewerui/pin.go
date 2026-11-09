@@ -16,9 +16,10 @@ const (
 	// pinBaseLockout is the first lock; it doubles with each further wrong PIN, up to pinMaxLockout.
 	pinBaseLockout = 30 * time.Second
 	pinMaxLockout  = 15 * time.Minute
-	// pinMaxDoublings is the most the lock is ever doubled. 30s << 6 already exceeds pinMaxLockout,
-	// so clamping here is purely what keeps the shift from overflowing time.Duration.
-	pinMaxDoublings = 6
+	// pinFailureMemory is how long a wrong PIN is remembered. Past it the miss count starts over,
+	// so a typo weeks after an earlier burst isn't met with a doubled lock. It must outlast
+	// pinMaxLockout, or an attacker would get a fresh set of free attempts every lock.
+	pinFailureMemory = time.Hour
 	// pinMaxLen bounds a submitted PIN. It is far above any real PIN and far below bcrypt's 72-byte
 	// input limit (older x/crypto silently truncates past it); anything longer is refused before it
 	// reaches bcrypt, the lock or the mutex.
@@ -51,7 +52,19 @@ type pinGate struct {
 
 	mu          sync.Mutex
 	failures    int
+	lastFailure time.Time
 	lockedUntil time.Time
+}
+
+// lockFor is the lock after the failures'th consecutive miss (failures >= pinFreeAttempts):
+// pinBaseLockout, doubled once per miss beyond the free ones, capped at pinMaxLockout. Doubled
+// in a loop that stops at the cap, never by shifting - an unbounded shift on a Duration wraps.
+func lockFor(failures int) time.Duration {
+	lock := pinBaseLockout
+	for i := pinFreeAttempts; i < failures && lock < pinMaxLockout; i++ {
+		lock *= 2
+	}
+	return min(lock, pinMaxLockout)
 }
 
 // newPINGate returns a gate for hash, a bcrypt hash of the PIN. An empty hash gives a gate that
@@ -83,14 +96,18 @@ func (g *pinGate) check(pin string) error {
 
 	// Held across the bcrypt compare on purpose: it serializes attempts, so concurrent guesses
 	// can't race past the lockout.
-	if wait := g.lockedUntil.Sub(g.now()); wait > 0 {
+	now := g.now()
+	if wait := g.lockedUntil.Sub(now); wait > 0 {
 		return pinLocked(wait)
+	}
+	if g.failures > 0 && now.Sub(g.lastFailure) > pinFailureMemory {
+		g.failures = 0
 	}
 	if bcrypt.CompareHashAndPassword(g.hash, []byte(pin)) != nil {
 		g.failures++
+		g.lastFailure = now
 		if g.failures >= pinFreeAttempts {
-			doublings := min(g.failures-pinFreeAttempts, pinMaxDoublings)
-			g.lockedUntil = g.now().Add(min(pinBaseLockout<<doublings, pinMaxLockout))
+			g.lockedUntil = now.Add(lockFor(g.failures))
 		}
 		return errPINWrong
 	}

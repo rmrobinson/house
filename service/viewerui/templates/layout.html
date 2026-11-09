@@ -233,17 +233,19 @@ document.addEventListener('htmx:oobBeforeSwap', function (e) {
 // PIN_IDLE_MS: it shouldn't sit on a shared screen, and while it holds digits
 // the guard above holds off live updates to its row.
 var PIN_IDLE_MS = 30000;
-var pinIdleTimer = null;
+// One timer per field: a page can hold several PIN boxes (a second door), and
+// focusing one must not cancel another's clock.
+var pinIdleTimers = new WeakMap();
 document.addEventListener('focusout', function (e) {
   if (!e.target.matches || !e.target.matches('input.pin')) return;
   var field = e.target;
-  clearTimeout(pinIdleTimer);
-  pinIdleTimer = setTimeout(function () {
+  clearTimeout(pinIdleTimers.get(field));
+  pinIdleTimers.set(field, setTimeout(function () {
     if (field.isConnected && field !== document.activeElement) field.value = '';
-  }, PIN_IDLE_MS);
+  }, PIN_IDLE_MS));
 });
 document.addEventListener('focusin', function (e) {
-  if (e.target.matches && e.target.matches('input.pin')) clearTimeout(pinIdleTimer);
+  if (e.target.matches && e.target.matches('input.pin')) clearTimeout(pinIdleTimers.get(e.target));
 });
 // END oobBeforeSwap guard
 
