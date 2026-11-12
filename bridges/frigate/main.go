@@ -26,6 +26,7 @@ func main() {
 	viper.SetDefault("bridge.refresh_interval", 60)
 	viper.SetDefault("bridge.listen_port", 17008)
 	viper.SetDefault("frigate.restream_http_port", 1984)
+	viper.SetDefault("frigate.still_image_full_res", true)
 	viper.SetDefault("frigate.occupancy_labels", []string{"person"})
 
 	configPath, err := configutil.FindConfigFile("frigate", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
@@ -79,6 +80,8 @@ func main() {
 	fb := NewFrigateBridge(logger, svc, frigateClient, ipAddr, viper.GetInt("frigate.restream_http_port"))
 
 	fb.SetOccupancyLabels(viper.GetStringSlice("frigate.occupancy_labels"))
+
+	fb.SetFullResStills(viper.GetBool("frigate.still_image_full_res"))
 
 	fb.SetStillImageTiming(viper.GetDuration("frigate.still_image_retention"), viper.GetDuration("frigate.still_image_wait"))
 

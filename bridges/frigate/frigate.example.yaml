@@ -27,6 +27,12 @@ frigate:
   # camera's latest frame. Go durations; defaults 2m and 3s.
   still_image_retention: 2m
   still_image_wait: 3s
+  # Serve still images from go2rtc's full resolution restream (at restream_http_port) instead of Frigate's
+  # detection-sized frames and snapshots. A person being tracked right now gets a live full resolution frame
+  # (without Frigate's bounding box); a recently finished detection still gets its event snapshot. Falls back
+  # to Frigate's pictures if the restream can't be reached. Each camera's restream stream must have the same
+  # name as the camera (Frigate's default). Default true.
+  still_image_full_res: true
   cameras:
     - name: "camera-one"
       manufacturer: "Manufacturer 1"

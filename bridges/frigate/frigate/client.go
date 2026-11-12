@@ -420,8 +420,23 @@ func (c *Client) EventSnapshot(ctx context.Context, eventID string) ([]byte, err
 	return c.imageRequest(ctx, "/api/events/"+url.PathEscape(eventID)+"/snapshot.jpg", nil)
 }
 
+// RestreamFrame fetches a frame from the camera's go2rtc restream as a JPEG, scaled to height pixels if
+// height > 0. base is go2rtc's HTTP API (scheme and host:port). The restream carries the camera's full
+// resolution stream, unlike LatestFrame, which is Frigate's much smaller detection frame.
+func (c *Client) RestreamFrame(ctx context.Context, base *url.URL, stream string, height int) ([]byte, error) {
+	q := url.Values{"src": {stream}}
+	if height > 0 {
+		q.Set("height", strconv.Itoa(height))
+	}
+	return c.fetchImage(ctx, base, "/api/frame.jpeg", q)
+}
+
 func (c *Client) imageRequest(ctx context.Context, path string, q url.Values) ([]byte, error) {
-	u := url.URL{Scheme: c.apiEndpoint.Scheme, Host: c.apiEndpoint.Host, Path: path, RawQuery: q.Encode()}
+	return c.fetchImage(ctx, c.apiEndpoint, path, q)
+}
+
+func (c *Client) fetchImage(ctx context.Context, base *url.URL, path string, q url.Values) ([]byte, error) {
+	u := url.URL{Scheme: base.Scheme, Host: base.Host, Path: path, RawQuery: q.Encode()}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
@@ -433,10 +448,10 @@ func (c *Client) imageRequest(ctx context.Context, path string, q url.Values) ([
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("frigate returned status %d for %s", resp.StatusCode, path)
+		return nil, fmt.Errorf("unexpected status %d for %s", resp.StatusCode, path)
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
-		return nil, fmt.Errorf("frigate returned content type %q for %s, want image/jpeg", ct, path)
+		return nil, fmt.Errorf("unexpected content type %q for %s, want image/jpeg", ct, path)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
