@@ -104,6 +104,19 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   `last_action`, is what makes two identical taps in a row distinguishable - consume it with the
   policy engine's `button.action` condition. A device with only an `action` expose (no battery,
   say) is built as a `Sensor`. For multi-tap on Inovelli, keep `buttonDelay` at 100ms, not 0.
+- **LED bar effects** → `trait.Indicator` on a `Light`, whenever a device exposes a top-level
+  `led_effect` composite (the Inovelli VZM31-SN). `Indicator.Attributes.effects` is the composite's
+  own `effect` enum (`solid`, `pulse`, `fast_blink`, ...), and `command.IndicatorEffect` plays one
+  on the whole bar: `{"led_effect": {effect, color, level, duration}}` to `<device>/set`. zigbee2mqtt
+  echoes the applied `led_effect` back in the device's state (confirmed against a live VZM31-SN), so
+  the command is confirmed like any other write. The house API speaks hue in degrees and a duration in
+  seconds; the bridge converts to the device's 0-254 hue wheel (255 = white) and to its one-byte
+  duration (1-60 seconds, 61-120 = 1-60 minutes, 121-254 = 1-134 hours, 255 = until cleared; a
+  duration that does not fit a unit exactly is rounded up, never cut short). An effect the device does
+  not list, or a coloured effect with neither `hue` nor `white`, is rejected. The effect is not kept
+  in `Indicator.State` - it ends on its own - so it takes no part in `Device.version`. Only whole-bar
+  effects are supported: `individual_led_effect` and the persistent `led*When{On,Off}` settings are
+  deliberately not modeled yet (see TODO.md).
 
 **Slow and out-of-range devices.** A device at the edge of range (link quality in the low tens)
 acknowledges commands late, after zigbee2mqtt's own retries. The bridge is built so that never

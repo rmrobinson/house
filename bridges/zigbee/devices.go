@@ -278,6 +278,7 @@ func (lb lightBuilder) build(bd bridgeDevice) (*device.Device, error) {
 
 	l.Power = newPowerTrait(bd.Definition.Exposes)
 	l.Buttons = newButtonsTrait(bd.Definition.Exposes)
+	l.Indicator = newIndicatorTrait(bd.Definition.Exposes)
 
 	return &device.Device{
 		Manufacturer:     bd.Definition.Vendor,
@@ -360,6 +361,9 @@ func (lb lightBuilder) applyCommand(ctx context.Context, m *mqttConn, friendlyNa
 
 	case cmd.GetColour() != nil:
 		return applyColourCommand(ctx, m, friendlyName, l, cmd.GetColour())
+
+	case cmd.GetIndicatorEffect() != nil:
+		return applyIndicatorCommand(ctx, m, friendlyName, l, cmd.GetIndicatorEffect())
 
 	default:
 		return bridge.ErrUnsupportedCommand

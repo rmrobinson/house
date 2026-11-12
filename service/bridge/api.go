@@ -128,6 +128,8 @@ func deviceSupportsCommand(d *device.Device, req *command.Command) bool {
 			return true
 		} else if d.GetLight().GetScene() != nil && req.GetAppLaunch() != nil {
 			return true
+		} else if d.GetLight().GetIndicator() != nil && req.GetIndicatorEffect() != nil {
+			return true
 		}
 	} else if d.GetThermostat() != nil {
 		return req.GetOnOff() != nil

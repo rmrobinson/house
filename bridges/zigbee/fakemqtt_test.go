@@ -86,6 +86,16 @@ func (f *fakeMQTTClient) publishedTopics() []string {
 	return topics
 }
 
+// lastPayload returns the payload of the most recent successful Publish, or nil if there was none.
+func (f *fakeMQTTClient) lastPayload() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.published) == 0 {
+		return nil
+	}
+	return f.published[len(f.published)-1].payload
+}
+
 // deliver injects payload as if it arrived on topic from the broker, to every currently matching
 // subscription - used by tests to simulate a retained bridge/devices or state message arriving
 // independently of any write this bridge issued.
