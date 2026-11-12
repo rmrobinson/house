@@ -129,6 +129,10 @@ func HTTPStatus(err error) int {
 		return http.StatusBadRequest
 	case codes.FailedPrecondition:
 		return http.StatusConflict
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	case codes.ResourceExhausted:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}
