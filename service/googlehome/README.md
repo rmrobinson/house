@@ -35,11 +35,33 @@ network, only the reverse:
 
 ## Device support
 
-Only `api/device/light.proto`'s `Light` is translated today (on/off,
-brightness, colour in either RGB or HSB mode, colour temperature) - that's
-the device kind people actually ask Google Assistant to control. Extending
-to another device kind means adding a case to `deviceToAction`/
-`stateToAction`/`buildCommand` in `agent/translate.go` and nowhere else.
+`agent/translate.go` translates these `api/device` kinds today: `Light`
+(on/off, brightness, colour in either RGB or HSB mode, colour temperature),
+`Television`, `Fan`, `Thermostat`, `Sensor` (read-only, no commands),
+`AVReceiver`, `EVCharger`, and `Camera` (see below - a different shape from
+the rest). `CanControl` is respected on each kind's controllable subtraits
+(Volume/Input/OnOff/FanSpeed/Thermostat), so a read-only device of a
+controllable kind still SYNCs without exposing commands Google would just
+reject. Extending to another device kind means adding a case to
+`deviceToAction`/`stateToAction`/`buildCommand` in `agent/translate.go` and
+nowhere else.
+
+### Camera (WebRTC)
+
+`Camera` devices with a published `WEBRTC_WHEP` `MediaStream` (what the
+frigate bridge exposes) support Google's `CameraStream` trait over WebRTC,
+on demand - there is no standing stream outside of an active viewing
+window. `GetCameraStream` is intercepted in `relay/remote_provider.go`
+before it reaches the agent's generic command path: `googlehomed` mints a
+short-lived per-session token, tells the agent (over the existing control
+stream) to pull the camera's local WHEP endpoint and start forwarding RTP
+over a dedicated `PushMediaSession` RPC, and runs an ephemeral per-session
+`pion` `PeerConnection` (`relay/webrtc_session.go`) that answers Google's
+signaling POSTs (`cmd/googlehomed/camera_signaling.go`) and forwards that
+RTP on to Google - no transcoding. Video-only, H264 only, in this first
+cut; a codec mismatch or signaling failure fails the session closed. See
+the doc comments on `relay/session_manager.go` and `agent/media_session.go`
+for the full session lifecycle (TTL/idle-timeout, teardown triggers).
 
 ## Excluding a device
 
