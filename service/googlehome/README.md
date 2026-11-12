@@ -41,6 +41,21 @@ the device kind people actually ask Google Assistant to control. Extending
 to another device kind means adding a case to `deviceToAction`/
 `stateToAction`/`buildCommand` in `agent/translate.go` and nowhere else.
 
+## Excluding a device
+
+A device `deviceToAction` can translate isn't necessarily one you want
+Google Home to see - e.g. one it can't meaningfully control, or one whose
+mapping doesn't quite fit. adminui's `/devices` page has a "Hide from
+Google Home" toggle per device (`Device.Config.google_home_hidden`,
+persisted the same way a device rename is - see `house.DeviceConfigOverlay`
+in `service/house/deviceconfig.go`). `Agent.processSyncRequest` excludes any
+device with that flag set from the SYNC response, same as one
+`deviceToAction` can't map at all - this only takes effect when
+`googlehome-agentd`'s `bridge_addr` points at `housed` (which embeds the
+overlay); pointed directly at a standalone `bridgefacaded`, the toggle has
+no effect, the same gap `DeviceConfigOverlay`'s own doc comment notes for
+renames.
+
 ## What you still need to do yourself
 
 This integration needs a few things only you can set up, none of which

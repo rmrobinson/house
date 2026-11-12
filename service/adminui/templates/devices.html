@@ -22,6 +22,10 @@
             {{if .RoomID}}Move{{else}}Link{{end}}
           </button>
           <button hx-get="{{url "/devices/" .ID "/rename"}}" hx-target="#picker" hx-swap="innerHTML">Rename</button>
+          <form class="inline" hx-post="{{url "/devices/" .ID "/google-home"}}" hx-target="#page-content" hx-swap="outerHTML">
+            <input type="hidden" name="version" value="{{.Version}}">
+            <button type="submit">{{if .GoogleHomeHidden}}Unhide from Google Home{{else}}Hide from Google Home{{end}}</button>
+          </form>
         </td>
       </tr>
     {{else}}

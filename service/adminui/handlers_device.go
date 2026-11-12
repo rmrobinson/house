@@ -224,7 +224,11 @@ type deviceRenameData struct {
 // handleDeviceRename saves a new display name for a device - persisted as a
 // housedb override (service/house.DeviceConfigOverlay), not written to the
 // device itself, via BridgeService.UpdateDeviceConfig, the same existing RPC
-// every other BridgeService write already uses.
+// every other BridgeService write already uses. Carries the device's
+// current GoogleHomeHidden through unchanged - UpdateDeviceConfig always
+// writes both Config fields together (see its doc comment), so a rename
+// that only sent Name would silently un-hide a device that was previously
+// hidden from Google Home.
 func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -234,10 +238,16 @@ func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
 	ctx := r.Context()
 
-	_, err := s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+
+	_, err = s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
 		Id:      deviceID,
 		Version: r.FormValue("version"),
-		Config:  &apiDevice.Device_Config{Name: name},
+		Config:  &apiDevice.Device_Config{Name: name, GoogleHomeHidden: d.GetConfig().GetGoogleHomeHidden()},
 	})
 	if err != nil {
 		data, loadErr := s.loadDevicesPageData(r)
@@ -255,6 +265,58 @@ func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.respond(w, "devices", data, fmt.Sprintf("Renamed to %s", name), false)
+}
+
+// handleDeviceGoogleHomeToggle flips a device's Google Home visibility -
+// excluding it from (or restoring it to) the googlehome integration's SYNC
+// response, for a device that can't be controlled or doesn't map cleanly to
+// a Google Home device type. Like handleDeviceRename, this re-reads the
+// device fresh and resubmits its full Config (see DeviceConfigOverlay.
+// UpdateDeviceConfig's doc comment on why a partial update isn't possible),
+// so Name is carried through unchanged here - only GoogleHomeHidden flips.
+func (s *Server) handleDeviceGoogleHomeToggle(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	hidden := !d.GetConfig().GetGoogleHomeHidden()
+
+	_, err = s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:      deviceID,
+		Version: r.FormValue("version"),
+		Config: &apiDevice.Device_Config{
+			Name:             houseview.DisplayName(d),
+			GoogleHomeHidden: hidden,
+		},
+	})
+	if err != nil {
+		data, loadErr := s.loadDevicesPageData(r)
+		if loadErr != nil {
+			s.httpError(w, r, loadErr)
+			return
+		}
+		s.respond(w, "devices", data, houseview.Message(err), true)
+		return
+	}
+
+	data, loadErr := s.loadDevicesPageData(r)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
+	}
+	flash := "Hidden from Google Home"
+	if !hidden {
+		flash = "Visible to Google Home again"
+	}
+	s.respond(w, "devices", data, fmt.Sprintf("%s: %s", houseview.DisplayName(d), flash), false)
 }
 
 type roomPickerData struct {

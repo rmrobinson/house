@@ -42,6 +42,12 @@ message Device {
     string name = 1;
     // The description of the device.
     string description = 2;
+    // Whether this device should be excluded from the Google Home SYNC
+    // response - set by an admin for a device that can't be controlled or
+    // doesn't map cleanly to a Google Home device type. Has no effect
+    // outside the googlehome integration; every other consumer of this
+    // device ignores it.
+    bool google_home_hidden = 3;
   }
 
   // Unique ID of this device. Immutable.

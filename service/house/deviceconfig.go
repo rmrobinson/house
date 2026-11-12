@@ -17,8 +17,9 @@ import (
 
 // DeviceConfigOverlay wraps a BridgeService implementation - normally the
 // embedded facade.Facade (see cmd/housed/main.go) - so a device's
-// Config.Name can be renamed from housed's own admin surface without any
-// support from the owning bridge. No bridge in this repo actually
+// Config.Name can be renamed, and its Config.GoogleHomeHidden flipped, from
+// housed's own admin surface without any support from the owning bridge. No
+// bridge in this repo actually
 // implements UpdateDeviceConfig (every bridge.Service embeds service/bridge.
 // API's stub, which returns Unimplemented - see bridges/cast's deviceConfig.
 // Name doc comment), so forwarding the write upstream the way facade.Facade
@@ -54,19 +55,21 @@ func NewDeviceConfigOverlay(logger *zap.Logger, inner api2.BridgeServiceServer, 
 	return &DeviceConfigOverlay{logger: logger, inner: inner, db: database}
 }
 
-// applyOverride replaces d.Config.Name with cfg.Name, if cfg is non-nil.
-// d.Config.Description is left untouched either way - only Name is ever
-// stored as an override. d is mutated in place: every call site here already
-// holds a Device it owns outright (freshly returned from inner, which
-// itself only ever hands out proto.Clone'd messages - see facade.Facade's
-// doc comment), never a reference shared with some other cache.
+// applyOverride replaces d.Config.Name and d.Config.GoogleHomeHidden with
+// cfg's, if cfg is non-nil. d.Config.Description is left untouched either
+// way - only Name and GoogleHomeHidden are ever stored as overrides. d is
+// mutated in place: every call site here already holds a Device it owns
+// outright (freshly returned from inner, which itself only ever hands out
+// proto.Clone'd messages - see facade.Facade's doc comment), never a
+// reference shared with some other cache.
 func applyOverride(d *device.Device, cfg *db.DeviceConfig) {
 	if d == nil || cfg == nil {
 		return
 	}
 	d.Config = &device.Device_Config{
-		Name:        cfg.Name,
-		Description: d.GetConfig().GetDescription(),
+		Name:             cfg.Name,
+		Description:      d.GetConfig().GetDescription(),
+		GoogleHomeHidden: cfg.GoogleHomeHidden,
 	}
 }
 
@@ -121,20 +124,29 @@ func (o *DeviceConfigOverlay) GetDevice(ctx context.Context, req *api2.GetDevice
 	return o.overlayOne(ctx, d), nil
 }
 
-// UpdateDeviceConfig persists req's name as a housedb override for req.Id,
-// rather than forwarding to the owning bridge (see type doc comment). req.
-// Id must name a device the inner BridgeService currently knows about -
-// otherwise this would let an override accumulate for a device ID that can
-// never be seen again. req.Version, if set, is checked against the
-// device's current Device.version - the same optimistic-concurrency
-// contract documented on UpdateDeviceConfigRequest/Device.version in api/
-// device/device.proto - not against anything in housedb, since the
-// override itself carries no version of its own (see db.DeviceConfig). This
-// check and the write below aren't atomic with each other - two concurrent
-// renames of the same device, both reading the same still-current version,
-// can both pass the check and then both write, with the later write simply
-// winning - the same single-editor, no-conflict-UI tradeoff adminui already
-// makes elsewhere (see server.go's teardown doc comment).
+// UpdateDeviceConfig persists req's name and Google Home visibility as a
+// housedb override for req.Id, rather than forwarding to the owning bridge
+// (see type doc comment). req.Id must name a device the inner BridgeService
+// currently knows about - otherwise this would let an override accumulate
+// for a device ID that can never be seen again. req.Version, if set, is
+// checked against the device's current Device.version - the same
+// optimistic-concurrency contract documented on UpdateDeviceConfigRequest/
+// Device.version in api/device/device.proto - not against anything in
+// housedb, since the override itself carries no version of its own (see
+// db.DeviceConfig). This check and the write below aren't atomic with each
+// other - two concurrent updates of the same device, both reading the same
+// still-current version, can both pass the check and then both write, with
+// the later write simply winning - the same single-editor, no-conflict-UI
+// tradeoff adminui already makes elsewhere (see server.go's teardown doc
+// comment).
+//
+// req.Config carries both Name and GoogleHomeHidden together, and both are
+// always written - there's no partial-update support (proto3 gives a bool
+// field no way to distinguish "leave as-is" from "set to false"), so every
+// caller is expected to read the device's current full Config first and
+// resubmit it whole, only changing the one field it means to - exactly as
+// adminui's rename and Google Home visibility toggle actions both already
+// do.
 func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.UpdateDeviceConfigRequest) (*device.Device, error) {
 	name := strings.TrimSpace(req.GetConfig().GetName())
 	if name == "" {
@@ -150,7 +162,7 @@ func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.
 		return nil, bridge.ErrVersionMismatch
 	}
 
-	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name)
+	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name, req.GetConfig().GetGoogleHomeHidden())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "unable to save device config")
 	}

@@ -222,6 +222,53 @@ func TestDeviceConfigOverlay_UpdateDeviceConfig_TrimsName(t *testing.T) {
 	assert.Equal(t, "Kitchen Lamp", updated.GetConfig().GetName())
 }
 
+func TestDeviceConfigOverlay_UpdateDeviceConfig_GoogleHomeHidden_RoundTrips(t *testing.T) {
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+	ctx := context.Background()
+
+	updated, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Bridge-Reported Name", GoogleHomeHidden: true},
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.GetConfig().GetGoogleHomeHidden())
+
+	d, err := overlay.GetDevice(ctx, &api2.GetDeviceRequest{Id: "d1"})
+	require.NoError(t, err)
+	assert.True(t, d.GetConfig().GetGoogleHomeHidden())
+}
+
+func TestDeviceConfigOverlay_UpdateDeviceConfig_PreservesHiddenAcrossRename(t *testing.T) {
+	// Every UpdateDeviceConfig call writes Name and GoogleHomeHidden
+	// together (see its doc comment) - this guards against a rename call
+	// that forgets to carry the current hidden state forward and silently
+	// un-hides the device (adminui's handleDeviceRename/
+	// handleRoomDeviceRename both do carry it forward, by reading the
+	// device fresh first).
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+	ctx := context.Background()
+
+	_, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Bridge-Reported Name", GoogleHomeHidden: true},
+	})
+	require.NoError(t, err)
+
+	updated, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Kitchen Lamp", GoogleHomeHidden: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Kitchen Lamp", updated.GetConfig().GetName())
+	assert.True(t, updated.GetConfig().GetGoogleHomeHidden())
+}
+
 func TestDeviceConfigOverlay_ListDevices_AppliesBulkOverride(t *testing.T) {
 	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
 		"d1": deviceWithName("d1", "Bridge Name 1", "v1"),
