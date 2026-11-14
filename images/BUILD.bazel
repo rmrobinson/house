@@ -131,3 +131,13 @@ bridge_image(
     name = "metricsd",
     binary = "//service/metrics/cmd/metricsd",
 )
+
+bridge_image(
+    name = "googlehomed",
+    binary = "//service/googlehome/cmd/googlehomed",
+)
+
+bridge_image(
+    name = "googlehome-agentd",
+    binary = "//service/googlehome/cmd/googlehome-agentd",
+)
