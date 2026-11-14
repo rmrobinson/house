@@ -83,6 +83,27 @@ func TestDevicesPageAndPickersRender(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "Acme")
 }
 
+func TestDevicesPageGoogleHomeToggleRenders(t *testing.T) {
+	s := &Server{logger: zaptest.NewLogger(t)}
+
+	rec := httptest.NewRecorder()
+	s.renderPage(rec, "devices", devicesPageData{
+		Devices: []deviceView{
+			{ID: "d1", Name: "Lamp", Version: "v1", GoogleHomeHidden: false},
+			{ID: "d2", Name: "Fridge", Version: "v2", GoogleHomeHidden: true},
+		},
+	})
+	body := rec.Body.String()
+
+	assert.Contains(t, body, `hx-post="/devices/d1/google-home"`)
+	assert.Contains(t, body, `<input type="hidden" name="version" value="v1">`)
+	assert.Contains(t, body, "Hide from Google Home")
+
+	assert.Contains(t, body, `hx-post="/devices/d2/google-home"`)
+	assert.Contains(t, body, `<input type="hidden" name="version" value="v2">`)
+	assert.Contains(t, body, "Unhide from Google Home")
+}
+
 func TestDeviceRenameFormTarget(t *testing.T) {
 	s := &Server{logger: zaptest.NewLogger(t)}
 

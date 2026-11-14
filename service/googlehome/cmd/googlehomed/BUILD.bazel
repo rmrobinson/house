@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "googlehomed_lib",
+    srcs = [
+        "auth.go",
+        "camera_signaling.go",
+        "main.go",
+        "oauth.go",
+    ],
+    importpath = "github.com/rmrobinson/house/service/googlehome/cmd/googlehomed",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//service/googlehome/relay",
+        "//service/lib/configutil",
+        "//service/lib/grpcutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_rmrobinson_google_smart_home_action_go//:google-smart-home-action-go",
+        "@com_github_spf13_viper//:viper",
+        "@org_golang_google_api//homegraph/v1:homegraph",
+        "@org_golang_google_api//option",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "googlehomed",
+    embed = [":googlehomed_lib"],
+    visibility = ["//visibility:public"],
+)

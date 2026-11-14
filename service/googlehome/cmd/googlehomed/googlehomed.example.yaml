@@ -1,0 +1,56 @@
+googlehome:
+  # Port the Google Smart Home Action fulfillment webhook listens on,
+  # plain HTTP - this process is expected to sit behind a reverse proxy
+  # (Caddy, with ACME) that terminates the publicly-trusted TLS certificate
+  # Google requires. Google calls https://<your-public-host>/fulfillment.
+  fulfillment_listen_port: 8090
+
+  # Port googlehome-agentd dials into (see relay_tls below for securing it).
+  relay_listen_port: 17060
+
+  # The single agent/user ID this (single-building) deployment represents -
+  # returned by Validate below, and must match googlehome.agent_id in
+  # googlehome-agentd's own config.
+  agent_user_id: "<agent user id>"
+
+  # Shared secret this process's own /oauth/token endpoint (see oauth.go)
+  # always hands back as the access/refresh token - checked on every
+  # fulfillment call by cmd/googlehomed/auth.go's staticTokenValidator.
+  # See oauth.go's doc comment for why a single-user deployment doesn't
+  # need a real multi-user OAuth2 server, just this static value gated by
+  # oauth.client_id/client_secret below.
+  auth_token: "!secret googlehome_auth_token"
+
+  homegraph:
+    # Google service account key with HomeGraph API access, for the project
+    # this integration is registered under in the Actions console.
+    creds_file: /etc/house/googlehome-homegraph-creds.json
+
+  # This process's own publicly-reachable origin (matching whatever Caddy
+  # terminates above fulfillment_listen_port) - used to build each Camera
+  # GetCameraStream session's cameraStreamSignalingUrl, which Google's
+  # client POSTs to directly.
+  public_base_url: "https://<your-public-host>"
+
+  # Account-linking OAuth2 client credentials (see oauth.go) - all three
+  # must be pasted verbatim into the Actions console's account-linking
+  # "OAuth Client Information" section too:
+  #   - Authorization URL: <public_base_url>/oauth/authorize
+  #   - Token URL: <public_base_url>/oauth/token
+  # client_id/client_secret are whatever you generate (they just need to
+  # match what you paste into the console); redirect_uri is NOT something
+  # you pick - it's Google's own URL for your project, shown in the
+  # console as "oauth-redirect.googleusercontent.com/r/<project-id>"
+  # (or the "-sandbox" variant while testing).
+  oauth:
+    client_id: "!secret googlehome_oauth_client_id"
+    client_secret: "!secret googlehome_oauth_client_secret"
+    redirect_uri: "https://oauth-redirect.googleusercontent.com/r/<your-project-id>"
+
+  # Optional: mutual TLS for relay_listen_port - same convention as every
+  # other internal gRPC service in this repo. Leave all three blank (the
+  # default) to speak plaintext gRPC.
+  relay_tls:
+    cert_file: ""
+    key_file: ""
+    client_ca_file: ""
