@@ -257,9 +257,9 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	var devices []*action.Device
 	a.mu.Lock()
 	for _, d := range listResp.GetDevices() {
-		if d.GetConfig().GetGoogleHomeHidden() {
-			// Admin-hidden (housed's DeviceConfigOverlay, see
-			// Device.Config.google_home_hidden's doc comment) - treated the
+		if !d.GetConfig().GetGoogleHomeVisible() {
+			// Not opted in (housed's DeviceConfigOverlay, see
+			// Device.Config.google_home_visible's doc comment) - treated the
 			// same as a device translate.go can't map at all, so it's
 			// consistently excluded from both the SYNC response and
 			// applyBridgeUpdate's ReportState path below.

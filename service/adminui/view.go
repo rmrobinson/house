@@ -145,9 +145,9 @@ type deviceView struct {
 	// the Google Home visibility toggle's form the same way device_rename.
 	// html round-trips it for a rename - see handleDeviceGoogleHomeToggle.
 	Version string
-	// GoogleHomeHidden mirrors Device.Config.google_home_hidden - whether an
-	// admin has excluded this device from the Google Home integration.
-	GoogleHomeHidden bool
+	// GoogleHomeVisible mirrors Device.Config.google_home_visible - whether
+	// an admin has opted this device into the Google Home integration.
+	GoogleHomeVisible bool
 }
 
 func buildingToView(b *api2.Building) buildingView {
@@ -195,14 +195,14 @@ func deviceToView(d *apiDevice.Device) deviceView {
 		model = d.GetModelId()
 	}
 	return deviceView{
-		ID:               d.GetId(),
-		Name:             houseview.DisplayName(d),
-		Kind:             houseview.Kind(d),
-		Manufacturer:     d.GetManufacturer(),
-		Model:            model,
-		Online:           d.GetAddress().GetIsReachable(),
-		Version:          d.GetVersion(),
-		GoogleHomeHidden: d.GetConfig().GetGoogleHomeHidden(),
+		ID:                d.GetId(),
+		Name:              houseview.DisplayName(d),
+		Kind:              houseview.Kind(d),
+		Manufacturer:      d.GetManufacturer(),
+		Model:             model,
+		Online:            d.GetAddress().GetIsReachable(),
+		Version:           d.GetVersion(),
+		GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible(),
 	}
 }
 

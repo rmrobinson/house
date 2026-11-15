@@ -63,15 +63,15 @@ cut; a codec mismatch or signaling failure fails the session closed. See
 the doc comments on `relay/session_manager.go` and `agent/media_session.go`
 for the full session lifecycle (TTL/idle-timeout, teardown triggers).
 
-## Excluding a device
+## Including a device
 
-A device `deviceToAction` can translate isn't necessarily one you want
-Google Home to see - e.g. one it can't meaningfully control, or one whose
-mapping doesn't quite fit. adminui's `/devices` page has a "Hide from
-Google Home" toggle per device (`Device.Config.google_home_hidden`,
-persisted the same way a device rename is - see `house.DeviceConfigOverlay`
-in `service/house/deviceconfig.go`). `Agent.processSyncRequest` excludes any
-device with that flag set from the SYNC response, same as one
+Google Home visibility is opt-in, not opt-out: `Device.Config.
+google_home_visible`'s zero value is false, so a device `deviceToAction`
+can translate still stays out of SYNC until an admin explicitly shows it -
+adminui's `/devices` page has a "Show in Google Home" toggle per device,
+persisted the same way a device rename is (see `house.DeviceConfigOverlay`
+in `service/house/deviceconfig.go`). `Agent.processSyncRequest` excludes
+any device without that flag set from the SYNC response, same as one
 `deviceToAction` can't map at all - this only takes effect when
 `googlehome-agentd`'s `bridge_addr` points at `housed` (which embeds the
 overlay); pointed directly at a standalone `bridgefacaded`, the toggle has
