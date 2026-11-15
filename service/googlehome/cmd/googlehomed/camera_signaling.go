@@ -53,16 +53,26 @@ func newCameraSignalingHandler(logger *zap.Logger, sessionMgr *relay.SessionMana
 		sessionID := r.URL.Query().Get("session")
 		deviceID, ok := sessionMgr.Validate(sessionID, bearerToken(r))
 		if !ok {
+			// Every other rejection in this handler is logged (matching
+			// oauth.go/ReportState's own convention) - this one most of
+			// all, since an expired-before-the-offer-arrived session
+			// (mediaSessionOfferTTL is only 30s, and the real round trip
+			// through Google's backend + Home app UI can plausibly exceed
+			// that) looks identical to a bogus request without this log:
+			// both just silently 401, with no other trace anywhere.
+			logger.Info("camera signaling: invalid or expired session", zap.String("session_id", sessionID))
 			http.Error(w, "invalid or expired session", http.StatusUnauthorized)
 			return
 		}
 
 		var req cameraSignalingRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			logger.Info("camera signaling: invalid request body", zap.String("session_id", sessionID), zap.Error(err))
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 		if req.DeviceID != "" && req.DeviceID != deviceID {
+			logger.Info("camera signaling: device mismatch", zap.String("session_id", sessionID), zap.String("got", req.DeviceID), zap.String("want", deviceID))
 			http.Error(w, "device mismatch", http.StatusUnauthorized)
 			return
 		}
@@ -90,6 +100,7 @@ func newCameraSignalingHandler(logger *zap.Logger, sessionMgr *relay.SessionMana
 			webrtcMgr.HandleEnd(sessionID)
 			writeCameraSignalingJSON(w, cameraSignalingResponse{})
 		default:
+			logger.Info("camera signaling: unsupported action", zap.String("session_id", sessionID), zap.String("action", req.Action))
 			http.Error(w, "unsupported action", http.StatusBadRequest)
 		}
 	}
