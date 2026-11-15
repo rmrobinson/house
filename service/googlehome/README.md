@@ -46,6 +46,19 @@ reject. Extending to another device kind means adding a case to
 `deviceToAction`/`stateToAction`/`buildCommand` in `agent/translate.go` and
 nowhere else.
 
+### Room hints
+
+Google Home has no way to show anything about a device beyond its display
+name, so two devices that happen to share one are otherwise
+indistinguishable in the Home app. SYNC sets each device's `roomHint` from
+its room assignment - looked up from `HouseService` (`ListRooms`/
+`ListDeviceLinks` in `agent.roomNamesByDeviceID`), not `BridgeService`:
+room assignment is deliberately not part of `Device` itself (see
+`DeviceRoomLink` in `api/house.proto`). Needs `googlehome-agentd`'s
+`house_addr`/`building_id` configured - both optional, since a standalone
+`bridgefacaded` (unlike `housed`) has no `HouseService` to ask at all, the
+same gap `google_home_visible` already has.
+
 ### Camera (WebRTC)
 
 `Camera` devices with a published `WEBRTC_WHEP` `MediaStream` (what the

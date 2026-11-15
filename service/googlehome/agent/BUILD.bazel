@@ -26,13 +26,20 @@ go_library(
 
 go_test(
     name = "agent_test",
-    srcs = ["translate_test.go"],
+    srcs = [
+        "agent_test.go",
+        "translate_test.go",
+    ],
     embed = [":agent"],
     deps = [
+        "//api",
         "//api/command",
         "//api/device",
         "//api/trait",
         "@com_github_rmrobinson_google_smart_home_action_go//:google-smart-home-action-go",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
     ],
 )

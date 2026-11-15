@@ -45,6 +45,14 @@ type Agent struct {
 	bridgeConn  *bridgeconn.Conn
 	relayClient relay.RelayServiceClient
 
+	// houseClient and buildingID are both optional - nil/empty disables
+	// SYNC's RoomHint lookup entirely (see processSyncRequest), the same
+	// "only takes effect when pointed at housed" caveat the
+	// google_home_visible toggle already has, since a standalone
+	// bridgefacaded has no HouseService to ask.
+	houseClient api2.HouseServiceClient
+	buildingID  string
+
 	updates chan *api2.Update
 
 	// sendMu serializes every stream.Send call on the one relay stream:
@@ -64,13 +72,17 @@ type Agent struct {
 
 // New creates an Agent that will connect to bridgeAddr (BridgeService) and
 // use relayClient to reach googlehomed once Run is called, registering as
-// agentID.
-func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string) *Agent {
+// agentID. houseClient/buildingID are optional (nil/empty disables SYNC's
+// RoomHint lookup) - see the Agent struct's own doc comment on those
+// fields.
+func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string, houseClient api2.HouseServiceClient, buildingID string) *Agent {
 	return &Agent{
 		logger:             logger,
 		agentID:            agentID,
 		bridgeConn:         bridgeconn.New(logger, bridgeAddr, bridgeTLS),
 		relayClient:        relayClient,
+		houseClient:        houseClient,
+		buildingID:         buildingID,
 		updates:            make(chan *api2.Update, updateQueueSize),
 		unsupportedDevices: map[string]bool{},
 		mediaSessions:      map[string]context.CancelFunc{},
@@ -243,6 +255,57 @@ func (a *Agent) processRelayRequests(ctx context.Context, stream relay.RelayServ
 	}
 }
 
+// roomNamesByDeviceID returns every linked device's room name, keyed by
+// device ID, for SYNC to set action.Device.RoomHint with - the only way
+// Google Home can distinguish two devices that otherwise share a display
+// name (see Device.Config.Name - nothing else about a device's identity
+// is shown in the Google Home UI). Returns an empty map, not an error, if
+// houseClient isn't configured at all (see the Agent struct's own doc
+// comment) - a nil map here is just as safe to index as a populated one.
+// Two bulk HouseService calls (every room in the building, then every
+// device-room link house-wide) rather than one GetRoom per device,
+// avoiding an N+1 lookup on every SYNC.
+func (a *Agent) roomNamesByDeviceID(ctx context.Context) (map[string]string, error) {
+	if a.houseClient == nil {
+		return nil, nil
+	}
+
+	roomStream, err := a.houseClient.ListRooms(ctx, &api2.ListRoomsRequest{BuildingId: &a.buildingID})
+	if err != nil {
+		return nil, fmt.Errorf("listing rooms: %w", err)
+	}
+	roomNameByID := map[string]string{}
+	for {
+		room, err := roomStream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing rooms: %w", err)
+		}
+		roomNameByID[room.GetId()] = room.GetConfig().GetName()
+	}
+
+	linkStream, err := a.houseClient.ListDeviceLinks(ctx, &api2.ListDeviceLinksRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("listing device room links: %w", err)
+	}
+	roomNameByDeviceID := map[string]string{}
+	for {
+		link, err := linkStream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing device room links: %w", err)
+		}
+		if name, ok := roomNameByID[link.GetRoomId()]; ok {
+			roomNameByDeviceID[link.GetDeviceId()] = name
+		}
+	}
+	return roomNameByDeviceID, nil
+}
+
 func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	client := a.bridgeConn.Client()
 	if client == nil {
@@ -252,6 +315,14 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	listResp, err := client.ListDevices(ctx, &api2.ListDevicesRequest{})
 	if err != nil {
 		return &relay.SyncResponse{ErrorDetails: err.Error()}
+	}
+
+	// Best-effort: a lookup failure here shouldn't fail the whole SYNC,
+	// it should just leave RoomHint unset for every device, same as it
+	// would be with houseClient never configured at all.
+	roomNameByDeviceID, err := a.roomNamesByDeviceID(ctx)
+	if err != nil {
+		a.logger.Info("unable to load device room hints", zap.Error(err))
 	}
 
 	var devices []*action.Device
@@ -271,6 +342,7 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 			a.unsupportedDevices[d.GetId()] = true
 			continue
 		}
+		ad.RoomHint = roomNameByDeviceID[d.GetId()]
 		delete(a.unsupportedDevices, d.GetId())
 		devices = append(devices, ad)
 	}

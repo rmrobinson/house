@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/rmrobinson/house/service/googlehome/cmd/googlehome-agentd",
     visibility = ["//visibility:private"],
     deps = [
+        "//api",
         "//service/googlehome/agent",
         "//service/googlehome/relay",
         "//service/lib/configutil",
