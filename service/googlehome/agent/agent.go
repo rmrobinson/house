@@ -16,6 +16,7 @@ import (
 	"github.com/rmrobinson/house/service/googlehome/relay"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 // executeCommandTimeout bounds each ExecuteCommand call this Agent issues
@@ -45,13 +46,14 @@ type Agent struct {
 	bridgeConn  *bridgeconn.Conn
 	relayClient relay.RelayServiceClient
 
-	// houseClient and buildingID are both optional - nil/empty disables
-	// SYNC's RoomHint lookup entirely (see processSyncRequest), the same
-	// "only takes effect when pointed at housed" caveat the
-	// google_home_visible toggle already has, since a standalone
-	// bridgefacaded has no HouseService to ask.
-	houseClient api2.HouseServiceClient
-	buildingID  string
+	// houseCfg is optional - a zero HouseServiceConfig disables SYNC's
+	// RoomHint lookup entirely (see processSyncRequest), the same "only
+	// takes effect when pointed at housed" caveat the google_home_visible
+	// toggle already has, since a standalone bridgefacaded has no
+	// HouseService to ask. Bundled into one struct (mirroring bridgeTLS
+	// right above) rather than two independent fields, so there's one
+	// nil check instead of a Client/BuildingID pair that can disagree.
+	houseCfg HouseServiceConfig
 
 	updates chan *api2.Update
 
@@ -70,19 +72,26 @@ type Agent struct {
 	mediaSessions map[string]context.CancelFunc
 }
 
+// HouseServiceConfig is the optional HouseService dependency SYNC's
+// RoomHint lookup needs - see Agent's own doc comment on houseCfg. A zero
+// value (Client == nil) disables the lookup; BuildingID is meaningless
+// without Client and ignored in that case.
+type HouseServiceConfig struct {
+	Client     api2.HouseServiceClient
+	BuildingID string
+}
+
 // New creates an Agent that will connect to bridgeAddr (BridgeService) and
 // use relayClient to reach googlehomed once Run is called, registering as
-// agentID. houseClient/buildingID are optional (nil/empty disables SYNC's
-// RoomHint lookup) - see the Agent struct's own doc comment on those
-// fields.
-func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string, houseClient api2.HouseServiceClient, buildingID string) *Agent {
+// agentID. houseCfg is optional (its zero value disables SYNC's RoomHint
+// lookup) - see the Agent struct's own doc comment on houseCfg.
+func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string, houseCfg HouseServiceConfig) *Agent {
 	return &Agent{
 		logger:             logger,
 		agentID:            agentID,
 		bridgeConn:         bridgeconn.New(logger, bridgeAddr, bridgeTLS),
 		relayClient:        relayClient,
-		houseClient:        houseClient,
-		buildingID:         buildingID,
+		houseCfg:           houseCfg,
 		updates:            make(chan *api2.Update, updateQueueSize),
 		unsupportedDevices: map[string]bool{},
 		mediaSessions:      map[string]context.CancelFunc{},
@@ -255,52 +264,50 @@ func (a *Agent) processRelayRequests(ctx context.Context, stream relay.RelayServ
 	}
 }
 
+// houseServiceTimeout bounds roomNamesByDeviceID's ListRooms call - same
+// value and reasoning as service/policy/housestate.rpcTimeout: without
+// this, a wedged HouseService connection blocks processRelayRequests'
+// single-threaded loop indefinitely (SYNC/QUERY/EXECUTE are all handled
+// synchronously there - only StartMediaSession gets its own goroutine),
+// stalling every other queued relay request behind it.
+const houseServiceTimeout = 10 * time.Second
+
 // roomNamesByDeviceID returns every linked device's room name, keyed by
 // device ID, for SYNC to set action.Device.RoomHint with - the only way
 // Google Home can distinguish two devices that otherwise share a display
 // name (see Device.Config.Name - nothing else about a device's identity
 // is shown in the Google Home UI). Returns an empty map, not an error, if
-// houseClient isn't configured at all (see the Agent struct's own doc
+// houseCfg isn't configured at all (see the Agent struct's own doc
 // comment) - a nil map here is just as safe to index as a populated one.
-// Two bulk HouseService calls (every room in the building, then every
-// device-room link house-wide) rather than one GetRoom per device,
-// avoiding an N+1 lookup on every SYNC.
+// One ListRooms call, not a ListDeviceLinks+GetRoom pair - a Room's
+// response already embeds its full linked Device list server-side (see
+// api/house.proto's Room.devices, populated by service/house.Service.
+// ListRooms), the same precedent service/policy/housestate.Adapter.
+// GetDeviceRoom's own doc comment documents for this exact lookup.
 func (a *Agent) roomNamesByDeviceID(ctx context.Context) (map[string]string, error) {
-	if a.houseClient == nil {
+	if a.houseCfg.Client == nil {
 		return nil, nil
 	}
 
-	roomStream, err := a.houseClient.ListRooms(ctx, &api2.ListRoomsRequest{BuildingId: &a.buildingID})
+	rpcCtx, cancel := context.WithTimeout(ctx, houseServiceTimeout)
+	defer cancel()
+
+	rooms, err := houseview.StreamAll(func(cb func(*api2.Room) error) error {
+		stream, err := a.houseCfg.Client.ListRooms(rpcCtx, &api2.ListRoomsRequest{BuildingId: &a.houseCfg.BuildingID})
+		if err != nil {
+			return err
+		}
+		return houseview.RecvAll[*api2.Room](stream, cb)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("listing rooms: %w", err)
 	}
-	roomNameByID := map[string]string{}
-	for {
-		room, err := roomStream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("listing rooms: %w", err)
-		}
-		roomNameByID[room.GetId()] = room.GetConfig().GetName()
-	}
 
-	linkStream, err := a.houseClient.ListDeviceLinks(ctx, &api2.ListDeviceLinksRequest{})
-	if err != nil {
-		return nil, fmt.Errorf("listing device room links: %w", err)
-	}
 	roomNameByDeviceID := map[string]string{}
-	for {
-		link, err := linkStream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("listing device room links: %w", err)
-		}
-		if name, ok := roomNameByID[link.GetRoomId()]; ok {
-			roomNameByDeviceID[link.GetDeviceId()] = name
+	for _, room := range rooms {
+		name := room.GetConfig().GetName()
+		for _, d := range room.GetDevices() {
+			roomNameByDeviceID[d.GetId()] = name
 		}
 	}
 	return roomNameByDeviceID, nil
@@ -322,7 +329,7 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	// would be with houseClient never configured at all.
 	roomNameByDeviceID, err := a.roomNamesByDeviceID(ctx)
 	if err != nil {
-		a.logger.Info("unable to load device room hints", zap.Error(err))
+		a.logger.Error("unable to load device room hints", zap.Error(err))
 	}
 
 	var devices []*action.Device

@@ -86,21 +86,22 @@ func main() {
 	defer relayConn.Close()
 	relayClient := relay.NewRelayServiceClient(relayConn)
 
-	var houseClient api2.HouseServiceClient
+	var houseCfg agent.HouseServiceConfig
+	houseAddr := viper.GetString("googlehome.house_addr")
 	buildingID := viper.GetString("googlehome.building_id")
-	if houseAddr := viper.GetString("googlehome.house_addr"); houseAddr != "" {
-		if buildingID == "" {
-			logger.Fatal("googlehome.house_addr is set; googlehome.building_id is required together with it")
-		}
+	if (houseAddr == "") != (buildingID == "") {
+		logger.Fatal("googlehome.house_addr and googlehome.building_id must be set together, or not at all")
+	}
+	if houseAddr != "" {
 		houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
 		if err != nil {
 			logger.Fatal("unable to dial house service", zap.String("address", houseAddr), zap.Error(err))
 		}
 		defer houseConn.Close()
-		houseClient = api2.NewHouseServiceClient(houseConn)
+		houseCfg = agent.HouseServiceConfig{Client: api2.NewHouseServiceClient(houseConn), BuildingID: buildingID}
 	}
 
-	a := agent.New(logger, bridgeAddr, tlsCfg, relayClient, agentID, houseClient, buildingID)
+	a := agent.New(logger, bridgeAddr, tlsCfg, relayClient, agentID, houseCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
