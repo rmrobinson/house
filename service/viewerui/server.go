@@ -123,6 +123,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /rooms/{id}/popup", s.handlePopup)
 	mux.HandleFunc("GET /rooms/{id}", s.handleRoom)
 	mux.HandleFunc("GET /rooms/{id}/camera/{device_id}", s.handleCamera)
+	mux.HandleFunc("POST /rooms/{id}/camera/{device_id}/whep", s.handleWHEP)
 	mux.HandleFunc("GET /devices/{id}/sparklines", s.handleSparklines)
 	mux.HandleFunc("POST /devices/{id}/commands", s.handleDeviceCommand)
 	return protect(mux)

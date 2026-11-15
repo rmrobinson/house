@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -359,7 +360,31 @@ func TestRoomDirectNavigationRedirectsToFullPage(t *testing.T) {
 func TestCameraFragmentCarriesWHEPURL(t *testing.T) {
 	s, _, _ := startTestServer(t)
 	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
-	assert.Contains(t, body, `data-whep="http://go2rtc:1984/api/webrtc?src=door"`)
+	assert.Contains(t, body, `data-whep="/rooms/r1/camera/cam1/whep"`, "same-origin proxy, not the http camera url (mixed content over https)")
+	assert.NotContains(t, body, "go2rtc:1984")
+}
+
+func TestWHEPRelayForwardsOfferToCamera(t *testing.T) {
+	var gotBody, gotType string
+	cam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody, gotType = string(b), r.Header.Get("Content-Type")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("v=0 answer"))
+	}))
+	defer cam.Close()
+
+	s, _, bridge := startTestServer(t)
+	bridge.camURL = cam.URL + "/api/webrtc?src=door"
+
+	rec := post(s, "/rooms/r1/camera/cam1/whep", "v=0 offer", true)
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	assert.Equal(t, "v=0 answer", rec.Body.String())
+	assert.Equal(t, "v=0 offer", gotBody)
+	assert.Equal(t, "application/sdp", gotType)
+
+	assert.Equal(t, http.StatusForbidden, post(s, "/rooms/r1/camera/cam1/whep", "x", false).Code, "CSRF guard applies")
+	assert.Equal(t, http.StatusNotFound, post(s, "/rooms/r1/camera/nope/whep", "x", true).Code)
 }
 
 func TestCameraFragmentRejectsNonHTTPURL(t *testing.T) {
@@ -592,7 +617,7 @@ func TestCameraPrefersWHEPEndpointOverLegacyURL(t *testing.T) {
 		{Protocol: apiTrait.MediaStream_WEBRTC_WHEP, Url: "http://go2rtc:1984/api/webrtc?src=door"},
 	}
 	body := get(s, "/rooms/r1/camera/cam1", "HX-Request", "true").Body.String()
-	assert.Contains(t, body, `data-whep="http://go2rtc:1984/api/webrtc?src=door"`)
+	assert.Contains(t, body, `data-whep="/rooms/r1/camera/cam1/whep"`)
 	assert.NotContains(t, body, "hunter2")
 }
 

@@ -1,14 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/api/command"
+	apiDevice "github.com/rmrobinson/house/api/device"
 	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
@@ -174,28 +179,95 @@ func (s *Server) handleCamera(w http.ResponseWriter, r *http.Request) {
 	roomID, deviceID := r.PathValue("id"), r.PathValue("device_id")
 
 	// Only serve a stream for a camera actually linked to this room.
-	room, err := s.house.GetRoom(r.Context(), &api2.GetRoomRequest{Id: roomID})
+	d, err := s.linkedCamera(r.Context(), roomID, deviceID)
 	if err != nil {
 		s.httpError(w, r, err)
 		return
 	}
-	linked := false
-	for _, rd := range room.GetDevices() {
-		linked = linked || rd.GetId() == deviceID
-	}
-	d, err := s.bridge.GetDevice(r.Context(), &api2.GetDeviceRequest{Id: deviceID})
-	if err != nil {
-		s.httpError(w, r, err)
-		return
-	}
-	if !linked || d.GetCamera() == nil {
+	if d == nil {
 		http.NotFound(w, r)
 		return
 	}
 
 	cv := cameraView{RoomID: roomID, Name: houseview.DisplayName(d), ICEServers: s.iceServersJSON}
 	cv.URL, cv.Message = whepURL(d.GetCamera().GetMediaStream())
+	if cv.URL != "" {
+		cv.URL = whepProxyPath(roomID, deviceID)
+	}
 	s.renderFragment(w, "camera", cv)
+}
+
+// whepProxyPath is the same-origin URL the browser POSTs its WHEP offer to.
+// The camera's own WHEP url is typically plain http on the LAN, which a page
+// served over https may not fetch (mixed content), so viewerui relays it.
+func whepProxyPath(roomID, deviceID string) string {
+	return "/rooms/" + url.PathEscape(roomID) + "/camera/" + url.PathEscape(deviceID) + "/whep"
+}
+
+// linkedCamera returns the camera device iff it is linked to the room; nil,
+// nil when it isn't (or isn't a camera).
+func (s *Server) linkedCamera(ctx context.Context, roomID, deviceID string) (*apiDevice.Device, error) {
+	room, err := s.house.GetRoom(ctx, &api2.GetRoomRequest{Id: roomID})
+	if err != nil {
+		return nil, err
+	}
+	linked := false
+	for _, rd := range room.GetDevices() {
+		linked = linked || rd.GetId() == deviceID
+	}
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		return nil, err
+	}
+	if !linked || d.GetCamera() == nil {
+		return nil, nil
+	}
+	return d, nil
+}
+
+var whepClient = &http.Client{Timeout: 15 * time.Second}
+
+// handleWHEP relays a browser's WHEP SDP offer to the camera's WHEP endpoint
+// and returns the SDP answer. Only the endpoint the camera itself reports is
+// ever contacted, never a caller-supplied url. Media flows peer-to-peer, not
+// through here.
+func (s *Server) handleWHEP(w http.ResponseWriter, r *http.Request) {
+	d, err := s.linkedCamera(r.Context(), r.PathValue("id"), r.PathValue("device_id"))
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	if d == nil {
+		http.NotFound(w, r)
+		return
+	}
+	target, _ := whepURL(d.GetCamera().GetMediaStream())
+	if target == "" {
+		http.NotFound(w, r)
+		return
+	}
+	offer, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64<<10))
+	if err != nil {
+		http.Error(w, "invalid offer", http.StatusBadRequest)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(offer))
+	if err != nil {
+		http.Error(w, "bad camera url", http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("Content-Type", "application/sdp")
+	resp, err := whepClient.Do(req)
+	if err != nil {
+		s.logger.Warn("whep relay failed", zap.String("device", d.GetId()), zap.Error(err))
+		http.Error(w, "camera unreachable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/sdp")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 64<<10))
 }
 
 // handleDeviceCommand applies one control to a device and swaps in its
