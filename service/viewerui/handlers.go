@@ -225,7 +225,12 @@ func (s *Server) linkedCamera(ctx context.Context, roomID, deviceID string) (*ap
 	return d, nil
 }
 
-var whepClient = &http.Client{Timeout: 15 * time.Second}
+// whepClient never follows redirects: the relay only talks to the endpoint
+// the camera reported, not wherever that endpoint points next.
+var whepClient = &http.Client{
+	Timeout:       15 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // handleWHEP relays a browser's WHEP SDP offer to the camera's WHEP endpoint
 // and returns the SDP answer. Only the endpoint the camera itself reports is
@@ -264,6 +269,14 @@ func (s *Server) handleWHEP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	// Only a successful answer is relayed; anything else (errors, redirects,
+	// HTML error pages) becomes a generic 502 so upstream text never reaches
+	// the browser mislabelled as SDP.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		s.logger.Warn("whep relay: camera rejected offer", zap.String("device", d.GetId()), zap.Int("status", resp.StatusCode))
+		http.Error(w, "camera rejected the stream request", http.StatusBadGateway)
+		return
+	}
 	w.Header().Set("Content-Type", "application/sdp")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(resp.StatusCode)

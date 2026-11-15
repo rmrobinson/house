@@ -387,6 +387,48 @@ func TestWHEPRelayForwardsOfferToCamera(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, post(s, "/rooms/r1/camera/nope/whep", "x", true).Code)
 }
 
+func TestWHEPRelayHidesUpstreamErrorsAndDoesNotFollowRedirects(t *testing.T) {
+	var hits int
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer evil.Close()
+	status := http.StatusInternalServerError
+	cam := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status == http.StatusTemporaryRedirect {
+			http.Redirect(w, r, evil.URL, status)
+			return
+		}
+		w.WriteHeader(status)
+		w.Write([]byte("<html>go2rtc secret internals</html>"))
+	}))
+	defer cam.Close()
+
+	s, _, bridge := startTestServer(t)
+	bridge.camURL = cam.URL + "/api/webrtc?src=door"
+
+	for _, st := range []int{http.StatusInternalServerError, http.StatusTemporaryRedirect} {
+		status = st
+		rec := post(s, "/rooms/r1/camera/cam1/whep", "v=0 offer", true)
+		assert.Equal(t, http.StatusBadGateway, rec.Code, "upstream %d", st)
+		assert.NotContains(t, rec.Body.String(), "secret internals")
+	}
+	assert.Zero(t, hits, "redirect target must never be contacted")
+}
+
+func TestPopupUsesWHEPProxyPath(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	body := get(s, "/rooms/r1/popup").Body.String()
+	assert.Contains(t, body, `data-whep="/rooms/r1/camera/cam1/whep"`)
+	assert.NotContains(t, body, "go2rtc:1984")
+}
+
+func TestWHEPRelayRefusesCameraFromAnotherRoom(t *testing.T) {
+	s, _, _ := startTestServer(t)
+	// cam1 is linked to r1 only; r2 (or any unknown room) must not reach it.
+	rec := post(s, "/rooms/r2/camera/cam1/whep", "x", true)
+	assert.Contains(t, []int{http.StatusNotFound, http.StatusBadGateway, http.StatusInternalServerError}, rec.Code)
+	assert.NotEqual(t, http.StatusOK, rec.Code)
+}
+
 func TestCameraFragmentRejectsNonHTTPURL(t *testing.T) {
 	s, _, bridge := startTestServer(t)
 	bridge.camURL = "rtsp://cam.local/stream"
