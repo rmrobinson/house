@@ -15,9 +15,9 @@ import (
 // against the real Device.version read from the bridge, not against this
 // table (see DeviceConfigOverlay.UpdateDeviceConfig).
 type DeviceConfig struct {
-	ID               string
-	Name             string
-	GoogleHomeHidden bool
+	ID                string
+	Name              string
+	GoogleHomeVisible bool
 }
 
 // SetDeviceConfig upserts deviceID's name and Google Home visibility
@@ -25,25 +25,25 @@ type DeviceConfig struct {
 // current desired value (read fresh via GetDevice first), the same
 // whole-object-write convention as the rest of this table's callers, so
 // there's no partial-update ambiguity to resolve here.
-func (db *Database) SetDeviceConfig(ctx context.Context, deviceID, name string, googleHomeHidden bool) (*DeviceConfig, error) {
+func (db *Database) SetDeviceConfig(ctx context.Context, deviceID, name string, googleHomeVisible bool) (*DeviceConfig, error) {
 	_, err := db.db.ExecContext(ctx,
-		`INSERT INTO device_config (id, name, google_home_hidden) VALUES (?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET name=excluded.name, google_home_hidden=excluded.google_home_hidden`,
-		deviceID, name, googleHomeHidden)
+		`INSERT INTO device_config (id, name, google_home_visible) VALUES (?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET name=excluded.name, google_home_visible=excluded.google_home_visible`,
+		deviceID, name, googleHomeVisible)
 	if err != nil {
 		db.logger.Error("unable to set device config", zap.String("device_id", deviceID), zap.Error(err))
 		return nil, err
 	}
-	return &DeviceConfig{ID: deviceID, Name: name, GoogleHomeHidden: googleHomeHidden}, nil
+	return &DeviceConfig{ID: deviceID, Name: name, GoogleHomeVisible: googleHomeVisible}, nil
 }
 
 // GetDeviceConfig retrieves deviceID's stored override, or nil if none has
 // ever been set.
 func (db *Database) GetDeviceConfig(ctx context.Context, deviceID string) (*DeviceConfig, error) {
 	cfg := &DeviceConfig{}
-	row := db.db.QueryRowContext(ctx, "SELECT id, name, google_home_hidden FROM device_config WHERE id=?", deviceID)
+	row := db.db.QueryRowContext(ctx, "SELECT id, name, google_home_visible FROM device_config WHERE id=?", deviceID)
 
-	if err := row.Scan(&cfg.ID, &cfg.Name, &cfg.GoogleHomeHidden); err == sql.ErrNoRows {
+	if err := row.Scan(&cfg.ID, &cfg.Name, &cfg.GoogleHomeVisible); err == sql.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
 		db.logger.Error("unable to retrieve device config", zap.String("device_id", deviceID), zap.Error(err))
@@ -56,7 +56,7 @@ func (db *Database) GetDeviceConfig(ctx context.Context, deviceID string) (*Devi
 // used to overlay a whole ListDevices response in one query rather than one
 // GetDeviceConfig per device.
 func (db *Database) ListDeviceConfigs(ctx context.Context) (map[string]DeviceConfig, error) {
-	rows, err := db.db.QueryContext(ctx, "SELECT id, name, google_home_hidden FROM device_config")
+	rows, err := db.db.QueryContext(ctx, "SELECT id, name, google_home_visible FROM device_config")
 	if err != nil {
 		db.logger.Error("unable to list device configs", zap.Error(err))
 		return nil, err
@@ -66,7 +66,7 @@ func (db *Database) ListDeviceConfigs(ctx context.Context) (map[string]DeviceCon
 	out := map[string]DeviceConfig{}
 	for rows.Next() {
 		var cfg DeviceConfig
-		if err := rows.Scan(&cfg.ID, &cfg.Name, &cfg.GoogleHomeHidden); err != nil {
+		if err := rows.Scan(&cfg.ID, &cfg.Name, &cfg.GoogleHomeVisible); err != nil {
 			db.logger.Error("unable to scan device config row", zap.Error(err))
 			return nil, err
 		}

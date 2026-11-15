@@ -17,9 +17,13 @@ import (
 
 // DeviceConfigOverlay wraps a BridgeService implementation - normally the
 // embedded facade.Facade (see cmd/housed/main.go) - so a device's
-// Config.Name can be renamed, and its Config.GoogleHomeHidden flipped, from
-// housed's own admin surface without any support from the owning bridge. No
-// bridge in this repo actually
+// Config.Name can be renamed, and its Config.GoogleHomeVisible flipped, from
+// housed's own admin surface without any support from the owning bridge.
+// Google Home visibility is opt-in by construction, not by any special-case
+// code here: GoogleHomeVisible's zero value is false, so a device with no
+// stored override at all - or whose override lookup fails - is already
+// hidden simply by being left untouched; only an explicit override can make
+// it visible. No bridge in this repo actually
 // implements UpdateDeviceConfig (every bridge.Service embeds service/bridge.
 // API's stub, which returns Unimplemented - see bridges/cast's deviceConfig.
 // Name doc comment), so forwarding the write upstream the way facade.Facade
@@ -55,9 +59,9 @@ func NewDeviceConfigOverlay(logger *zap.Logger, inner api2.BridgeServiceServer, 
 	return &DeviceConfigOverlay{logger: logger, inner: inner, db: database}
 }
 
-// applyOverride replaces d.Config.Name and d.Config.GoogleHomeHidden with
+// applyOverride replaces d.Config.Name and d.Config.GoogleHomeVisible with
 // cfg's, if cfg is non-nil. d.Config.Description is left untouched either
-// way - only Name and GoogleHomeHidden are ever stored as overrides. d is
+// way - only Name and GoogleHomeVisible are ever stored as overrides. d is
 // mutated in place: every call site here already holds a Device it owns
 // outright (freshly returned from inner, which itself only ever hands out
 // proto.Clone'd messages - see facade.Facade's doc comment), never a
@@ -67,16 +71,18 @@ func applyOverride(d *device.Device, cfg *db.DeviceConfig) {
 		return
 	}
 	d.Config = &device.Device_Config{
-		Name:             cfg.Name,
-		Description:      d.GetConfig().GetDescription(),
-		GoogleHomeHidden: cfg.GoogleHomeHidden,
+		Name:              cfg.Name,
+		Description:       d.GetConfig().GetDescription(),
+		GoogleHomeVisible: cfg.GoogleHomeVisible,
 	}
 }
 
 // overlayOne fetches deviceID's stored override, if any, and applies it to
 // d. A lookup failure is logged and otherwise ignored - d is still returned
 // with the bridge-reported name, same tolerant-of-a-missing-override stance
-// as a cfg that's simply nil.
+// as a cfg that's simply nil: either way d.Config.GoogleHomeVisible is left
+// at its zero value (false/hidden), which is already the correct opt-in
+// default - nothing further to force.
 func (o *DeviceConfigOverlay) overlayOne(ctx context.Context, d *device.Device) *device.Device {
 	if d == nil {
 		return d
@@ -112,6 +118,8 @@ func (o *DeviceConfigOverlay) ListDevices(ctx context.Context, req *api2.ListDev
 		if cfg, ok := overrides[d.GetId()]; ok {
 			applyOverride(d, &cfg)
 		}
+		// No override at all leaves GoogleHomeVisible at its zero value
+		// (false/hidden) - already correct, nothing to force.
 	}
 	return resp, nil
 }
@@ -140,7 +148,7 @@ func (o *DeviceConfigOverlay) GetDevice(ctx context.Context, req *api2.GetDevice
 // tradeoff adminui already makes elsewhere (see server.go's teardown doc
 // comment).
 //
-// req.Config carries both Name and GoogleHomeHidden together, and both are
+// req.Config carries both Name and GoogleHomeVisible together, and both are
 // always written - there's no partial-update support (proto3 gives a bool
 // field no way to distinguish "leave as-is" from "set to false"), so every
 // caller is expected to read the device's current full Config first and
@@ -162,7 +170,7 @@ func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.
 		return nil, bridge.ErrVersionMismatch
 	}
 
-	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name, req.GetConfig().GetGoogleHomeHidden())
+	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name, req.GetConfig().GetGoogleHomeVisible())
 	if err != nil {
 		return nil, status.Error(codes.Internal, "unable to save device config")
 	}
