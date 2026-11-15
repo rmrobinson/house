@@ -19,7 +19,7 @@ googlehome:
   # See oauth.go's doc comment for why a single-user deployment doesn't
   # need a real multi-user OAuth2 server, just this static value gated by
   # oauth.client_id/client_secret below.
-  auth_token: "!secret googlehome_auth_token"
+  auth_token: !secret googlehome_auth_token
 
   homegraph:
     # Google service account key with HomeGraph API access, for the project
@@ -43,8 +43,17 @@ googlehome:
   # console as "oauth-redirect.googleusercontent.com/r/<project-id>"
   # (or the "-sandbox" variant while testing).
   oauth:
-    client_id: "!secret googlehome_oauth_client_id"
-    client_secret: "!secret googlehome_oauth_client_secret"
+    # Unquoted - !secret is a YAML tag applied to the scalar that follows,
+    # which configutil.ResolveSecrets looks for by node.Tag; quoting the
+    # whole thing ("!secret foo") makes it an ordinary string instead (the
+    # "!" has no special meaning inside quotes) and it's never resolved at
+    # all - the literal text "!secret foo" ends up as the real value. This
+    # was a real bug here, caught live: cfg.clientID was the unresolved
+    # literal string, not the actual client ID, so every account-linking
+    # attempt failed with error=unauthorized_client, with no symptom in
+    # any config validation, only in Google's own OAuth error redirect.
+    client_id: !secret googlehome_oauth_client_id
+    client_secret: !secret googlehome_oauth_client_secret
     redirect_uri: "https://oauth-redirect.googleusercontent.com/r/<your-project-id>"
 
   # Optional: mutual TLS for relay_listen_port - same convention as every
