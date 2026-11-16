@@ -55,18 +55,13 @@ func NewSessionManager() *SessionManager {
 // Mint creates a new session for deviceID, owned by agentID (so a later
 // SweepForAgent can find it if that agent's relay stream drops), and
 // returns its session_id and bearer token. Opportunistically sweeps
-// already-expired sessions first, since nothing else reaps them if an
-// offer never arrives.
+// already-expired sessions first (ignoring the result - see SweepExpired's
+// doc comment for why that's fine here specifically).
 func (m *SessionManager) Mint(agentID, deviceID string) (sessionID, token string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	now := time.Now()
-	for id, s := range m.sessions {
-		if now.After(s.expiry) {
-			delete(m.sessions, id)
-		}
-	}
+	m.sweepExpiredLocked()
 
 	sessionID = uuid.New().String()
 	token = uuid.New().String()
@@ -74,7 +69,7 @@ func (m *SessionManager) Mint(agentID, deviceID string) (sessionID, token string
 		deviceID: deviceID,
 		agentID:  agentID,
 		token:    token,
-		expiry:   now.Add(mediaSessionOfferTTL),
+		expiry:   time.Now().Add(mediaSessionOfferTTL),
 	}
 	return sessionID, token
 }
@@ -118,6 +113,42 @@ func (m *SessionManager) Expire(sessionID string) (agentID string, ok bool) {
 	}
 	delete(m.sessions, sessionID)
 	return s.agentID, true
+}
+
+// ExpiredSession identifies one session SweepExpired just removed, for the
+// caller to notify.
+type ExpiredSession struct {
+	AgentID   string
+	SessionID string
+}
+
+// sweepExpiredLocked removes every session past its expiry, returning who
+// to notify. m.mu must already be held by the caller.
+func (m *SessionManager) sweepExpiredLocked() []ExpiredSession {
+	var expired []ExpiredSession
+	now := time.Now()
+	for id, s := range m.sessions {
+		if now.After(s.expiry) {
+			expired = append(expired, ExpiredSession{AgentID: s.agentID, SessionID: id})
+			delete(m.sessions, id)
+		}
+	}
+	return expired
+}
+
+// SweepExpired removes every session past its expiry and returns who to
+// notify - meant to be called periodically (see main.go's sweep loop).
+// Mint's own opportunistic sweep uses the same underlying logic but
+// discards the result: it only runs when a new camera session happens to
+// be minted, which could be arbitrarily rare, and silently dropping the
+// bookkeeping there without notifying the agent would just leave it
+// pulling WHEP/pushing RTP forever for a session nobody will ever claim -
+// exactly the bug this periodic sweep exists to avoid for the common
+// case (Google's client never POSTs an offer at all).
+func (m *SessionManager) SweepExpired() []ExpiredSession {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sweepExpiredLocked()
 }
 
 // SweepForAgent removes and returns the session_ids owned by agentID -
