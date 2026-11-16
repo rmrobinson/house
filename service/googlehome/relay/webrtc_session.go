@@ -21,6 +21,15 @@ var ErrMediaSessionNotFound = errors.New("relay: webrtc session not found")
 // created from the same capability, not matched to anything else.
 const cameraStreamVideoPayloadType = 102
 
+// cameraStreamSTUNServer is required for this PeerConnection to discover a
+// server-reflexive candidate at all - googhome is self-hosted behind a home
+// NAT (see network-config's gw iptables, which only forwards TCP 80/443 to
+// this host, no UDP media range), so without a STUN server the only
+// candidates offered are local host ones, which the phone's client has no
+// route to. No TURN server yet - add one if STUN-derived reflexive
+// candidates still can't traverse NAT (e.g. symmetric NAT on either end).
+const cameraStreamSTUNServer = "stun:stun.l.google.com:19302"
+
 // WebRTCSessionManager owns one ephemeral pion PeerConnection per active
 // camera session - created when Google's client POSTs its SDP offer to
 // cmd/googlehomed's signaling endpoint, destroyed on an explicit "end",
@@ -113,7 +122,9 @@ func (w *WebRTCSessionManager) HandleOffer(sessionID, offerSDP string) (answerSD
 		return "", err
 	}
 
-	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine)).NewPeerConnection(webrtc.Configuration{})
+	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine)).NewPeerConnection(webrtc.Configuration{
+		ICEServers: []webrtc.ICEServer{{URLs: []string{cameraStreamSTUNServer}}},
+	})
 	if err != nil {
 		w.teardown(sessionID, "")
 		return "", err
@@ -199,6 +210,14 @@ func (w *WebRTCSessionManager) WritePacket(sessionID string, rtp []byte) error {
 // HandleEnd tears sessionID down in response to an explicit "end" POST
 // from Google's client.
 func (w *WebRTCSessionManager) HandleEnd(sessionID string) {
+	// teardown() itself stays silent for this path (see its own doc
+	// comment - an "end" is the expected, routine case), but without a
+	// log here a legitimate client-initiated end is indistinguishable
+	// from any other request simply finding the session already gone
+	// (e.g. the next camera_signaling.go request logging "invalid or
+	// expired session") - log it here instead, where we know for
+	// certain this specific call is a real "end" action.
+	w.logger.Info("camera signaling: ending media session", zap.String("session_id", sessionID))
 	w.teardown(sessionID, "")
 }
 
