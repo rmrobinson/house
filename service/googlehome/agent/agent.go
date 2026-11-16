@@ -16,6 +16,7 @@ import (
 	"github.com/rmrobinson/house/service/googlehome/relay"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
+	"github.com/rmrobinson/house/service/lib/houseview"
 )
 
 // executeCommandTimeout bounds each ExecuteCommand call this Agent issues
@@ -45,6 +46,15 @@ type Agent struct {
 	bridgeConn  *bridgeconn.Conn
 	relayClient relay.RelayServiceClient
 
+	// houseCfg is optional - a zero HouseServiceConfig disables SYNC's
+	// RoomHint lookup entirely (see processSyncRequest), the same "only
+	// takes effect when pointed at housed" caveat the google_home_visible
+	// toggle already has, since a standalone bridgefacaded has no
+	// HouseService to ask. Bundled into one struct (mirroring bridgeTLS
+	// right above) rather than two independent fields, so there's one
+	// nil check instead of a Client/BuildingID pair that can disagree.
+	houseCfg HouseServiceConfig
+
 	updates chan *api2.Update
 
 	// sendMu serializes every stream.Send call on the one relay stream:
@@ -62,15 +72,26 @@ type Agent struct {
 	mediaSessions map[string]context.CancelFunc
 }
 
+// HouseServiceConfig is the optional HouseService dependency SYNC's
+// RoomHint lookup needs - see Agent's own doc comment on houseCfg. A zero
+// value (Client == nil) disables the lookup; BuildingID is meaningless
+// without Client and ignored in that case.
+type HouseServiceConfig struct {
+	Client     api2.HouseServiceClient
+	BuildingID string
+}
+
 // New creates an Agent that will connect to bridgeAddr (BridgeService) and
 // use relayClient to reach googlehomed once Run is called, registering as
-// agentID.
-func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string) *Agent {
+// agentID. houseCfg is optional (its zero value disables SYNC's RoomHint
+// lookup) - see the Agent struct's own doc comment on houseCfg.
+func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSConfig, relayClient relay.RelayServiceClient, agentID string, houseCfg HouseServiceConfig) *Agent {
 	return &Agent{
 		logger:             logger,
 		agentID:            agentID,
 		bridgeConn:         bridgeconn.New(logger, bridgeAddr, bridgeTLS),
 		relayClient:        relayClient,
+		houseCfg:           houseCfg,
 		updates:            make(chan *api2.Update, updateQueueSize),
 		unsupportedDevices: map[string]bool{},
 		mediaSessions:      map[string]context.CancelFunc{},
@@ -243,6 +264,67 @@ func (a *Agent) processRelayRequests(ctx context.Context, stream relay.RelayServ
 	}
 }
 
+// houseServiceTimeout bounds roomNamesByDeviceID's ListRooms call - same
+// value and reasoning as service/policy/housestate.rpcTimeout: without
+// this, a wedged HouseService connection blocks processRelayRequests'
+// single-threaded loop indefinitely (SYNC/QUERY/EXECUTE are all handled
+// synchronously there - only StartMediaSession gets its own goroutine),
+// stalling every other queued relay request behind it.
+const houseServiceTimeout = 10 * time.Second
+
+// roomNamesByDeviceID returns every linked device's room name, keyed by
+// device ID, for SYNC to set action.Device.RoomHint with - the only way
+// Google Home can distinguish two devices that otherwise share a display
+// name (see Device.Config.Name - nothing else about a device's identity
+// is shown in the Google Home UI). Returns an empty map, not an error, if
+// houseCfg isn't configured at all (see the Agent struct's own doc
+// comment) - a nil map here is just as safe to index as a populated one.
+// One ListRooms call, not a ListDeviceLinks+GetRoom pair - a Room's
+// response already embeds its full linked Device list server-side (see
+// api/house.proto's Room.devices, populated by service/house.Service.
+// ListRooms), the same precedent service/policy/housestate.Adapter.
+// GetDeviceRoom's own doc comment documents for this exact lookup.
+func (a *Agent) roomNamesByDeviceID(ctx context.Context) (map[string]string, error) {
+	if a.houseCfg.Client == nil {
+		return nil, nil
+	}
+	if a.houseCfg.BuildingID == "" {
+		// main.go's own startup check already rejects this combination
+		// today, but that invariant isn't enforced by this type itself -
+		// a future caller (another cmd/*, a test, a main.go refactor)
+		// could construct a HouseServiceConfig with a non-nil Client and
+		// an empty BuildingID. Without this check, ListRooms would run
+		// with BuildingId pointing at "", matching no real room, and
+		// silently return zero rows with a nil error - RoomHint would
+		// just never be set, forever, with nothing to indicate why.
+		a.logger.Error("houseCfg.Client is set but BuildingID is empty - room hints disabled")
+		return nil, nil
+	}
+
+	rpcCtx, cancel := context.WithTimeout(ctx, houseServiceTimeout)
+	defer cancel()
+
+	rooms, err := houseview.StreamAll(func(cb func(*api2.Room) error) error {
+		stream, err := a.houseCfg.Client.ListRooms(rpcCtx, &api2.ListRoomsRequest{BuildingId: &a.houseCfg.BuildingID})
+		if err != nil {
+			return err
+		}
+		return houseview.RecvAll[*api2.Room](stream, cb)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing rooms: %w", err)
+	}
+
+	roomNameByDeviceID := map[string]string{}
+	for _, room := range rooms {
+		name := room.GetConfig().GetName()
+		for _, d := range room.GetDevices() {
+			roomNameByDeviceID[d.GetId()] = name
+		}
+	}
+	return roomNameByDeviceID, nil
+}
+
 func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	client := a.bridgeConn.Client()
 	if client == nil {
@@ -252,6 +334,14 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 	listResp, err := client.ListDevices(ctx, &api2.ListDevicesRequest{})
 	if err != nil {
 		return &relay.SyncResponse{ErrorDetails: err.Error()}
+	}
+
+	// Best-effort: a lookup failure here shouldn't fail the whole SYNC,
+	// it should just leave RoomHint unset for every device, same as it
+	// would be with houseClient never configured at all.
+	roomNameByDeviceID, err := a.roomNamesByDeviceID(ctx)
+	if err != nil {
+		a.logger.Error("unable to load device room hints", zap.Error(err))
 	}
 
 	var devices []*action.Device
@@ -271,6 +361,7 @@ func (a *Agent) processSyncRequest(ctx context.Context) *relay.SyncResponse {
 			a.unsupportedDevices[d.GetId()] = true
 			continue
 		}
+		ad.RoomHint = roomNameByDeviceID[d.GetId()]
 		delete(a.unsupportedDevices, d.GetId())
 		devices = append(devices, ad)
 	}

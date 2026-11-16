@@ -9,9 +9,15 @@
 // Validate (see cmd/googlehomed's staticTokenValidator) - house is a
 // single-building system, so there is exactly one of each.
 //
-// googlehome.tls.* configures mutual TLS for dialing both --bridge-addr and
-// --relay-addr - same one-identity-for-every-role convention as policyd's
-// --tls-cert/--tls-key/--tls-ca (see service/policy/cmd/policyd/main.go).
+// googlehome.tls.* configures mutual TLS for dialing --bridge-addr,
+// --relay-addr, and --house-addr alike - same one-identity-for-every-role
+// convention as policyd's --tls-cert/--tls-key/--tls-ca (see
+// service/policy/cmd/policyd/main.go).
+//
+// googlehome.house_addr/building_id are both optional together - unset,
+// SYNC just never sets a device's RoomHint (see agent.Agent's own doc
+// comment on why: a standalone bridgefacaded, unlike housed, has no
+// HouseService to ask at all).
 package main
 
 import (
@@ -24,6 +30,7 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	api2 "github.com/rmrobinson/house/api"
 	"github.com/rmrobinson/house/service/googlehome/agent"
 	"github.com/rmrobinson/house/service/googlehome/relay"
 	"github.com/rmrobinson/house/service/lib/configutil"
@@ -79,7 +86,22 @@ func main() {
 	defer relayConn.Close()
 	relayClient := relay.NewRelayServiceClient(relayConn)
 
-	a := agent.New(logger, bridgeAddr, tlsCfg, relayClient, agentID)
+	var houseCfg agent.HouseServiceConfig
+	houseAddr := viper.GetString("googlehome.house_addr")
+	buildingID := viper.GetString("googlehome.building_id")
+	if (houseAddr == "") != (buildingID == "") {
+		logger.Fatal("googlehome.house_addr and googlehome.building_id must be set together, or not at all")
+	}
+	if houseAddr != "" {
+		houseConn, err := grpcutil.Dial(houseAddr, tlsCfg)
+		if err != nil {
+			logger.Fatal("unable to dial house service", zap.String("address", houseAddr), zap.Error(err))
+		}
+		defer houseConn.Close()
+		houseCfg = agent.HouseServiceConfig{Client: api2.NewHouseServiceClient(houseConn), BuildingID: buildingID}
+	}
+
+	a := agent.New(logger, bridgeAddr, tlsCfg, relayClient, agentID, houseCfg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
