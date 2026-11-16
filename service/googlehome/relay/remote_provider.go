@@ -317,12 +317,24 @@ func (m *RemoteProvider) getCameraStream(ctx context.Context, deviceID string, p
 
 	sessionID, token := m.sessionMgr.Mint(m.agentID, deviceID)
 
-	if err := m.StartMediaSession(ctx, sessionID, deviceID); err != nil {
+	// Elapsed is logged either way - StartMediaSession blocks the whole
+	// EXECUTE call on the agent's real WHEP pull round trip, and Google's
+	// own EXECUTE timeout is outside our control/visibility; if it's
+	// tighter than this takes, Google gives up before ever receiving the
+	// signaling URL at all, which looks identical to "nothing happened"
+	// from every log this package already had before this one. Found
+	// live: no success path here was ever logged at all, silent either way.
+	start := time.Now()
+	err := m.StartMediaSession(ctx, sessionID, deviceID)
+	elapsed := time.Since(start)
+	if err != nil {
 		m.logger.Info("media session failed to start",
-			zap.String("agent_id", m.agentID), zap.String("device_id", deviceID), zap.Error(err))
+			zap.String("agent_id", m.agentID), zap.String("device_id", deviceID), zap.Duration("elapsed", elapsed), zap.Error(err))
 		m.sessionMgr.Expire(sessionID)
 		return action.DeviceState{}, false
 	}
+	m.logger.Info("media session ready",
+		zap.String("agent_id", m.agentID), zap.String("device_id", deviceID), zap.String("session_id", sessionID), zap.Duration("elapsed", elapsed))
 
 	state := action.NewDeviceState(true)
 	state.State["cameraStreamProtocol"] = "webrtc"

@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
@@ -113,6 +114,23 @@ func main() {
 		}
 	})
 	relayAPI := relay.NewAPI(logger, providerSvc, actionSvc, sessionMgr, webrtcMgr, publicBaseURL)
+
+	// webrtcMgr's own onTeardown callback above only fires once a session
+	// has reached HandleOffer - it never learns about one whose offer
+	// never arrives at all (Google's client not POSTing to the signaling
+	// endpoint, found live to be the common case, not the exception), so
+	// nothing else ever tells the agent to stop pulling WHEP/pushing RTP
+	// for it. This sweep is what actually does that, independent of
+	// Mint's own opportunistic (but silent, non-notifying) sweep.
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			for _, expired := range sessionMgr.SweepExpired() {
+				providerSvc.StopMediaSession(expired.AgentID, expired.SessionID)
+			}
+		}
+	}()
 
 	authCodes := newAuthCodeStore()
 

@@ -100,3 +100,32 @@ func TestSessionManager_MintSweepsExpiredEntries(t *testing.T) {
 	m.mu.Unlock()
 	assert.False(t, stillThere, "Mint should opportunistically reap already-expired sessions")
 }
+
+// TestSessionManager_SweepExpiredNotifiesOwner covers the real bug this
+// method exists to fix: a session whose offer never arrives at all (not
+// one that failed/disconnected after signaling) was never reaped by
+// anything that actually notified the owning agent - only by Mint's own
+// silent, best-effort sweep, which doesn't run at all unless a new
+// session happens to be minted. The agent would otherwise keep pulling
+// WHEP/pushing RTP for it indefinitely.
+func TestSessionManager_SweepExpiredNotifiesOwner(t *testing.T) {
+	m := NewSessionManager()
+	staleID, _ := m.Mint("agent1", "device1")
+	freshID, _ := m.Mint("agent1", "device2")
+	m.mu.Lock()
+	m.sessions[staleID].expiry = time.Now().Add(-time.Minute)
+	m.mu.Unlock()
+
+	expired := m.SweepExpired()
+	assert.Equal(t, []ExpiredSession{{AgentID: "agent1", SessionID: staleID}}, expired)
+
+	m.mu.Lock()
+	_, staleStillThere := m.sessions[staleID]
+	_, freshStillThere := m.sessions[freshID]
+	m.mu.Unlock()
+	assert.False(t, staleStillThere)
+	assert.True(t, freshStillThere, "SweepExpired must not touch a session that hasn't expired yet")
+
+	// A second sweep with nothing newly expired reports no one to notify.
+	assert.Empty(t, m.SweepExpired())
+}
