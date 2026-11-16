@@ -383,12 +383,7 @@ func avLikeStateToAction(online bool, onOff *trait.OnOff, volume *trait.Volume, 
 		ds.RecordVolume(int(volume.GetState().GetLevel()), volume.GetState().GetIsMuted())
 	}
 	if input != nil {
-		// Not ds.RecordInput: the vendored library's own helper sets
-		// State["input"], but Google's InputSelector trait requires the
-		// reportable field to be named "currentInput" - confirmed live,
-		// ReportState rejected every AVReceiver/Television device with
-		// "400 invalid argument" until this was set directly instead.
-		ds.State["currentInput"] = input.GetState().GetCurrentInputId()
+		ds.RecordInput(input.GetState().GetCurrentInputId())
 	}
 	return ds
 }
