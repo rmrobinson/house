@@ -84,3 +84,20 @@ func TestRoomNamesByDeviceID_NoHouseClient(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, names)
 }
+
+// TestRoomNamesByDeviceID_ClientSetButNoBuildingID covers a misconfigured
+// HouseServiceConfig (Client set, BuildingID empty) - main.go's own
+// startup check already prevents constructing one today, but this guards
+// the invariant at the type's own point of use too, so a future caller
+// can't silently query ListRooms with an empty BuildingId and get back
+// zero rows with no signal anything is wrong.
+func TestRoomNamesByDeviceID_ClientSetButNoBuildingID(t *testing.T) {
+	house := &fakeHouseClient{rooms: []*api2.Room{
+		{Id: "room1", Config: &api2.Room_Config{Name: "Office"}, Devices: []*apiDevice.Device{{Id: "d1"}}},
+	}}
+	a := &Agent{houseCfg: HouseServiceConfig{Client: house, BuildingID: ""}, logger: zap.NewNop()}
+
+	names, err := a.roomNamesByDeviceID(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, names)
+}

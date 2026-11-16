@@ -288,6 +288,18 @@ func (a *Agent) roomNamesByDeviceID(ctx context.Context) (map[string]string, err
 	if a.houseCfg.Client == nil {
 		return nil, nil
 	}
+	if a.houseCfg.BuildingID == "" {
+		// main.go's own startup check already rejects this combination
+		// today, but that invariant isn't enforced by this type itself -
+		// a future caller (another cmd/*, a test, a main.go refactor)
+		// could construct a HouseServiceConfig with a non-nil Client and
+		// an empty BuildingID. Without this check, ListRooms would run
+		// with BuildingId pointing at "", matching no real room, and
+		// silently return zero rows with a nil error - RoomHint would
+		// just never be set, forever, with nothing to indicate why.
+		a.logger.Error("houseCfg.Client is set but BuildingID is empty - room hints disabled")
+		return nil, nil
+	}
 
 	rpcCtx, cancel := context.WithTimeout(ctx, houseServiceTimeout)
 	defer cancel()
