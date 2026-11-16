@@ -172,7 +172,7 @@ func TestStateToAction_AVReceiver(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, true, ds.State["on"])
 	assert.Equal(t, 20, ds.State["currentVolume"])
-	assert.Equal(t, "hdmi1", ds.State["input"])
+	assert.Equal(t, "hdmi1", ds.State["currentInput"])
 }
 
 func TestBuildCommand_AVReceiver(t *testing.T) {
