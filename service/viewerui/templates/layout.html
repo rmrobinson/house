@@ -25,7 +25,8 @@
   .box { border: 1px solid var(--line); margin-bottom: 1rem; }
   .box-title { padding: 0.25rem 0.75rem; border-bottom: 1px solid var(--line); color: var(--dim); letter-spacing: 0.15em; font-size: 0.75rem; }
   .cols { display: grid; grid-template-columns: minmax(14rem, 18rem) 1fr; gap: 1rem; margin-bottom: 1rem; }
-  @media (max-width: 700px) { .cols { grid-template-columns: 1fr; } }
+  .cols > * { min-width: 0; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
   ul.list { list-style: none; margin: 0; padding: 0; }
   ul.list li { border-bottom: 1px solid var(--line); }
   ul.list li:last-child { border-bottom: none; }
@@ -68,7 +69,10 @@
   input.pin { width: 4.5rem; background: none; border: 1px solid var(--line); color: var(--fg); padding: 0.1rem 0.4rem; margin-right: 0.4rem; font: inherit; }
   input.pin:focus { border-color: var(--accent); outline: none; }
   input.dimmer, input.volume { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
-  table.devices td:last-child:not([colspan]) { white-space: nowrap; width: 1%; }
+  button.toggle, button.action { white-space: nowrap; }
+  /* Wide windows keep each device's controls on one line, hugging the right edge;
+     narrower ones let the cell wrap rather than overflow the page. */
+  @media (min-width: 1100px) { table.devices td.ctl { white-space: nowrap; width: 1%; } }
   td.ctl { text-align: right; }
   main, .box, .stat, td { overflow-wrap: break-word; }
   tr.readings td { padding: 0 0.75rem 0.4rem 2rem; font-size: 0.72rem; opacity: 0.7; }
@@ -107,13 +111,13 @@
   /* Phones: stack the floor/room pickers as scrolling chip bars, and turn each
      device row into a card whose controls wrap instead of forcing the page
      wider than the screen. */
-  @media (max-width: 700px) {
+  @media (max-width: 900px) {
     main { padding: 0.75rem 0.75rem 3rem; }
     h1 { padding-right: 7.5rem; }
     .cols { gap: 0; }
     #floor-panel .box { border: none; margin-bottom: 0.5rem; }
     #floor-panel .box-title { display: none; }
-    #floor-panel ul.list { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: thin; }
+    #floor-panel ul.list { position: relative; display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: thin; }
     #floor-panel ul.list li { flex: none; border: 1px solid var(--line); }
     #floor-panel ul.list li:last-child { border: 1px solid var(--line); }
     #floor-panel ul.list li.active { border-color: var(--accent); }
@@ -123,7 +127,6 @@
     table.devices tr { border-bottom: 1px solid var(--line); }
     html:not(.hide-readings) table.devices tr:has(+ tr.readings:not([hidden])) { border-bottom: none; }
     html:not(.hide-readings) table.devices tr.readings:not([hidden]):has(+ tr.sparks) { border-bottom: none; }
-    table.devices td:last-child:not([colspan]) { width: auto; white-space: normal; }
     table.devices td.ctl { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 0.4rem; padding-top: 0; }
     table.devices td.ctl form.pin { display: inline-flex; align-items: center; }
     input.dimmer, input.volume { flex: 1 1 8rem; min-width: 0; width: auto; margin-right: 0; }
@@ -342,7 +345,8 @@ if ('serviceWorker' in navigator) {
 var hiddenAt = 0;
 document.addEventListener('visibilitychange', function () {
   if (document.hidden) { hiddenAt = Date.now(); return; }
-  if (hiddenAt && Date.now() - hiddenAt > 30000) location.reload();
+  // Only pages with a live stream have anything to resync.
+  if (hiddenAt && Date.now() - hiddenAt > 30000 && document.querySelector('[sse-connect]')) location.reload();
   hiddenAt = 0;
 });
 

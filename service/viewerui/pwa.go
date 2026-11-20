@@ -28,8 +28,13 @@ func (s *Server) registerPWA(mux *http.ServeMux) {
 	mux.HandleFunc("GET /static/icons/{name}", func(w http.ResponseWriter, r *http.Request) {
 		// PathValue is a single segment, and ReadFile rejects anything that
 		// isn't a valid embedded path, so this can't escape pwa/icons.
-		b, err := fs.ReadFile(pwaFS, path.Join("pwa/icons", r.PathValue("name")))
-		if err != nil || path.Ext(r.PathValue("name")) != ".png" {
+		name := r.PathValue("name")
+		if name != path.Base(name) || path.Ext(name) != ".png" {
+			http.NotFound(w, r)
+			return
+		}
+		b, err := fs.ReadFile(pwaFS, path.Join("pwa/icons", name))
+		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
