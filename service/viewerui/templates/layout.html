@@ -116,7 +116,12 @@
     h1 { padding-right: 7.5rem; }
     .cols { gap: 0; }
     #floor-panel .box { border: none; margin-bottom: 0.5rem; }
-    #floor-panel .box-title { display: none; }
+    #floor-panel .box-title { border: none; padding: 0 0 0.25rem; font-size: 0.7rem; }
+    /* Scroll hint: fade the edge(s) that have more chips beyond them. The
+       data-more attribute is kept current by updateChipHints() below. */
+    #floor-panel ul.list[data-more="right"] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); }
+    #floor-panel ul.list[data-more="left"] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent); }
+    #floor-panel ul.list[data-more="both"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent); }
     #floor-panel ul.list { position: relative; display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: thin; }
     #floor-panel ul.list li { flex: none; border: 1px solid var(--line); }
     #floor-panel ul.list li:last-child { border: 1px solid var(--line); }
@@ -164,15 +169,31 @@ document.addEventListener('click', function (e) {
 });
 
 // On phones the floor/room lists are horizontally scrolling chip bars; keep
-// the active chip in view after a swap.
+// the active chip in view after a swap, and fade whichever edge has more
+// chips beyond it so it's clear the bar scrolls.
+function updateChipHints() {
+  document.querySelectorAll('#floor-panel ul.list').forEach(function (ul) {
+    var max = ul.scrollWidth - ul.clientWidth;
+    var left = ul.scrollLeft > 2, right = ul.scrollLeft < max - 2;
+    var more = max <= 2 ? '' : left && right ? 'both' : left ? 'left' : right ? 'right' : '';
+    if (more) ul.dataset.more = more; else delete ul.dataset.more;
+  });
+}
 function revealActiveChips() {
   document.querySelectorAll('#floor-panel ul.list li.active').forEach(function (li) {
     var ul = li.parentElement;
     if (ul.scrollWidth > ul.clientWidth) ul.scrollLeft = li.offsetLeft - (ul.clientWidth - li.offsetWidth) / 2;
   });
+  updateChipHints();
 }
 document.addEventListener('htmx:afterSettle', revealActiveChips);
 document.addEventListener('DOMContentLoaded', revealActiveChips);
+addEventListener('resize', updateChipHints);
+addEventListener('orientationchange', updateChipHints);
+// scroll doesn't bubble, so listen in the capture phase for the (swapped-in) lists.
+document.addEventListener('scroll', function (e) {
+  if (e.target.matches && e.target.matches('#floor-panel ul.list')) updateChipHints();
+}, true);
 
 // Sparkline sets show one chart at a time: hovering (or tapping) a
 // measurement's tab selects it, and the arrow keys move between tabs (only the
