@@ -163,6 +163,29 @@ can open it too). `[ CLOSE ]` never asks.
   viewer carry `origin: "viewerui"`, and accepted/refused attempts are logged
   (never the PIN).
 
+## Phones and installing as an app
+
+The layout is responsive: below 700px the floor/room pickers become scrolling
+chip bars and each device row becomes a card whose controls wrap.
+
+viewerui is also an installable PWA (`pwa/`): web manifest at
+`/manifest.webmanifest`, icons under `/static/icons/`, and a service worker at
+`/sw.js`. Browsers only offer install (and only register the worker) over
+**HTTPS** (or `localhost`), so reach it through the reverse proxy. Android
+Chrome shows an install prompt / "Install app"; on iOS use Share, then Add to
+Home Screen.
+
+The service worker deliberately caches nothing but a "can't reach house" page
+(`/offline`), shown when a page load fails or the proxy answers 502-504.
+Dashboards, SSE streams, commands and WHEP are never cached - stale device state
+would be worse than an error. A backgrounded app is reloaded on return after 30s
+away, since its SSE stream may have died silently.
+
+If the proxy puts authentication in front of viewerui, the manifest request is
+made without credentials by default; add `crossorigin="use-credentials"` to the
+manifest `<link>` in `templates/layout.html`. To change the icon, edit
+`tools/icon.svg` and run `tools/gen-icons.sh`.
+
 ## Notes
 
 - **Hardening.** Every response carries `X-Frame-Options: DENY`/CSP

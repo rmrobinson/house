@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>House</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0d0c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="House">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 <script src="/static/htmx.min.js"></script>
 <script src="/static/htmx-sse.js"></script>
 <style>
@@ -318,6 +326,24 @@ document.addEventListener('click', function (e) {
   if (!e.target.closest('button.readings-toggle')) return;
   try { localStorage.setItem('viewerui.hideReadings', readingsHidden() ? '0' : '1'); } catch (err) {}
   syncReadingsToggle();
+});
+
+// PWA: register the service worker (see pwa/sw.js - it only provides the
+// "can't reach house" page). Needs HTTPS; silently skipped otherwise.
+if ('serviceWorker' in navigator) {
+  addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+
+// A phone suspends a backgrounded tab or installed app, and its SSE stream can
+// die without an error event. SSE only pushes deltas, so after a real absence
+// reload to resync rather than show stale state.
+var hiddenAt = 0;
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt > 30000) location.reload();
+  hiddenAt = 0;
 });
 
 // Cap the event log so a wall-mounted tab doesn't grow forever.

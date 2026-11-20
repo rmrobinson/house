@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0b0d0c"/>
+  <!-- glyph kept inside the central 60% so it survives a maskable crop -->
+  <g fill="none" stroke="#6fe39a" stroke-width="22" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M130 270 L256 160 L382 270"/>
+    <path d="M158 250 V362 H354 V250"/>
+    <path d="M232 362 V296 H280 V362"/>
+  </g>
+</svg>
