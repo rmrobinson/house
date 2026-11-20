@@ -2,13 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>House</title>
 <script src="/static/htmx.min.js"></script>
 <script src="/static/htmx-sse.js"></script>
 <style>
   :root { color-scheme: dark; --bg: #0b0d0c; --fg: #c9d4cc; --dim: #6b7a70; --line: #2a332d; --accent: #6fe39a; --warn: #e3b86f; --err: #e36f6f; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  body { margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); background: var(--bg); color: var(--fg); font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   main { max-width: 1100px; margin: 0 auto; padding: 1rem 1.25rem 3rem; }
   h1 { font-size: 1rem; letter-spacing: 0.2em; margin: 0 0 1rem; color: var(--accent); }
   a, a:visited { color: var(--fg); text-decoration: none; }
@@ -45,9 +45,9 @@
   .err { color: var(--err); font-size: 0.8rem; }
   video { width: 100%; background: #000; display: block; }
   output.level { display: inline-block; min-width: 3rem; margin-right: 0.6rem; text-align: right; }
-  #status { position: fixed; top: 0.5rem; right: 0.75rem; font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); }
+  #status { position: fixed; top: calc(0.5rem + env(safe-area-inset-top, 0px)); right: calc(0.75rem + env(safe-area-inset-right, 0px)); font-size: 0.7rem; letter-spacing: 0.15em; color: var(--dim); }
   #status.down { color: var(--err); }
-  #flash { position: fixed; bottom: 0; left: 0; right: 0; padding: 0.5rem 1rem; background: #1a1010; border-top: 1px solid var(--err); color: var(--err); }
+  #flash { position: fixed; bottom: 0; left: 0; right: 0; padding: 0.5rem 1rem calc(0.5rem + env(safe-area-inset-bottom, 0px)); background: #1a1010; border-top: 1px solid var(--err); color: var(--err); }
   .box-title button.row { background: none; border: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; padding: 0; cursor: pointer; }
   .stats:empty::after { content: "No readings"; color: var(--dim); padding: 0.5rem 0.75rem; }
   .title-bar { display: flex; justify-content: space-between; align-items: center; }
@@ -61,6 +61,8 @@
   input.pin:focus { border-color: var(--accent); outline: none; }
   input.dimmer, input.volume { width: 7rem; vertical-align: middle; margin-right: 0.6rem; accent-color: var(--accent); }
   table.devices td:last-child:not([colspan]) { white-space: nowrap; width: 1%; }
+  td.ctl { text-align: right; }
+  main, .box, .stat, td { overflow-wrap: break-word; }
   tr.readings td { padding: 0 0.75rem 0.4rem 2rem; font-size: 0.72rem; opacity: 0.7; }
   tr.readings td::before { content: "\21b3"; margin-right: 0.5rem; color: var(--dim); }
   html:not(.hide-readings) table.devices tr:has(+ tr.readings:not([hidden])) td { border-bottom: none; }
@@ -91,8 +93,45 @@
   #popup-slot:empty { display: none; }
   .popup { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, 0.8); display: flex; align-items: center; justify-content: center; padding: 1rem; }
   .popup-box { background: var(--bg); border: 1px solid var(--accent); width: min(60rem, 100%); max-height: 100%; overflow-y: auto; }
-  .popup-cams { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 0.5rem; padding: 0.5rem; }
+  .popup-cams { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); gap: 0.5rem; padding: 0.5rem; }
   button.action:disabled:hover, button.toggle:disabled:hover { border-color: var(--line); }
+
+  /* Phones: stack the floor/room pickers as scrolling chip bars, and turn each
+     device row into a card whose controls wrap instead of forcing the page
+     wider than the screen. */
+  @media (max-width: 700px) {
+    main { padding: 0.75rem 0.75rem 3rem; }
+    h1 { padding-right: 7.5rem; }
+    .cols { gap: 0; }
+    #floor-panel .box { border: none; margin-bottom: 0.5rem; }
+    #floor-panel .box-title { display: none; }
+    #floor-panel ul.list { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.25rem; scrollbar-width: thin; }
+    #floor-panel ul.list li { flex: none; border: 1px solid var(--line); }
+    #floor-panel ul.list li:last-child { border: 1px solid var(--line); }
+    #floor-panel ul.list li.active { border-color: var(--accent); }
+    #floor-panel ul.list li > button.row { width: auto; white-space: nowrap; }
+    table.devices, table.devices tbody, table.devices tr, table.devices td { display: block; }
+    table.devices td { border-bottom: none; }
+    table.devices tr { border-bottom: 1px solid var(--line); }
+    html:not(.hide-readings) table.devices tr:has(+ tr.readings:not([hidden])) { border-bottom: none; }
+    html:not(.hide-readings) table.devices tr.readings:not([hidden]):has(+ tr.sparks) { border-bottom: none; }
+    table.devices td:last-child:not([colspan]) { width: auto; white-space: normal; }
+    table.devices td.ctl { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 0.4rem; padding-top: 0; }
+    table.devices td.ctl form.pin { display: inline-flex; align-items: center; }
+    input.dimmer, input.volume { flex: 1 1 8rem; min-width: 0; width: auto; margin-right: 0; }
+    output.level { min-width: 2.5rem; margin-right: 0; text-align: left; }
+    tr.readings td, tr.sparks td { padding-left: 0.75rem; }
+    tr.readings td::before { content: none; }
+    .spark-panel { flex-wrap: wrap; white-space: normal; }
+    svg.spark, .trends svg.spark { max-width: 100%; }
+  }
+  /* Touch screens: fingers need bigger targets than a mouse. */
+  @media (pointer: coarse) {
+    button.toggle, button.action { min-height: 2.5rem; padding: 0.3rem 0.8rem; }
+    ul.list li > a, ul.list li > button.row, ul.list li > a.row { padding-top: 0.7rem; padding-bottom: 0.7rem; }
+    input.pin { min-height: 2.5rem; font-size: 16px; } /* >=16px stops iOS zooming the page on focus */
+    input.dimmer, input.volume { min-height: 2.5rem; }
+  }
 </style>
 </head>
 <body>
@@ -112,6 +151,17 @@ document.addEventListener('click', function (e) {
   document.querySelectorAll('#room-list li.active').forEach(function (l) { l.classList.remove('active'); });
   b.parentElement.classList.add('active');
 });
+
+// On phones the floor/room lists are horizontally scrolling chip bars; keep
+// the active chip in view after a swap.
+function revealActiveChips() {
+  document.querySelectorAll('#floor-panel ul.list li.active').forEach(function (li) {
+    var ul = li.parentElement;
+    if (ul.scrollWidth > ul.clientWidth) ul.scrollLeft = li.offsetLeft - (ul.clientWidth - li.offsetWidth) / 2;
+  });
+}
+document.addEventListener('htmx:afterSettle', revealActiveChips);
+document.addEventListener('DOMContentLoaded', revealActiveChips);
 
 // Sparkline sets show one chart at a time: hovering (or tapping) a
 // measurement's tab selects it, and the arrow keys move between tabs (only the
