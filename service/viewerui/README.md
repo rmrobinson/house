@@ -178,8 +178,9 @@ Home Screen.
 The service worker deliberately caches nothing but a "can't reach house" page
 (`/offline`), shown when a page load fails or the proxy answers 502-504.
 Dashboards, SSE streams, commands and WHEP are never cached - stale device state
-would be worse than an error. A backgrounded app is reloaded on return after 30s
-away, since its SSE stream may have died silently.
+would be worse than an error. On touch devices only (never desktop), a
+backgrounded app is reloaded on return after 30s away, since its SSE stream may
+have died silently.
 
 If the proxy puts authentication in front of viewerui, the manifest request is
 made without credentials by default; add `crossorigin="use-credentials"` to the

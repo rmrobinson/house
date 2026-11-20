@@ -366,8 +366,10 @@ if ('serviceWorker' in navigator) {
 var hiddenAt = 0;
 document.addEventListener('visibilitychange', function () {
   if (document.hidden) { hiddenAt = Date.now(); return; }
-  // Only pages with a live stream have anything to resync.
-  if (hiddenAt && Date.now() - hiddenAt > 30000 && document.querySelector('[sse-connect]')) location.reload();
+  // Only pages with a live stream have anything to resync, and only touch
+  // devices suspend a tab hard enough to kill the stream silently - a desktop
+  // browser never does this.
+  if (hiddenAt && Date.now() - hiddenAt > 30000 && matchMedia('(pointer: coarse)').matches && document.querySelector('[sse-connect]')) location.reload();
   hiddenAt = 0;
 });
 
