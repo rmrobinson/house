@@ -521,7 +521,13 @@ func TestSession_SetVolumeLevelRejected(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return rec.get().State == StateReceiverConnected
 	}, 2*time.Second, 10*time.Millisecond)
-	require.Equal(t, 0.5, sess.Status().Volume.Level)
+	// The volume isn't part of the connect itself: it's cached by the
+	// GET_STATUS that connectReceiver sends after it has already set
+	// StateReceiverConnected. Waiting on the state alone and then asserting the
+	// volume races that request (and flaked in CI).
+	require.Eventually(t, func() bool {
+		return sess.Status().Volume.Level == 0.5
+	}, 2*time.Second, 10*time.Millisecond)
 
 	// "INVALID_COMMAND" is the real reason a Google Home Mini sent back live
 	// for an unrecognized receiver-namespace command type - see
