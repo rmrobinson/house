@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 	"github.com/rmrobinson/house/service/bridge"
 )
 
-// inovelliDevice mirrors the exposes of a real VZM31-SN that matter here: the dimmer's light
+// inovelliLEDBarDevice mirrors the exposes of a real VZM31-SN that matter here: the dimmer's light
 // composite, the whole-bar led_effect composite, and the per-LED composite this bridge ignores.
 func inovelliLEDBarDevice() bridgeDevice {
 	return bridgeDevice{
@@ -86,18 +87,17 @@ func TestLightBuilder_ApplyCommand_IndicatorEffect(t *testing.T) {
 func TestLightBuilder_ApplyCommand_IndicatorEffect_PublishedPayload(t *testing.T) {
 	mc, fc := newTestMQTTConn(t)
 	// Not echoed, so WriteState times out; what matters here is what was published.
-	prev := writeTimeout
-	writeTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { writeTimeout = prev })
+	shrinkWriteTimeout(t, 50*time.Millisecond)
 
 	fixture := inovelliLEDBarDevice()
 	lb := mustLightBuilder(t, fixture)
 	d, err := lb.build(fixture)
 	require.NoError(t, err)
 
-	_ = lb.applyCommand(context.Background(), mc, "dimmer1", d, indicatorCommand(&command.IndicatorEffect{
+	err = lb.applyCommand(context.Background(), mc, "dimmer1", d, indicatorCommand(&command.IndicatorEffect{
 		Effect: "solid", Hue: i32(120), DurationSeconds: 90,
 	}))
+	assert.ErrorIs(t, err, bridge.ErrCommandTimeout)
 
 	require.Equal(t, []string{"zigbee2mqtt/dimmer1/set"}, fc.publishedTopics())
 	var got map[string]any
@@ -124,6 +124,19 @@ func TestLightBuilder_ApplyCommand_IndicatorEffect_Rejected(t *testing.T) {
 	err = lb.applyCommand(context.Background(), mc, "dimmer1", d, indicatorCommand(&command.IndicatorEffect{Effect: "solid"}))
 	assert.ErrorIs(t, err, bridge.ErrArgumentNotSupportedByDevice)
 
+	// Out-of-range arguments are rejected, not clamped into something the caller did not ask for.
+	for name, c := range map[string]*command.IndicatorEffect{
+		"negative hue":      {Effect: "solid", Hue: i32(-30)},
+		"hue over 360":      {Effect: "solid", Hue: i32(361)},
+		"negative level":    {Effect: "solid", White: true, LevelPercent: i32(-1)},
+		"level over 100":    {Effect: "solid", White: true, LevelPercent: i32(250)},
+		"negative duration": {Effect: "solid", White: true, DurationSeconds: -5},
+		"over 134 hours":    {Effect: "solid", White: true, DurationSeconds: 135 * 3600},
+	} {
+		err = lb.applyCommand(context.Background(), mc, "dimmer1", d, indicatorCommand(c))
+		assert.ErrorIs(t, err, bridge.ErrArgumentNotSupportedByDevice, name)
+	}
+
 	// A light with no indicator at all.
 	plain := lightDevice(true, true, true)
 	plb := mustLightBuilder(t, plain)
@@ -142,7 +155,6 @@ func TestIndicatorColour(t *testing.T) {
 		{"red", &command.IndicatorEffect{Effect: "solid", Hue: i32(0)}, 0},
 		{"green", &command.IndicatorEffect{Effect: "solid", Hue: i32(120)}, 85},
 		{"max hue stays on the wheel", &command.IndicatorEffect{Effect: "solid", Hue: i32(360)}, 254},
-		{"over-range hue clamps", &command.IndicatorEffect{Effect: "solid", Hue: i32(900)}, 254},
 		{"white wins over hue", &command.IndicatorEffect{Effect: "solid", Hue: i32(120), White: true}, 255},
 		{"clear needs no colour", &command.IndicatorEffect{Effect: "clear_effect"}, 0},
 	}
@@ -158,7 +170,6 @@ func TestIndicatorColour(t *testing.T) {
 func TestIndicatorDuration(t *testing.T) {
 	cases := []struct{ seconds, want int32 }{
 		{0, 255},    // until cleared
-		{-5, 255},   // nonsense reads as until cleared, never as an instant effect
 		{1, 1},      // seconds
 		{60, 60},    // top of the seconds range
 		{61, 62},    // rounds up to 2 minutes rather than ending early
@@ -167,9 +178,16 @@ func TestIndicatorDuration(t *testing.T) {
 		{3601, 122}, // rounds up to 2 hours
 		{7200, 122}, // exactly 2 hours
 		{134 * 3600, 254},
-		{1000 * 3600, 254}, // saturates at the longest representable duration
 	}
 	for _, tc := range cases {
-		assert.Equal(t, tc.want, indicatorDuration(tc.seconds), "seconds=%d", tc.seconds)
+		got, err := indicatorDuration(tc.seconds)
+		require.NoError(t, err, "seconds=%d", tc.seconds)
+		assert.Equal(t, tc.want, got, "seconds=%d", tc.seconds)
+	}
+
+	// Not representable: rejected rather than shortened (or, near MaxInt32, wrapped to nonsense).
+	for _, seconds := range []int32{-1, 134*3600 + 1, 135 * 3600, math.MaxInt32 - 1, math.MaxInt32} {
+		_, err := indicatorDuration(seconds)
+		assert.ErrorIs(t, err, bridge.ErrArgumentNotSupportedByDevice, "seconds=%d", seconds)
 	}
 }

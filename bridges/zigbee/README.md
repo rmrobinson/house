@@ -115,7 +115,9 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   duration that does not fit a unit exactly is rounded up, never cut short). Checked live on a
   VZM31-SN: red/green/white hues, a 2-minute effect ending on time, and an hours-range effect still
   lit after 2.5 minutes (the full hour was not timed). An effect the device does
-  not list, or a coloured effect with neither `hue` nor `white`, is rejected. The effect is not kept
+  not list, a coloured effect with neither `hue` nor `white`, and any out-of-range argument (hue outside
+  0-360, level outside 0-100, a negative duration, or one over 134 hours) are rejected rather than
+  clamped or shortened. The effect is not kept
   in `Indicator.State` - it ends on its own - so it takes no part in `Device.version`. Only whole-bar
   effects are supported: `individual_led_effect` and the persistent `led*When{On,Off}` settings are
   deliberately not modeled yet (see TODO.md).

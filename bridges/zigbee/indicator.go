@@ -61,11 +61,15 @@ func newIndicatorTrait(exposes []expose) *trait.Indicator {
 // applyIndicatorCommand plays an IndicatorEffect on the device's LED bar. The effect is not kept
 // in house state: it ends on its own, and the device's state report echoing it back (which is what
 // WriteState waits for) is not a lasting property of the device.
+//
+// Arguments are validated, not corrected: a hue, level or duration outside what the command
+// documents is a caller bug, and quietly clamping it would show the wrong thing on the bar (or end
+// an effect early) while reporting success.
 func applyIndicatorCommand(ctx context.Context, m *mqttConn, friendlyName string, l *device.Light, c *command.IndicatorEffect) error {
-	if l.Indicator == nil {
+	if l.GetIndicator() == nil {
 		return bridge.ErrUnsupportedCommand
 	}
-	if !slices.Contains(l.Indicator.Attributes.Effects, c.Effect) {
+	if !slices.Contains(l.GetIndicator().GetAttributes().GetEffects(), c.Effect) {
 		return bridge.ErrArgumentNotSupportedByDevice
 	}
 
@@ -75,7 +79,14 @@ func applyIndicatorCommand(ctx context.Context, m *mqttConn, friendlyName string
 	}
 	level := int32(100)
 	if c.LevelPercent != nil {
-		level = clampPercent(c.GetLevelPercent())
+		level = c.GetLevelPercent()
+		if level < 0 || level > 100 {
+			return bridge.ErrArgumentNotSupportedByDevice
+		}
+	}
+	duration, err := indicatorDuration(c.DurationSeconds)
+	if err != nil {
+		return err
 	}
 
 	return m.WriteState(ctx, friendlyName, map[string]any{
@@ -83,20 +94,24 @@ func applyIndicatorCommand(ctx context.Context, m *mqttConn, friendlyName string
 			"effect":   c.Effect,
 			"color":    color,
 			"level":    level,
-			"duration": indicatorDuration(c.DurationSeconds),
+			"duration": duration,
 		},
 	})
 }
 
 // indicatorColour converts the command's hue (degrees) or white flag to the device's colour scale.
-// An effect which shows no colour (it ends or clears the bar) may leave both unset; any other must
-// say which colour it wants rather than silently get a default.
+// An effect which shows no colour may leave both unset; any other must say which colour it wants
+// rather than silently get a default. Which effects show no colour is Inovelli's own vocabulary
+// ("off" and "clear_effect" end the effect on the bar) - this is the one place that is encoded.
 func indicatorColour(c *command.IndicatorEffect) (int32, error) {
 	switch {
 	case c.White:
 		return indicatorColourWhite, nil
 	case c.Hue != nil:
-		hue := clampRange(c.GetHue(), 0, 360)
+		hue := c.GetHue()
+		if hue < 0 || hue > 360 {
+			return 0, bridge.ErrArgumentNotSupportedByDevice
+		}
 		return int32(math.Round(float64(hue) * indicatorHueMax / 360)), nil
 	case c.Effect == "off" || c.Effect == "clear_effect":
 		return 0, nil
@@ -106,23 +121,33 @@ func indicatorColour(c *command.IndicatorEffect) (int32, error) {
 }
 
 // indicatorDuration encodes seconds into the device's one-byte duration (see the constants above).
-// A value too long for the largest unit saturates at the longest representable duration; one that
-// does not divide evenly into minutes or hours is rounded up, so an effect never ends early.
-func indicatorDuration(seconds int32) int32 {
+// Zero means until cleared. A value that does not divide evenly into minutes or hours is rounded
+// up, so an effect never ends early; one the device cannot represent at all (negative, or beyond
+// the longest hours value) is rejected rather than quietly shortened.
+func indicatorDuration(seconds int32) (int32, error) {
 	switch {
-	case seconds <= 0:
-		return indicatorDurationIndefinite
+	case seconds < 0:
+		return 0, bridge.ErrArgumentNotSupportedByDevice
+	case seconds == 0:
+		return indicatorDurationIndefinite, nil
 	case seconds <= 60:
-		return seconds
+		return seconds, nil
 	case seconds <= 60*60:
-		return indicatorDurationMinutesBase + ceilDiv(seconds, 60)
-	default:
-		hours := ceilDiv(seconds, 60*60)
-		if hours > indicatorDurationMaxHours {
-			hours = indicatorDurationMaxHours
-		}
-		return indicatorDurationHoursBase + hours
+		return indicatorDurationMinutesBase + ceilDiv(seconds, 60), nil
 	}
+	hours := ceilDiv(seconds, 60*60)
+	if hours > indicatorDurationMaxHours {
+		return 0, bridge.ErrArgumentNotSupportedByDevice
+	}
+	return indicatorDurationHoursBase + hours, nil
 }
 
-func ceilDiv(a, b int32) int32 { return (a + b - 1) / b }
+// ceilDiv is a/b rounded up, for positive a and b. Written as a quotient plus a remainder check
+// rather than (a+b-1)/b, which overflows int32 for a near math.MaxInt32.
+func ceilDiv(a, b int32) int32 {
+	q := a / b
+	if a%b != 0 {
+		q++
+	}
+	return q
+}
