@@ -133,6 +133,10 @@ func TestDeviceConfigOverlay_GetDevice_NoOverride(t *testing.T) {
 	d, err := overlay.GetDevice(context.Background(), &api2.GetDeviceRequest{Id: "d1"})
 	require.NoError(t, err)
 	assert.Equal(t, "Bridge-Reported Name", d.GetConfig().GetName())
+	// Google Home visibility is opt-in: GoogleHomeVisible's zero value is
+	// false, so no override at all already means hidden with no special
+	// casing needed.
+	assert.False(t, d.GetConfig().GetGoogleHomeVisible())
 }
 
 func TestDeviceConfigOverlay_UpdateThenGetDevice_ReturnsOverride(t *testing.T) {
@@ -222,6 +226,53 @@ func TestDeviceConfigOverlay_UpdateDeviceConfig_TrimsName(t *testing.T) {
 	assert.Equal(t, "Kitchen Lamp", updated.GetConfig().GetName())
 }
 
+func TestDeviceConfigOverlay_UpdateDeviceConfig_GoogleHomeVisible_RoundTrips(t *testing.T) {
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+	ctx := context.Background()
+
+	updated, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Bridge-Reported Name", GoogleHomeVisible: true},
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.GetConfig().GetGoogleHomeVisible())
+
+	d, err := overlay.GetDevice(ctx, &api2.GetDeviceRequest{Id: "d1"})
+	require.NoError(t, err)
+	assert.True(t, d.GetConfig().GetGoogleHomeVisible())
+}
+
+func TestDeviceConfigOverlay_UpdateDeviceConfig_PreservesVisibleAcrossRename(t *testing.T) {
+	// Every UpdateDeviceConfig call writes Name and GoogleHomeVisible
+	// together (see its doc comment) - this guards against a rename call
+	// that forgets to carry the current visible state forward and silently
+	// hides a device that was opted in (adminui's handleDeviceRename/
+	// handleRoomDeviceRename both do carry it forward, by reading the
+	// device fresh first).
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Bridge-Reported Name", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+	ctx := context.Background()
+
+	_, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Bridge-Reported Name", GoogleHomeVisible: true},
+	})
+	require.NoError(t, err)
+
+	updated, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Kitchen Lamp", GoogleHomeVisible: true},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Kitchen Lamp", updated.GetConfig().GetName())
+	assert.True(t, updated.GetConfig().GetGoogleHomeVisible())
+}
+
 func TestDeviceConfigOverlay_ListDevices_AppliesBulkOverride(t *testing.T) {
 	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
 		"d1": deviceWithName("d1", "Bridge Name 1", "v1"),
@@ -232,19 +283,24 @@ func TestDeviceConfigOverlay_ListDevices_AppliesBulkOverride(t *testing.T) {
 
 	_, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
 		Id:     "d1",
-		Config: &apiDevice.Device_Config{Name: "Renamed"},
+		Config: &apiDevice.Device_Config{Name: "Renamed", GoogleHomeVisible: true},
 	})
 	require.NoError(t, err)
 
 	resp, err := overlay.ListDevices(ctx, &api2.ListDevicesRequest{})
 	require.NoError(t, err)
 
-	byID := map[string]string{}
+	byID := map[string]*apiDevice.Device{}
 	for _, d := range resp.GetDevices() {
-		byID[d.GetId()] = d.GetConfig().GetName()
+		byID[d.GetId()] = d
 	}
-	assert.Equal(t, "Renamed", byID["d1"])
-	assert.Equal(t, "Bridge Name 2", byID["d2"])
+	assert.Equal(t, "Renamed", byID["d1"].GetConfig().GetName())
+	assert.Equal(t, "Bridge Name 2", byID["d2"].GetConfig().GetName())
+	// d1 has an explicit override (opted in) - honoured as-is.
+	assert.True(t, byID["d1"].GetConfig().GetGoogleHomeVisible())
+	// d2 has never been touched - opt-in default (hidden) applies, same as
+	// the single-device GetDevice path.
+	assert.False(t, byID["d2"].GetConfig().GetGoogleHomeVisible())
 }
 
 func TestDeviceConfigOverlay_StreamUpdates_OverlaysDeviceUpdates(t *testing.T) {

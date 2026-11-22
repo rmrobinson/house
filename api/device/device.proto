@@ -42,6 +42,13 @@ message Device {
     string name = 1;
     // The description of the device.
     string description = 2;
+    // Whether this device should appear in the Google Home SYNC response.
+    // Visibility is opt-in: the zero value (false) means hidden, not
+    // "admin hasn't decided yet" - a device only appears in Google Home
+    // once an admin explicitly sets this true (adminui's /devices page).
+    // Has no effect outside the googlehome integration; every other
+    // consumer of this device ignores it.
+    bool google_home_visible = 3;
   }
 
   // Unique ID of this device. Immutable.

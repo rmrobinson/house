@@ -337,6 +337,9 @@ func (s *Server) handlePopup(w http.ResponseWriter, r *http.Request) {
 		}
 		pc := popupCamera{Name: houseview.DisplayName(d)}
 		pc.URL, pc.Message = whepURL(d.GetCamera().GetMediaStream())
+		if pc.URL != "" {
+			pc.URL = whepProxyPath(room.GetId(), d.GetId())
+		}
 		pv.Cameras = append(pv.Cameras, pc)
 	}
 	if len(pv.Cameras) == 0 {

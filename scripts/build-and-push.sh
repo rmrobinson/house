@@ -32,6 +32,7 @@ BRIDGES=(
   esphome airthings tesla-charger zwave zigbee
   apc-ups nanoleaf raspi-clock roku example
   policyd adminui viewerui notificationd metricsd
+  googlehomed googlehome-agentd
 )
 
 TARGETS=("$@")
