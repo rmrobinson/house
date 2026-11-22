@@ -112,7 +112,9 @@ longest for infrequently-reporting battery devices, not a fixed "brief window."
   the command is confirmed like any other write. The house API speaks hue in degrees and a duration in
   seconds; the bridge converts to the device's 0-254 hue wheel (255 = white) and to its one-byte
   duration (1-60 seconds, 61-120 = 1-60 minutes, 121-254 = 1-134 hours, 255 = until cleared; a
-  duration that does not fit a unit exactly is rounded up, never cut short). An effect the device does
+  duration that does not fit a unit exactly is rounded up, never cut short). Checked live on a
+  VZM31-SN: red/green/white hues, a 2-minute effect ending on time, and an hours-range effect still
+  lit after 2.5 minutes (the full hour was not timed). An effect the device does
   not list, or a coloured effect with neither `hue` nor `white`, is rejected. The effect is not kept
   in `Indicator.State` - it ends on its own - so it takes no part in `Device.version`. Only whole-bar
   effects are supported: `individual_led_effect` and the persistent `led*When{On,Off}` settings are
