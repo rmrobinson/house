@@ -37,14 +37,30 @@ network, only the reverse:
 
 `agent/translate.go` translates these `api/device` kinds today: `Light`
 (on/off, brightness, colour in either RGB or HSB mode, colour temperature),
-`Television`, `Fan`, `Thermostat`, `Sensor` (read-only, no commands),
-`AVReceiver`, `EVCharger`, and `Camera` (see below - a different shape from
-the rest). `CanControl` is respected on each kind's controllable subtraits
-(Volume/Input/OnOff/FanSpeed/Thermostat), so a read-only device of a
-controllable kind still SYNCs without exposing commands Google would just
-reject. Extending to another device kind means adding a case to
-`deviceToAction`/`stateToAction`/`buildCommand` in `agent/translate.go` and
-nowhere else.
+`Television`, `Fan`, `Thermostat`, `Sensor` (read-only, no commands - see
+below for which measurements), `AVReceiver`, `EVCharger`, and `Camera` (see
+below - a different shape from the rest). `CanControl` is respected on each
+kind's controllable subtraits (Volume/Input/OnOff/FanSpeed/Thermostat), so a
+read-only device of a controllable kind still SYNCs without exposing
+commands Google would just reject. Extending to another device kind means
+adding a case to `deviceToAction`/`stateToAction`/`buildCommand` in
+`agent/translate.go` and nowhere else.
+
+### Sensor measurements
+
+`sensorMeasurements` in `agent/translate.go` is the single source of truth
+for which of a `Sensor`'s fields map to Google's `SensorState` trait, so
+SYNC's `sensorStatesSupported` and ReportState's `currentSensorStateData`
+can't drift apart: `AirQuality`/`CarbonDioxideLevel`/
+`VolatileOrganicCompounds`/`PM2.5`/`PM10`/`CarbonMonoxideLevel` from
+`Sensor.air_quality` (numeric, except `CarbonMonoxideLevel` which is
+descriptive - "carbon monoxide detected"/"no carbon monoxide detected"),
+and `WaterLeak` from `Sensor.water` (descriptive - "leak"/"no leak"). Only
+fields the device actually has a value for are declared, same "declare
+from what's live" approach the original AQI-only version of this used.
+`volatile_organic_compounds_ppb` is converted ppb -> ppm, since Google's
+`VolatileOrganicCompounds` is `PARTS_PER_MILLION`, 1000x coarser than the
+house trait's own unit.
 
 ### Room hints
 
@@ -77,6 +93,43 @@ RTP on to Google - no transcoding. Video-only, H264 only, in this first
 cut; a codec mismatch or signaling failure fails the session closed. See
 the doc comments on `relay/session_manager.go` and `agent/media_session.go`
 for the full session lifecycle (TTL/idle-timeout, teardown triggers).
+
+A `Camera` whose `Detection.attributes.labels` is non-empty (frigate, once
+it has object detection configured) also gets Google's `ObjectDetection`
+trait - see "Proactive notifications" below, since that trait never
+reports ordinary state.
+
+## Proactive notifications
+
+Some Google traits (`ObjectDetection`, and the one direction of
+`SensorState` this integration announces) carry no ongoing state at all -
+they only ever reach Google as a notification attached to a `ReportState`
+call, via HomeGraph's `ReportStateAndNotification` (see
+`google-smart-home-action-go`'s `Service.ReportStateAndNotify`). The wire
+path is: `Agent.applyBridgeUpdate` calls `Agent.deviceNotification` on
+every `BridgeService` update; if it returns one, the notification rides
+along in the same `relay.ReportStateRequest` (a second `notifications`
+field alongside `payload`) that `googlehomed`'s `relay/api.go` already
+forwards to HomeGraph - no new RPC.
+
+Two sources today, both in `agent.go`:
+
+- **`detectionNotification`**: a `Camera`'s `Detection.state.visible` is a
+  snapshot, not a delta, so this diffs it against the `event_id`s this
+  agent already reported (`Agent.knownDetection`) and only notifies about
+  newly-appeared objects - identified ones (`sub_label` set) count as
+  Google's `named`, a bare label (e.g. "person") as `unfamiliar`, neither
+  as `unclassified`.
+- **`waterLeakNotification`**: fires once on a `Sensor.water.is_active`
+  false -> true transition (`Agent.knownWaterLeak`), not on every update -
+  the steady-state side (SYNC/ReportState) still reports the current
+  leak/no-leak value on every update regardless, via `sensorMeasurements`
+  above.
+
+There is deliberately no device type dedicated to "the doorbell": any
+detection-capable `Camera` gets `ObjectDetection` and reports under its own
+name, so a person detected at any camera (not just one at a front door)
+surfaces the same way.
 
 ## Including a device
 

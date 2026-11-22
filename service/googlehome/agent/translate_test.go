@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	action "github.com/rmrobinson/google-smart-home-action-go"
 
@@ -555,5 +556,89 @@ func TestBuildCommand_CameraNotExecutable(t *testing.T) {
 	// - Camera has no buildCommand case at all, so any command is rejected.
 	d := cameraWithWHEP("camera1")
 	_, ok := buildCommand(d, "camera1", action.Command{OnOff: &action.CommandOnOff{On: true}})
+	assert.False(t, ok)
+}
+
+func TestDeviceToAction_CameraWithDetection(t *testing.T) {
+	d := cameraWithWHEP("camera1")
+	d.GetCamera().Detection = &trait.Detection{Attributes: &trait.Detection_Attributes{Labels: []string{"person"}}}
+
+	ad, ok := deviceToAction(d)
+	require.True(t, ok)
+	assert.True(t, ad.Traits["action.devices.traits.ObjectDetection"])
+}
+
+func TestDeviceToAction_CameraWithoutDetectionHasNoObjectDetectionTrait(t *testing.T) {
+	d := cameraWithWHEP("camera1")
+
+	ad, ok := deviceToAction(d)
+	require.True(t, ok)
+	assert.False(t, ad.Traits["action.devices.traits.ObjectDetection"])
+}
+
+func sensorWithAirQuality(id string, aq *trait.AirQuality_State) *device.Device {
+	return &device.Device{
+		Id:      id,
+		Details: &device.Device_Sensor{Sensor: &device.Sensor{AirQuality: &trait.AirQuality{State: aq}}},
+	}
+}
+
+func TestDeviceToAction_SensorCO2AndVOC(t *testing.T) {
+	co2 := int32(800)
+	vocPpb := int32(1500)
+	d := sensorWithAirQuality("sensor1", &trait.AirQuality_State{Co2Ppm: &co2, VolatileOrganicCompoundsPpb: &vocPpb})
+
+	ad, ok := deviceToAction(d)
+	require.True(t, ok)
+	supported := ad.Attributes["sensorStatesSupported"].([]map[string]interface{})
+	require.Len(t, supported, 2)
+	assert.Equal(t, "CarbonDioxideLevel", supported[0]["name"])
+	assert.Equal(t, map[string]interface{}{"rawValueUnit": "PARTS_PER_MILLION"}, supported[0]["numericCapabilities"])
+	assert.Equal(t, "VolatileOrganicCompounds", supported[1]["name"])
+
+	ds, err := stateToAction(d)
+	require.NoError(t, err)
+	data := ds.State["currentSensorStateData"].([]map[string]interface{})
+	require.Len(t, data, 2)
+	assert.Equal(t, int32(800), data[0]["rawValue"])
+	// ppb -> ppm.
+	assert.Equal(t, 1.5, data[1]["rawValue"])
+}
+
+func TestDeviceToAction_SensorCarbonMonoxideDescriptive(t *testing.T) {
+	detected := true
+	d := sensorWithAirQuality("sensor1", &trait.AirQuality_State{CarbonMonoxideDetected: &detected})
+
+	ds, err := stateToAction(d)
+	require.NoError(t, err)
+	data := ds.State["currentSensorStateData"].([]map[string]interface{})
+	require.Len(t, data, 1)
+	assert.Equal(t, "CarbonMonoxideLevel", data[0]["name"])
+	assert.Equal(t, "carbon monoxide detected", data[0]["currentSensorState"])
+	assert.Nil(t, data[0]["rawValue"])
+}
+
+func TestDeviceToAction_SensorWaterLeak(t *testing.T) {
+	d := &device.Device{
+		Id:      "sensor1",
+		Details: &device.Device_Sensor{Sensor: &device.Sensor{Water: &device.Sensor_BinarySensor{IsActive: true}}},
+	}
+
+	ad, ok := deviceToAction(d)
+	require.True(t, ok)
+	supported := ad.Attributes["sensorStatesSupported"].([]map[string]interface{})
+	require.Len(t, supported, 1)
+	assert.Equal(t, "WaterLeak", supported[0]["name"])
+	assert.Nil(t, supported[0]["numericCapabilities"])
+
+	ds, err := stateToAction(d)
+	require.NoError(t, err)
+	data := ds.State["currentSensorStateData"].([]map[string]interface{})
+	assert.Equal(t, "leak", data[0]["currentSensorState"])
+}
+
+func TestDeviceToAction_SensorNoMeasurementsAtAll(t *testing.T) {
+	d := &device.Device{Id: "sensor1", Details: &device.Device_Sensor{Sensor: &device.Sensor{}}}
+	_, ok := deviceToAction(d)
 	assert.False(t, ok)
 }

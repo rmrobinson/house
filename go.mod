@@ -20,7 +20,7 @@ require (
 	github.com/rafalop/sevensegment v0.0.0-20230407112555-2f144c34733e
 	github.com/richard87/esphome-apiclient v1.1.0
 	github.com/rmrobinson/airthings-btle v0.0.0-20261017191638-b0d95b9738cf
-	github.com/rmrobinson/google-smart-home-action-go v0.0.0-20261115220732-ea6f15720484
+	github.com/rmrobinson/google-smart-home-action-go v0.0.0-20261122164454-2aab0063d1ee
 	github.com/rmrobinson/monoprice-amp-go v0.0.0-20261004150838-86d556a9d037
 	github.com/rmrobinson/omada v0.0.0-20260104210326-ce23bd57eb01
 	github.com/spf13/cobra v1.10.1

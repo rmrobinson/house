@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 
 	api2 "github.com/rmrobinson/house/api"
+	"github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/api/trait"
 	"github.com/rmrobinson/house/service/googlehome/relay"
 	"github.com/rmrobinson/house/service/lib/bridgeconn"
 	"github.com/rmrobinson/house/service/lib/grpcutil"
@@ -70,6 +72,14 @@ type Agent struct {
 
 	sessionsMu    sync.Mutex
 	mediaSessions map[string]context.CancelFunc
+
+	// notifyMu guards the "what did we last see" state detectionNotification/
+	// waterLeakNotification diff against - see their own doc comments. Device state updates
+	// arrive serialized off a.updates/handleBridgeUpdate already, but this is kept separate
+	// from mu (unsupportedDevices) since the two caches have nothing to do with each other.
+	notifyMu       sync.Mutex
+	knownDetection map[string]map[string]struct{} // device ID -> Detection.state.visible event_ids last reported
+	knownWaterLeak map[string]bool                // device ID -> Sensor.water.is_active last reported
 }
 
 // HouseServiceConfig is the optional HouseService dependency SYNC's
@@ -95,6 +105,8 @@ func New(logger *zap.Logger, bridgeAddr string, bridgeTLS *grpcutil.ClientTLSCon
 		updates:            make(chan *api2.Update, updateQueueSize),
 		unsupportedDevices: map[string]bool{},
 		mediaSessions:      map[string]context.CancelFunc{},
+		knownDetection:     map[string]map[string]struct{}{},
+		knownWaterLeak:     map[string]bool{},
 	}
 }
 
@@ -198,13 +210,139 @@ func (a *Agent) applyBridgeUpdate(stream relay.RelayService_StateSyncClient, u *
 			a.logger.Error("unable to serialize device state", zap.String("device_id", d.GetId()), zap.Error(err))
 			return
 		}
+
+		req := &relay.ReportStateRequest{Payload: payload}
+		if notification, eventID, ok := a.deviceNotification(d); ok {
+			notifPayload, err := json.Marshal(map[string]interface{}{d.GetId(): notification})
+			if err != nil {
+				a.logger.Error("unable to serialize device notification", zap.String("device_id", d.GetId()), zap.Error(err))
+			} else {
+				req.Notifications = notifPayload
+				req.EventId = eventID
+			}
+		}
+
 		if err := a.send(stream, &relay.ClientRequest{
 			RequestId: uuid.New().String(),
-			Field:     &relay.ClientRequest_ReportState{ReportState: &relay.ReportStateRequest{Payload: payload}},
+			Field:     &relay.ClientRequest_ReportState{ReportState: req},
 		}); err != nil {
 			a.logger.Error("unable to report state", zap.String("device_id", d.GetId()), zap.Error(err))
 		}
 	}
+}
+
+// deviceNotification returns the proactive HomeGraph notification (if any) this update to d
+// should carry alongside its ReportState - detectionNotification and waterLeakNotification are
+// the only two sources right now, and no device kind translate.go supports can trigger both.
+func (a *Agent) deviceNotification(d *device.Device) (notification map[string]interface{}, eventID string, ok bool) {
+	if notification, eventID, ok = a.detectionNotification(d); ok {
+		return notification, eventID, true
+	}
+	return a.waterLeakNotification(d)
+}
+
+// detectionNotification builds an ObjectDetection notification for d if its
+// Detection.state.visible set has gained an object (identified by its own event_id) this agent
+// hasn't reported before. ObjectDetection carries no ongoing state of its own - no SYNC
+// attributes, no QUERY/ReportState properties (see translate.go's package doc comment and
+// cameraToAction) - so this is the only way a Camera's detections ever reach Google. priority 0
+// is the only value Google's ObjectDetection trait currently accepts ("spoken announcement").
+func (a *Agent) detectionNotification(d *device.Device) (notification map[string]interface{}, eventID string, ok bool) {
+	cam := d.GetCamera()
+	if cam == nil || len(cam.GetDetection().GetAttributes().GetLabels()) == 0 {
+		return nil, "", false
+	}
+
+	visible := cam.GetDetection().GetState().GetVisible()
+	seen := make(map[string]struct{}, len(visible))
+	var newObjects []*trait.Detection_Object
+
+	a.notifyMu.Lock()
+	known := a.knownDetection[d.GetId()]
+	for _, obj := range visible {
+		seen[obj.GetEventId()] = struct{}{}
+		if _, ok := known[obj.GetEventId()]; !ok {
+			newObjects = append(newObjects, obj)
+		}
+	}
+	a.knownDetection[d.GetId()] = seen
+	a.notifyMu.Unlock()
+
+	if len(newObjects) == 0 {
+		return nil, "", false
+	}
+
+	// Google's ObjectDetection payload buckets objects by how confidently they're identified -
+	// sub_label is the only identity signal Detection carries (e.g. a face match), so an object
+	// with one counts as "named", one with just a label (e.g. "person") as "unfamiliar", and
+	// anything with neither as "unclassified".
+	var named []string
+	var unfamiliar, unclassified int
+	latest := time.Now()
+	for i, obj := range newObjects {
+		switch {
+		case obj.GetSubLabel() != "":
+			named = append(named, obj.GetSubLabel())
+		case obj.GetLabel() != "":
+			unfamiliar++
+		default:
+			unclassified++
+		}
+		if firstSeen := obj.GetFirstSeen(); firstSeen != nil && (i == 0 || firstSeen.AsTime().After(latest)) {
+			latest = firstSeen.AsTime()
+		}
+	}
+
+	objects := map[string]interface{}{}
+	if len(named) > 0 {
+		objects["named"] = named
+	}
+	if unfamiliar > 0 {
+		objects["unfamiliar"] = unfamiliar
+	}
+	if unclassified > 0 {
+		objects["unclassified"] = unclassified
+	}
+
+	return map[string]interface{}{
+		"ObjectDetection": map[string]interface{}{
+			"priority":           0,
+			"detectionTimestamp": latest.UnixMilli(),
+			"objects":            objects,
+		},
+	}, newObjects[0].GetEventId(), true
+}
+
+// waterLeakNotification builds a SensorState/WaterLeak notification for d.GetSensor() if its
+// water sensor has just transitioned to active (a leak). Only that direction is announced - the
+// zero value of knownWaterLeak treats "never seen before" as "no leak", so a device that's
+// already leaking the first time this agent sees it still gets one notification (better to
+// over-notify once on startup than silently miss an existing leak). See sensorMeasurements in
+// translate.go for WaterLeak's steady-state side, which is reported on every update regardless
+// of direction.
+func (a *Agent) waterLeakNotification(d *device.Device) (notification map[string]interface{}, eventID string, ok bool) {
+	w := d.GetSensor().GetWater()
+	if w == nil {
+		return nil, "", false
+	}
+
+	active := w.GetIsActive()
+	a.notifyMu.Lock()
+	was := a.knownWaterLeak[d.GetId()]
+	a.knownWaterLeak[d.GetId()] = active
+	a.notifyMu.Unlock()
+
+	if !active || was {
+		return nil, "", false
+	}
+
+	return map[string]interface{}{
+		"SensorState": map[string]interface{}{
+			"priority":           0,
+			"name":               "WaterLeak",
+			"currentSensorState": "leak",
+		},
+	}, "", true
 }
 
 // processRelayRequests handles every SYNC/QUERY/EXECUTE/disconnect request

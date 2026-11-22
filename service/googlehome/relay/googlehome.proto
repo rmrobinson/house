@@ -79,6 +79,15 @@ message RequestSyncRequest {
 }
 message ReportStateRequest {
   bytes payload = 1;
+
+  // notifications is a JSON-encoded map[string]interface{}, keyed by device ID the same way
+  // payload is, carrying a proactive notification (e.g. ObjectDetection, SensorState) for the
+  // devices that have one this update - see action.Service.ReportStateAndNotify. Most updates
+  // have none, and leave this unset.
+  bytes notifications = 2;
+  // event_id is Google's optional per-event identifier ("e.g. a doorbell press"); left empty
+  // when there's nothing more specific than the device/trait already in notifications.
+  string event_id = 3;
 }
 
 // StartMediaSession tells the agent to begin pulling a camera's local WHEP

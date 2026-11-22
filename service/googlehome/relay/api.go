@@ -107,13 +107,27 @@ func (a *API) StateSync(stream RelayService_StateSyncServer) error {
 				}
 			}()
 		case reqMsg.GetReportState() != nil:
+			reportState := reqMsg.GetReportState()
 			var deviceStates map[string]action.DeviceState
-			if err := json.Unmarshal(reqMsg.GetReportState().GetPayload(), &deviceStates); err != nil {
+			if err := json.Unmarshal(reportState.GetPayload(), &deviceStates); err != nil {
 				a.logger.Error("unable to deserialize reported device state", zap.String("agent_id", provider.agentID), zap.Error(err))
 				continue
 			}
-			if err := a.actionSvc.ReportState(stream.Context(), provider.agentID, deviceStates); err != nil {
-				a.logger.Error("unable to report state to homegraph", zap.String("agent_id", provider.agentID), zap.Error(err))
+
+			if len(reportState.GetNotifications()) == 0 {
+				if err := a.actionSvc.ReportState(stream.Context(), provider.agentID, deviceStates); err != nil {
+					a.logger.Error("unable to report state to homegraph", zap.String("agent_id", provider.agentID), zap.Error(err))
+				}
+				continue
+			}
+
+			var notifications map[string]interface{}
+			if err := json.Unmarshal(reportState.GetNotifications(), &notifications); err != nil {
+				a.logger.Error("unable to deserialize reported device notifications", zap.String("agent_id", provider.agentID), zap.Error(err))
+				continue
+			}
+			if err := a.actionSvc.ReportStateAndNotify(stream.Context(), provider.agentID, deviceStates, notifications, reportState.GetEventId()); err != nil {
+				a.logger.Error("unable to report state/notification to homegraph", zap.String("agent_id", provider.agentID), zap.Error(err))
 			}
 		case reqMsg.GetField() != nil:
 			// Anything left with a field set is a response to one of

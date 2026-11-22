@@ -12,8 +12,10 @@
 // control surface of its own, see SetThermostatMode/OFF instead - setpoint
 // and mode); EVCharger (on/off only - wall_power/vehicle_power/
 // exterior_conditions/charging_session are all read-only measurements with
-// no Google Smart Home trait to report them through); Sensor (read-only AQI
-// via SensorState, the one measurement this device kind translates).
+// no Google Smart Home trait to report them through); Sensor (read-only,
+// via SensorState - see sensorMeasurements for the measurements translated:
+// AirQuality/CarbonDioxideLevel/VolatileOrganicCompounds/PM2.5/PM10/
+// CarbonMonoxideLevel from AirQuality, and WaterLeak from Sensor.water).
 //
 // Camera (CameraStream, webrtc only, video-only - no audio track in this
 // first cut) is the one kind that doesn't fit this package's usual
@@ -26,8 +28,14 @@
 // not buildCommand. deviceToAction/stateToAction still have a Camera
 // case (cameraToAction/the Device_Camera case below), just a minimal one -
 // see relay/webrtc_session.go's doc comment for the WebRTC/pion side of
-// this, and relay/session_manager.go for the session lifecycle. No good
-// Google Smart Home type exists for UPS/ConnectedDevice/Clock/
+// this, and relay/session_manager.go for the session lifecycle. A Camera
+// with Detection capability also gets Google's ObjectDetection trait,
+// which (unlike every trait above) carries no ongoing state at all - see
+// Agent.detectionNotification in agent.go for how a newly-appeared
+// Detection.state.visible object becomes a proactive HomeGraph
+// notification instead.
+//
+// No good Google Smart Home type exists for UPS/ConnectedDevice/Clock/
 // StandingDesk/Generic/MediaPlayer (MediaPlayer's casting/now-playing
 // model doesn't fit a voice-control trait) - those are permanently out of
 // scope, not pending work.
@@ -702,42 +710,108 @@ func evChargerBuildCommand(e *device.EVCharger, deviceID string, cmd action.Comm
 	}, true
 }
 
-// sensorToAction builds the action.Device profile for a Sensor's air quality index reading,
-// using Google's (read-only) SensorState trait with a single AQI numeric state - the example
-// Google's own SensorState trait documentation uses for an air quality monitor. Only
-// Sensor.air_quality's AQI value is translated; the sensor's other measurements (battery,
-// presence, buttons, the other AirQuality sub-fields, ...) have no Google Smart Home trait
-// mapping chosen for them yet - see the package doc comment. ok is false if the device has no
-// AirQuality trait at all, or no AQI reading within it.
+// sensorStateEntry is one SensorState measurement a Sensor currently has a value for.
+// numericUnit is Google's sensorStatesSupported rawValueUnit (e.g. "PARTS_PER_MILLION") for a
+// numeric measurement; left empty for a descriptive one, where rawValue is instead one of the
+// trait's fixed description strings (e.g. WaterLeak's "leak"/"no leak") - see
+// https://developers.home.google.com/cloud-to-cloud/traits/sensorstate for the full vocabulary.
+type sensorStateEntry struct {
+	name        string
+	numericUnit string
+	rawValue    interface{}
+}
+
+// sensorMeasurements collects every measurement s currently reports that this package has a
+// Google SensorState mapping for - shared by sensorToAction (SYNC's sensorStatesSupported) and
+// sensorStateToAction (ReportState's currentSensorStateData) so the two can't drift apart.
+// Only fields actually set are included, the same "declare from the live snapshot" approach the
+// original AQI-only version of this code used. Sensor.battery/presence/buttons/alarm/fire/
+// opened_closed/power_consumption have no Google SensorState mapping chosen for them yet - see
+// the package doc comment.
+func sensorMeasurements(s *device.Sensor) []sensorStateEntry {
+	var entries []sensorStateEntry
+
+	if aq := s.GetAirQuality().GetState(); aq != nil {
+		if aq.Aqi != nil {
+			entries = append(entries, sensorStateEntry{name: "AirQuality", numericUnit: "AQI", rawValue: *aq.Aqi})
+		}
+		if aq.Co2Ppm != nil {
+			entries = append(entries, sensorStateEntry{name: "CarbonDioxideLevel", numericUnit: "PARTS_PER_MILLION", rawValue: *aq.Co2Ppm})
+		}
+		if aq.VolatileOrganicCompoundsPpb != nil {
+			// Google's VolatileOrganicCompounds is parts per million; house.AirQuality reports
+			// parts per billion, 1000x finer - convert rather than mislabeling the unit.
+			entries = append(entries, sensorStateEntry{name: "VolatileOrganicCompounds", numericUnit: "PARTS_PER_MILLION", rawValue: float64(*aq.VolatileOrganicCompoundsPpb) / 1000})
+		}
+		if aq.Pm2_5 != nil {
+			entries = append(entries, sensorStateEntry{name: "PM2.5", numericUnit: "MICROGRAMS_PER_CUBIC_METER", rawValue: *aq.Pm2_5})
+		}
+		if aq.Pm10 != nil {
+			entries = append(entries, sensorStateEntry{name: "PM10", numericUnit: "MICROGRAMS_PER_CUBIC_METER", rawValue: *aq.Pm10})
+		}
+		if aq.CarbonMonoxideDetected != nil {
+			state := "no carbon monoxide detected"
+			if *aq.CarbonMonoxideDetected {
+				state = "carbon monoxide detected"
+			}
+			entries = append(entries, sensorStateEntry{name: "CarbonMonoxideLevel", rawValue: state})
+		}
+	}
+	if w := s.GetWater(); w != nil {
+		state := "no leak"
+		if w.GetIsActive() {
+			state = "leak"
+		}
+		entries = append(entries, sensorStateEntry{name: "WaterLeak", rawValue: state})
+	}
+
+	return entries
+}
+
+// sensorToAction builds the action.Device profile for a Sensor's measurements, using Google's
+// (read-only) SensorState trait - see sensorMeasurements for which measurements are translated.
+// ok is false if none of them are present.
 func sensorToAction(id string, s *device.Sensor) (*action.Device, bool) {
-	if s.GetAirQuality().GetState() == nil || s.GetAirQuality().GetState().Aqi == nil {
+	entries := sensorMeasurements(s)
+	if len(entries) == 0 {
 		return nil, false
+	}
+
+	supported := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		entry := map[string]interface{}{"name": e.name}
+		if e.numericUnit != "" {
+			entry["numericCapabilities"] = map[string]interface{}{"rawValueUnit": e.numericUnit}
+		}
+		supported = append(supported, entry)
 	}
 
 	ad := action.NewDevice(id, "action.devices.types.SENSOR")
 	ad.Traits["action.devices.traits.SensorState"] = true
-	ad.Attributes["sensorStatesSupported"] = []map[string]interface{}{
-		{
-			"name":                "AirQuality",
-			"numericCapabilities": map[string]interface{}{"rawValueUnit": "AQI"},
-		},
-	}
+	ad.Attributes["sensorStatesSupported"] = supported
 
 	return ad, true
 }
 
-// sensorStateToAction converts s's AQI reading into a Google DeviceState. ok is false under the
-// same condition as sensorToAction.
+// sensorStateToAction converts s's measurements into a Google DeviceState. ok is false under
+// the same condition as sensorToAction.
 func sensorStateToAction(online bool, s *device.Sensor) (action.DeviceState, bool) {
-	st := s.GetAirQuality().GetState()
-	if st == nil || st.Aqi == nil {
+	entries := sensorMeasurements(s)
+	if len(entries) == 0 {
 		return action.DeviceState{}, false
 	}
 
-	ds := action.NewDeviceState(online)
-	ds.State["currentSensorStateData"] = []map[string]interface{}{
-		{"name": "AirQuality", "rawValue": *st.Aqi},
+	data := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		if e.numericUnit != "" {
+			data = append(data, map[string]interface{}{"name": e.name, "rawValue": e.rawValue})
+			continue
+		}
+		data = append(data, map[string]interface{}{"name": e.name, "currentSensorState": e.rawValue})
 	}
+
+	ds := action.NewDeviceState(online)
+	ds.State["currentSensorStateData"] = data
 	return ds, true
 }
 
@@ -759,6 +833,14 @@ func cameraToAction(id string, c *device.Camera) (*action.Device, bool) {
 	ad.Traits["action.devices.traits.CameraStream"] = true
 	ad.Attributes["cameraStreamSupportedProtocols"] = []string{"webrtc"}
 	ad.Attributes["cameraStreamNeedAuthToken"] = true
+
+	if len(c.GetDetection().GetAttributes().GetLabels()) > 0 {
+		// ObjectDetection has no SYNC attributes and reports no QUERY/ReportState state of its
+		// own (https://developers.home.google.com/cloud-to-cloud/traits/objectdetection) - it
+		// only ever carries data via a proactive notification, built by
+		// Agent.detectionNotification from Detection.state.visible, not here.
+		ad.Traits["action.devices.traits.ObjectDetection"] = true
+	}
 
 	return ad, true
 }

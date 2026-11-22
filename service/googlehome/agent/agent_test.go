@@ -12,6 +12,7 @@ import (
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	apiTrait "github.com/rmrobinson/house/api/trait"
 )
 
 // fakeHouseClient is a minimal api2.HouseServiceClient stand-in -
@@ -100,4 +101,111 @@ func TestRoomNamesByDeviceID_ClientSetButNoBuildingID(t *testing.T) {
 	names, err := a.roomNamesByDeviceID(context.Background())
 	require.NoError(t, err)
 	assert.Nil(t, names)
+}
+
+func cameraWithDetection(id string, visible ...*apiTrait.Detection_Object) *apiDevice.Device {
+	return &apiDevice.Device{
+		Id: id,
+		Details: &apiDevice.Device_Camera{Camera: &apiDevice.Camera{
+			Detection: &apiTrait.Detection{
+				Attributes: &apiTrait.Detection_Attributes{Labels: []string{"person"}},
+				State:      &apiTrait.Detection_State{Visible: visible},
+			},
+		}},
+	}
+}
+
+func newNotifyAgent() *Agent {
+	return &Agent{
+		logger:         zap.NewNop(),
+		knownDetection: map[string]map[string]struct{}{},
+		knownWaterLeak: map[string]bool{},
+	}
+}
+
+func TestDetectionNotification_NewUnfamiliarObject(t *testing.T) {
+	a := newNotifyAgent()
+	d := cameraWithDetection("camera1", &apiTrait.Detection_Object{Label: "person", EventId: "evt1"})
+
+	notification, eventID, ok := a.detectionNotification(d)
+	require.True(t, ok)
+	assert.Equal(t, "evt1", eventID)
+	objDetection := notification["ObjectDetection"].(map[string]interface{})
+	assert.Equal(t, 0, objDetection["priority"])
+	objects := objDetection["objects"].(map[string]interface{})
+	assert.Equal(t, 1, objects["unfamiliar"])
+	assert.Nil(t, objects["named"])
+}
+
+func TestDetectionNotification_NamedObject(t *testing.T) {
+	a := newNotifyAgent()
+	d := cameraWithDetection("camera1", &apiTrait.Detection_Object{Label: "person", SubLabel: "Alice", EventId: "evt1"})
+
+	notification, _, ok := a.detectionNotification(d)
+	require.True(t, ok)
+	objects := notification["ObjectDetection"].(map[string]interface{})["objects"].(map[string]interface{})
+	assert.Equal(t, []string{"Alice"}, objects["named"])
+	assert.Nil(t, objects["unfamiliar"])
+}
+
+func TestDetectionNotification_AlreadySeenObjectNotRenotified(t *testing.T) {
+	a := newNotifyAgent()
+	obj := &apiTrait.Detection_Object{Label: "person", EventId: "evt1"}
+	d := cameraWithDetection("camera1", obj)
+
+	_, _, ok := a.detectionNotification(d)
+	require.True(t, ok)
+
+	// Same object still in Detection.state.visible on the next update - already reported, so
+	// this must not fire again.
+	_, _, ok = a.detectionNotification(d)
+	assert.False(t, ok)
+}
+
+func TestDetectionNotification_NoDetectionCapability(t *testing.T) {
+	a := newNotifyAgent()
+	d := &apiDevice.Device{Id: "camera1", Details: &apiDevice.Device_Camera{Camera: &apiDevice.Camera{}}}
+
+	_, _, ok := a.detectionNotification(d)
+	assert.False(t, ok)
+}
+
+func sensorWithWaterLeak(id string, isActive bool) *apiDevice.Device {
+	return &apiDevice.Device{
+		Id: id,
+		Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{
+			Water: &apiDevice.Sensor_BinarySensor{IsActive: isActive},
+		}},
+	}
+}
+
+func TestWaterLeakNotification_TransitionToLeakFires(t *testing.T) {
+	a := newNotifyAgent()
+	d := sensorWithWaterLeak("sensor1", true)
+
+	notification, _, ok := a.waterLeakNotification(d)
+	require.True(t, ok)
+	sensorState := notification["SensorState"].(map[string]interface{})
+	assert.Equal(t, "WaterLeak", sensorState["name"])
+	assert.Equal(t, "leak", sensorState["currentSensorState"])
+
+	// Still active on the next update - already notified, so no repeat.
+	_, _, ok = a.waterLeakNotification(d)
+	assert.False(t, ok)
+}
+
+func TestWaterLeakNotification_NoLeakNeverFires(t *testing.T) {
+	a := newNotifyAgent()
+	d := sensorWithWaterLeak("sensor1", false)
+
+	_, _, ok := a.waterLeakNotification(d)
+	assert.False(t, ok)
+}
+
+func TestWaterLeakNotification_NoWaterSensor(t *testing.T) {
+	a := newNotifyAgent()
+	d := &apiDevice.Device{Id: "sensor1", Details: &apiDevice.Device_Sensor{Sensor: &apiDevice.Sensor{}}}
+
+	_, _, ok := a.waterLeakNotification(d)
+	assert.False(t, ok)
 }
