@@ -438,7 +438,7 @@ func (a *aggregator) presenceLocked() (known, present bool) {
 	if !known {
 		return false, false
 	}
-	return true, !a.presenceLastSeen.IsZero() && a.now().Sub(a.presenceLastSeen) <= a.presenceGrace
+	return true, !a.presenceLastSeen.IsZero() && a.now().Sub(a.presenceLastSeen) < a.presenceGrace
 }
 
 // anyTrackedReachableLocked reports whether at least one presence-tracked
@@ -454,24 +454,22 @@ func (a *aggregator) anyTrackedReachableLocked() bool {
 
 // presenceChangedLocked is called after a mutation of presenceTracked/
 // presenceReachable. wasReachable is anyTrackedReachableLocked's value from
-// before the mutation; resetGrace discards any running grace period (used
-// when a device is un-tracked, which is an explicit "stop counting this" and
-// shouldn't leave the house occupied for another grace period). It starts
-// the grace period if the last reachable tracked device just went away, and
-// returns a BuildingUpdate for every building whose occupied value changed
-// as a result, to publish once a.mu is released.
-func (a *aggregator) presenceChangedLocked(wasReachable, resetGrace bool) []*api2.BuildingUpdate {
+// before the mutation; untracked is true when the mutation was un-flagging a
+// device, which is an explicit "stop counting this" and so must not itself
+// start a grace period (nor cut short one another phone's departure already
+// started). It starts the grace period if the last reachable tracked device
+// just went away, and returns a BuildingUpdate for every building whose
+// occupied value changed as a result, to publish once a.mu is released.
+func (a *aggregator) presenceChangedLocked(wasReachable, untracked bool) []*api2.BuildingUpdate {
 	nowReachable := a.anyTrackedReachableLocked()
-	switch {
-	case resetGrace:
-		a.presenceLastSeen = time.Time{}
-	case wasReachable && !nowReachable:
+	startGrace := wasReachable && !nowReachable && !untracked
+	if startGrace {
 		a.presenceLastSeen = a.now()
 	}
 
 	var updates []*api2.BuildingUpdate
 	for buildingID := range a.buildings {
-		if wasReachable && !nowReachable && !resetGrace {
+		if startGrace {
 			a.armPresenceTimerLocked(buildingID)
 		}
 		if u := a.refreshBuildingOccupiedLocked(buildingID); u != nil {

@@ -205,3 +205,44 @@ func TestPresence_TrackedDeviceNeverSeenIsNotASignal(t *testing.T) {
 	h.a.setPresenceTracked("phone", true)
 	assert.Nil(t, occupied(h.a), "no reading yet is unknown, not vacant")
 }
+
+// A timer that fires at exactly the grace deadline (not a moment after) must
+// still publish the vacant transition.
+func TestPresence_TimerFiringExactlyAtDeadlinePublishesVacant(t *testing.T) {
+	h := newPresenceHarness(t)
+	h.a.setPresenceTracked("phone", true)
+	h.a.handleUpdate(phoneUpdate("phone", true))
+	h.a.handleUpdate(phoneUpdate("phone", false))
+	require.Len(t, h.timer, 1)
+
+	sink := h.a.updates.NewSink()
+	defer sink.Close()
+	h.now = h.now.Add(DefaultPresenceGrace)
+	h.timer[0]()
+
+	select {
+	case msg := <-sink.Messages():
+		assert.False(t, msg.(*api2.HouseUpdate).GetBuilding().GetState().GetOccupied())
+	case <-time.After(time.Second):
+		t.Fatal("no vacant update at the exact grace deadline")
+	}
+}
+
+// Un-tracking one phone must not cut short the grace period another phone's
+// departure already started.
+func TestPresence_UntrackingOnePhoneKeepsOthersGrace(t *testing.T) {
+	h := newPresenceHarness(t)
+	h.a.setPresenceTracked("todd", true)
+	h.a.setPresenceTracked("robert", true)
+	h.a.handleUpdate(phoneUpdate("todd", true))
+	h.a.handleUpdate(phoneUpdate("robert", true))
+	h.a.handleUpdate(phoneUpdate("todd", false))
+	h.a.handleUpdate(phoneUpdate("robert", false)) // grace starts here
+
+	h.now = h.now.Add(5 * time.Minute)
+	h.a.setPresenceTracked("todd", false)
+
+	got := occupied(h.a)
+	require.NotNil(t, got)
+	assert.True(t, *got, "robert's grace period is still running")
+}
