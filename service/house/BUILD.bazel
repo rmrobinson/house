@@ -31,6 +31,7 @@ go_library(
 go_test(
     name = "house_test",
     srcs = [
+        "aggregation_presence_test.go",
         "aggregation_test.go",
         "deviceconfig_test.go",
         "service_test.go",

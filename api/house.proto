@@ -116,13 +116,16 @@ message Building {
   // own dedicated RPC (mode, via SetHouseMode), the same "Config vs.
   // server/command-owned" split Room.Properties draws against Room.Config.
   message State {
-    // True if any room belonging to this building has had motion (per that
-    // room's Properties.occupied - see AggregationConfig.occupancy_strategy)
-    // within the last occupied window (10 minutes, not yet configurable) -
-    // computed server-side from room aggregation, not independently
-    // settable. Unset if no room in the building has ever reported any
-    // occupancy signal at all, the same "no data yet" contract
-    // Room.Properties.occupied uses.
+    // True if any occupancy signal is currently active: a room belonging to
+    // this building has had motion (per that room's Properties.occupied -
+    // see AggregationConfig.occupancy_strategy) within the last occupied
+    // window (10 minutes, not yet configurable), OR at least one
+    // presence-tracked device (Device.Config.presence_tracked, e.g. a
+    // person's phone on the wifi network) is reachable or became
+    // unreachable within the house service's away-grace period (20 minutes
+    // by default). Computed server-side, not independently settable. Unset
+    // if no occupancy signal of either kind has ever been reported, the
+    // same "no data yet" contract Room.Properties.occupied uses.
     optional bool occupied = 1;
     // The currently active mode, one of Config.available_modes, or "" if
     // never set. Set via SetHouseMode, not UpdateBuilding.

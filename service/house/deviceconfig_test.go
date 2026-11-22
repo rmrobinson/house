@@ -333,3 +333,42 @@ func TestDeviceConfigOverlay_StreamUpdates_OverlaysDeviceUpdates(t *testing.T) {
 	require.Len(t, stream.sent, 1)
 	assert.Equal(t, "Renamed", stream.sent[0].GetDeviceUpdate().GetDevice().GetConfig().GetName())
 }
+
+func TestDeviceConfigOverlay_UpdateDeviceConfig_PresenceTracked_RoundTripsAndNotifies(t *testing.T) {
+	inner := &fakeBridgeServer{devices: map[string]*apiDevice.Device{
+		"d1": deviceWithName("d1", "Pixel", "v1"),
+	}}
+	overlay := newTestOverlay(t, inner)
+	ctx := context.Background()
+
+	type call struct {
+		id      string
+		tracked bool
+	}
+	var calls []call
+	overlay.SetPresenceListener(func(id string, tracked bool) { calls = append(calls, call{id, tracked}) })
+
+	updated, err := overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Pixel", PresenceTracked: true},
+	})
+	require.NoError(t, err)
+	assert.True(t, updated.GetConfig().GetPresenceTracked())
+
+	d, err := overlay.GetDevice(ctx, &api2.GetDeviceRequest{Id: "d1"})
+	require.NoError(t, err)
+	assert.True(t, d.GetConfig().GetPresenceTracked())
+
+	// A rename that carries the flag through leaves it set; one that drops
+	// it clears it - which is why every caller must resubmit the full Config.
+	_, err = overlay.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:     "d1",
+		Config: &apiDevice.Device_Config{Name: "Todd's Pixel"},
+	})
+	require.NoError(t, err)
+	d, err = overlay.GetDevice(ctx, &api2.GetDeviceRequest{Id: "d1"})
+	require.NoError(t, err)
+	assert.False(t, d.GetConfig().GetPresenceTracked())
+
+	assert.Equal(t, []call{{"d1", true}, {"d1", false}}, calls)
+}

@@ -119,3 +119,23 @@ func TestDeviceRenameFormTarget(t *testing.T) {
 	s.renderFragment(rec, "device_rename", deviceRenameData{DeviceID: "d1", CurrentName: "Lamp", RoomID: "r1"})
 	assert.Contains(t, rec.Body.String(), `hx-post="/rooms/r1/devices/d1/rename"`)
 }
+
+func TestDevicesPagePresenceToggleOnlyOnConnectedDevices(t *testing.T) {
+	s := &Server{logger: zaptest.NewLogger(t)}
+
+	rec := httptest.NewRecorder()
+	s.renderPage(rec, "devices", devicesPageData{
+		Devices: []deviceView{
+			{ID: "lamp", Name: "Lamp", Version: "v1"},
+			{ID: "phone1", Name: "Pixel", Version: "v2", Connected: true},
+			{ID: "phone2", Name: "Pixel 2", Version: "v3", Connected: true, PresenceTracked: true},
+		},
+	})
+	body := rec.Body.String()
+
+	assert.NotContains(t, body, `hx-post="/devices/lamp/presence"`)
+	assert.Contains(t, body, `hx-post="/devices/phone1/presence"`)
+	assert.Contains(t, body, "Track presence")
+	assert.Contains(t, body, `hx-post="/devices/phone2/presence"`)
+	assert.Contains(t, body, "Stop tracking presence")
+}

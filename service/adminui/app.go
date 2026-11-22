@@ -135,6 +135,7 @@ func newApp(rootCtx context.Context, logger *zap.Logger, configPath string, tlsC
 	mux.HandleFunc("GET "+basePath+"/devices/{id}/rename", a.handle((*Server).handleDeviceRenamePicker))
 	mux.HandleFunc("POST "+basePath+"/devices/{id}/rename", a.handle((*Server).handleDeviceRename))
 	mux.HandleFunc("POST "+basePath+"/devices/{id}/google-home", a.handle((*Server).handleDeviceGoogleHomeToggle))
+	mux.HandleFunc("POST "+basePath+"/devices/{id}/presence", a.handle((*Server).handlePresenceToggle))
 
 	mux.HandleFunc("GET "+basePath+"/policies", a.handle(requirePolicy((*Server).handlePoliciesList)))
 	mux.HandleFunc("POST "+basePath+"/policies", a.handle(requirePolicy((*Server).handlePolicySubmit)))

@@ -28,6 +28,9 @@ func main() {
 
 	viper.SetConfigType("yaml")
 	viper.SetDefault("house.listen_port", 1337)
+	// How long every presence-tracked device (a person's phone) must be
+	// unreachable before the building stops counting them toward occupancy.
+	viper.SetDefault("house.presence_away_grace", house.DefaultPresenceGrace)
 
 	configPath, err := configutil.FindConfigFile("housed", "yaml", []string{"/etc/house", "$HOME/.config/house", "."})
 	if err != nil {
@@ -132,6 +135,10 @@ func main() {
 	// broken stream needs its own explicit retry loop.
 	var bridgeAddr string
 	var bridgeTLS *grpcutil.ClientTLSConfig
+	// overlay is set only when housed embeds the facade (see below) - it's
+	// what tells the occupancy aggregator a device's presence_tracked flag
+	// changed.
+	var overlay *house.DeviceConfigOverlay
 	facadeCfg, err := facade.LoadConfig(logger, boundPort, configPath)
 	if err != nil {
 		logger.Fatal("unable to load facade config", zap.Error(err))
@@ -145,7 +152,8 @@ func main() {
 		// every other BridgeService write. Both of this registration's
 		// callers (adminui's direct BridgeService dial, and bridgeClient
 		// below, dialed over loopback) go through the same overlay this way.
-		api2.RegisterBridgeServiceServer(grpcServer, house.NewDeviceConfigOverlay(logger, f, buildingDB))
+		overlay = house.NewDeviceConfigOverlay(logger, f, buildingDB)
+		api2.RegisterBridgeServiceServer(grpcServer, overlay)
 
 		// Dialing "localhost" needs its own TLS config: grpc verifies the
 		// peer's certificate against the dial target's hostname by default,
@@ -185,6 +193,10 @@ func main() {
 	svc, err := house.NewService(ctx, logger, buildingDB, bridgeClient, bridgeAddr, bridgeTLS)
 	if err != nil {
 		logger.Fatal("unable to initialize house service", zap.Error(err))
+	}
+	svc.SetPresenceGrace(viper.GetDuration("house.presence_away_grace"))
+	if overlay != nil {
+		overlay.SetPresenceListener(svc.SetPresenceTracked)
 	}
 	api2.RegisterHouseServiceServer(grpcServer, svc)
 

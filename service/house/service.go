@@ -3,6 +3,7 @@ package house
 import (
 	"context"
 	"errors"
+	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -57,6 +58,20 @@ func NewService(ctx context.Context, logger *zap.Logger, db *db.Database, bridge
 		bridgeClient: bridgeClient,
 		agg:          agg,
 	}, nil
+}
+
+// SetPresenceTracked tells the occupancy aggregator that deviceID's
+// presence_tracked flag is now tracked - wire this to
+// DeviceConfigOverlay.SetPresenceListener.
+func (s *Service) SetPresenceTracked(deviceID string, tracked bool) {
+	s.agg.setPresenceTracked(deviceID, tracked)
+}
+
+// SetPresenceGrace overrides how long every presence-tracked device must be
+// unreachable before the building stops counting them as occupancy; see
+// DefaultPresenceGrace. Non-positive values are ignored.
+func (s *Service) SetPresenceGrace(d time.Duration) {
+	s.agg.setPresenceGrace(d)
 }
 
 // defaultAvailableModes seeds Building.Config.available_modes for a
@@ -133,6 +148,8 @@ func (s *Service) CreateBuilding(ctx context.Context, req *api2.CreateBuildingRe
 		s.logger.Error("unable to create building", zap.Error(err))
 		return nil, status.Error(codes.Internal, "unable to create building")
 	}
+
+	s.agg.registerBuilding(res.ID)
 
 	return s.buildingToAPI(*res), nil
 }

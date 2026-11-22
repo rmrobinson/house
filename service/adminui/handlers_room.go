@@ -276,7 +276,7 @@ func (s *Server) handleRoomDeviceRenamePicker(w http.ResponseWriter, r *http.Req
 // handleRoomDeviceRename saves a new display name for a device from the room
 // page - the room-page counterpart to handleDeviceRename, re-rendering the
 // room's own content instead of /devices' after the save. Carries the
-// device's current GoogleHomeVisible through unchanged - see
+// device's current GoogleHomeVisible and PresenceTracked through unchanged - see
 // handleDeviceRename's doc comment for why.
 func (s *Server) handleRoomDeviceRename(w http.ResponseWriter, r *http.Request) {
 	roomID := r.PathValue("id")
@@ -297,7 +297,7 @@ func (s *Server) handleRoomDeviceRename(w http.ResponseWriter, r *http.Request) 
 	_, err = s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
 		Id:      deviceID,
 		Version: r.FormValue("version"),
-		Config:  &apiDevice.Device_Config{Name: name, GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible()},
+		Config:  &apiDevice.Device_Config{Name: name, GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible(), PresenceTracked: d.GetConfig().GetPresenceTracked()},
 	})
 
 	data, loadErr := s.loadRoomPageData(r, roomID)

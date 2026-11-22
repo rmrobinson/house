@@ -1,6 +1,10 @@
 house:
   db: /var/lib/house/house.db
   listen_port: 1337
+  # How long every presence-tracked device (a person's phone, flagged from
+  # adminui's Devices page) must be unreachable before the building stops
+  # counting them toward Building.State.occupied. Go duration syntax.
+  presence_away_grace: 20m
   # Only used if the facade section below is absent - dials a
   # separately-running bridgefacaded instead of embedding one here.
   bridge_facade_addr: ""

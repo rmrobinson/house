@@ -148,6 +148,12 @@ type deviceView struct {
 	// GoogleHomeVisible mirrors Device.Config.google_home_visible - whether
 	// an admin has opted this device into the Google Home integration.
 	GoogleHomeVisible bool
+	// Connected is true for a network client (ConnectedDevice) - the only
+	// kind presence tracking applies to.
+	Connected bool
+	// PresenceTracked mirrors Device.Config.presence_tracked - whether this
+	// device's reachability counts toward building occupancy.
+	PresenceTracked bool
 }
 
 func buildingToView(b *api2.Building) buildingView {
@@ -203,6 +209,8 @@ func deviceToView(d *apiDevice.Device) deviceView {
 		Online:            d.GetAddress().GetIsReachable(),
 		Version:           d.GetVersion(),
 		GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible(),
+		Connected:         d.GetConnectedDevice() != nil,
+		PresenceTracked:   d.GetConfig().GetPresenceTracked(),
 	}
 }
 

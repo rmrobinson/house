@@ -23,6 +23,13 @@ import (
 // occupied - see Building.State.occupied's doc comment in api/house.proto.
 const buildingOccupiedWindow = 10 * time.Minute
 
+// DefaultPresenceGrace is how long every presence-tracked device (see
+// Device.Config.presence_tracked) must have been unreachable before the
+// building stops counting them toward occupancy - long enough to ride out a
+// phone dropping off the wifi to save power. Overridable via
+// Service.SetPresenceGrace.
+const DefaultPresenceGrace = 20 * time.Minute
+
 // aggregator maintains, per room, the live Room.Properties computed from
 // that room's linked devices, and per building, the live Building.State.
 // occupied derived from them (Building.State.mode is db-owned - see
@@ -93,6 +100,29 @@ type aggregator struct {
 	// being Stop()'d), and deleting unconditionally would orphan that newer
 	// timer, leaving it untracked and un-cancelable.
 	decayTimers map[string]*time.Timer
+
+	// buildings is every building this aggregator knows of (loaded from the
+	// db, plus any created since). Presence-tracked devices aren't linked to
+	// a room or building, so their signal applies to every building here.
+	buildings map[string]bool
+	// presenceTracked is the set of device IDs flagged presence_tracked
+	// (seeded from the db, then kept current via setPresenceTracked).
+	presenceTracked map[string]bool
+	// presenceReachable is the last reported Address.IsReachable of every
+	// ConnectedDevice seen on the bridge stream, tracked or not - cached for
+	// all of them so flagging a device takes effect immediately, without
+	// waiting for a bridge update that only fires on change.
+	presenceReachable map[string]bool
+	// presenceLastSeen is when the last tracked device stopped being
+	// reachable (leaving none reachable) - the start of the grace period.
+	// Zero if that hasn't happened since startup, in which case a tracked
+	// device that's never been seen reachable is simply absent.
+	presenceLastSeen time.Time
+	// presenceGrace is the away-grace period; see DefaultPresenceGrace.
+	presenceGrace time.Duration
+	// presenceTimers holds each building's pending grace-expiry recheck,
+	// with the same replace-and-identity-check discipline as decayTimers.
+	presenceTimers map[string]*time.Timer
 	// now is overridden in tests; defaults to time.Now.
 	now func() time.Time
 	// afterFunc schedules a decay recheck like time.AfterFunc; overridden in
@@ -115,6 +145,11 @@ func newAggregator(logger *zap.Logger) *aggregator {
 		buildingMode:              make(map[string]string),
 		buildingOccupiedPublished: make(map[string]*bool),
 		decayTimers:               make(map[string]*time.Timer),
+		buildings:                 make(map[string]bool),
+		presenceTracked:           make(map[string]bool),
+		presenceReachable:         make(map[string]bool),
+		presenceGrace:             DefaultPresenceGrace,
+		presenceTimers:            make(map[string]*time.Timer),
 		now:                       time.Now,
 		afterFunc:                 time.AfterFunc,
 	}
@@ -138,6 +173,10 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	if err != nil {
 		return err
 	}
+	deviceConfigs, err := database.ListDeviceConfigs(ctx)
+	if err != nil {
+		return err
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -150,6 +189,12 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 	}
 	for _, b := range buildings {
 		a.buildingMode[b.ID] = b.Mode
+		a.buildings[b.ID] = true
+	}
+	for id, cfg := range deviceConfigs {
+		if cfg.PresenceTracked {
+			a.presenceTracked[id] = true
+		}
 	}
 	return nil
 }
@@ -288,6 +333,11 @@ func (a *aggregator) removeBuilding(buildingID string) {
 		t.Stop()
 		delete(a.decayTimers, buildingID)
 	}
+	if t, ok := a.presenceTimers[buildingID]; ok {
+		t.Stop()
+		delete(a.presenceTimers, buildingID)
+	}
+	delete(a.buildings, buildingID)
 	delete(a.buildingMode, buildingID)
 	delete(a.buildingOccupiedPublished, buildingID)
 	delete(a.buildingRooms, buildingID)
@@ -358,10 +408,141 @@ func (a *aggregator) buildingOccupiedLocked(buildingID string) *bool {
 			occupied = true
 		}
 	}
+	if known, present := a.presenceLocked(); known {
+		haveSignal = true
+		if present {
+			occupied = true
+		}
+	}
 	if !haveSignal {
 		return nil
 	}
 	return &occupied
+}
+
+// presenceLocked reports whether any presence-tracked device has reported a
+// reachability at all (known) and, if so, whether the tracked devices count
+// as present right now: at least one is reachable, or the last one to be
+// reachable went away within presenceGrace. Callers must hold a.mu.
+func (a *aggregator) presenceLocked() (known, present bool) {
+	for id := range a.presenceTracked {
+		reachable, ok := a.presenceReachable[id]
+		if !ok {
+			continue
+		}
+		known = true
+		if reachable {
+			return true, true
+		}
+	}
+	if !known {
+		return false, false
+	}
+	return true, !a.presenceLastSeen.IsZero() && a.now().Sub(a.presenceLastSeen) <= a.presenceGrace
+}
+
+// anyTrackedReachableLocked reports whether at least one presence-tracked
+// device is currently reachable. Callers must hold a.mu.
+func (a *aggregator) anyTrackedReachableLocked() bool {
+	for id := range a.presenceTracked {
+		if a.presenceReachable[id] {
+			return true
+		}
+	}
+	return false
+}
+
+// presenceChangedLocked is called after a mutation of presenceTracked/
+// presenceReachable. wasReachable is anyTrackedReachableLocked's value from
+// before the mutation; resetGrace discards any running grace period (used
+// when a device is un-tracked, which is an explicit "stop counting this" and
+// shouldn't leave the house occupied for another grace period). It starts
+// the grace period if the last reachable tracked device just went away, and
+// returns a BuildingUpdate for every building whose occupied value changed
+// as a result, to publish once a.mu is released.
+func (a *aggregator) presenceChangedLocked(wasReachable, resetGrace bool) []*api2.BuildingUpdate {
+	nowReachable := a.anyTrackedReachableLocked()
+	switch {
+	case resetGrace:
+		a.presenceLastSeen = time.Time{}
+	case wasReachable && !nowReachable:
+		a.presenceLastSeen = a.now()
+	}
+
+	var updates []*api2.BuildingUpdate
+	for buildingID := range a.buildings {
+		if wasReachable && !nowReachable && !resetGrace {
+			a.armPresenceTimerLocked(buildingID)
+		}
+		if u := a.refreshBuildingOccupiedLocked(buildingID); u != nil {
+			updates = append(updates, u)
+		}
+	}
+	return updates
+}
+
+// armPresenceTimerLocked schedules a recheck of buildingID's occupied value
+// presenceGrace from now - the grace-period counterpart of
+// armDecayTimerLocked, publishing the transition nothing else would
+// otherwise trigger once the grace period lapses. Callers must hold a.mu.
+func (a *aggregator) armPresenceTimerLocked(buildingID string) {
+	if t, ok := a.presenceTimers[buildingID]; ok {
+		t.Stop()
+	}
+
+	var timer *time.Timer
+	timer = a.afterFunc(a.presenceGrace, func() {
+		a.mu.Lock()
+		if a.presenceTimers[buildingID] == timer {
+			delete(a.presenceTimers, buildingID)
+		}
+		update := a.refreshBuildingOccupiedLocked(buildingID)
+		a.mu.Unlock()
+		a.publishBuilding(update)
+	})
+	a.presenceTimers[buildingID] = timer
+}
+
+// setPresenceTracked flags or un-flags deviceID as counting toward building
+// occupancy. Call at startup from the db (see load) and from every
+// UpdateDeviceConfig (see DeviceConfigOverlay.SetPresenceListener).
+func (a *aggregator) setPresenceTracked(deviceID string, tracked bool) {
+	a.mu.Lock()
+	if a.presenceTracked[deviceID] == tracked {
+		a.mu.Unlock()
+		return
+	}
+	wasReachable := a.anyTrackedReachableLocked()
+	if tracked {
+		a.presenceTracked[deviceID] = true
+	} else {
+		delete(a.presenceTracked, deviceID)
+	}
+	updates := a.presenceChangedLocked(wasReachable, !tracked)
+	a.mu.Unlock()
+
+	for _, u := range updates {
+		a.publishBuilding(u)
+	}
+}
+
+// setPresenceGrace overrides the away-grace period. Non-positive values are
+// ignored.
+func (a *aggregator) setPresenceGrace(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	a.mu.Lock()
+	a.presenceGrace = d
+	a.mu.Unlock()
+}
+
+// registerBuilding records buildingID so presence-driven occupancy changes
+// are computed and published for it. Call from Service.CreateBuilding.
+func (a *aggregator) registerBuilding(buildingID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.buildings[buildingID] = true
 }
 
 // boolPtrEqual reports whether a and b are both nil or both non-nil with the
@@ -499,6 +680,10 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 		return
 	}
 
+	if device.GetConnectedDevice() != nil {
+		a.handlePresenceUpdate(device)
+	}
+
 	a.mu.Lock()
 
 	roomID, ok := a.deviceRoom[device.GetId()]
@@ -524,6 +709,31 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 
 	a.publish(update)
 	a.publishBuilding(buildingUpdate)
+}
+
+// handlePresenceUpdate records a ConnectedDevice's current reachability, and
+// - only if it's a presence-tracked device - recomputes and publishes
+// building occupancy.
+func (a *aggregator) handlePresenceUpdate(d *apiDevice.Device) {
+	reachable := d.GetAddress().GetIsReachable()
+
+	a.mu.Lock()
+	prev, seen := a.presenceReachable[d.GetId()]
+	if seen && prev == reachable {
+		a.mu.Unlock()
+		return
+	}
+	wasReachable := a.anyTrackedReachableLocked()
+	a.presenceReachable[d.GetId()] = reachable
+	var updates []*api2.BuildingUpdate
+	if a.presenceTracked[d.GetId()] {
+		updates = a.presenceChangedLocked(wasReachable, false)
+	}
+	a.mu.Unlock()
+
+	for _, u := range updates {
+		a.publishBuilding(u)
+	}
 }
 
 // recomputeRoomLocked rebuilds roomID's cached Properties from the current

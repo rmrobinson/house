@@ -480,3 +480,27 @@ func TestListDeviceLinks_Filters(t *testing.T) {
 	require.Len(t, byDevice, 1)
 	assert.Equal(t, room1.ID, byDevice[0].RoomID)
 }
+
+func TestDeviceConfig_PresenceTrackedRoundTrips(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+
+	// A fresh row defaults to untracked.
+	_, err := d.SetDeviceConfig(ctx, DeviceConfig{ID: "phone", Name: "Pixel"})
+	require.NoError(t, err)
+	got, err := d.GetDeviceConfig(ctx, "phone")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.False(t, got.PresenceTracked)
+
+	_, err = d.SetDeviceConfig(ctx, DeviceConfig{ID: "phone", Name: "Pixel", PresenceTracked: true})
+	require.NoError(t, err)
+
+	got, err = d.GetDeviceConfig(ctx, "phone")
+	require.NoError(t, err)
+	assert.True(t, got.PresenceTracked)
+
+	all, err := d.ListDeviceConfigs(ctx)
+	require.NoError(t, err)
+	assert.True(t, all["phone"].PresenceTracked)
+}

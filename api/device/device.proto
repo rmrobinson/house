@@ -49,6 +49,14 @@ message Device {
     // Has no effect outside the googlehome integration; every other
     // consumer of this device ignores it.
     bool google_home_visible = 3;
+    // Whether this device's network reachability counts toward building
+    // occupancy - set on a person's phone so the house stays occupied while
+    // it's connected to the network, and only becomes vacant once every
+    // tracked device has been gone for the house service's away-grace
+    // period (see Building.State.occupied in house.proto). Only meaningful
+    // on a ConnectedDevice. Opt-in: the zero value (false) means the device
+    // is not tracked.
+    bool presence_tracked = 4;
   }
 
   // Unique ID of this device. Immutable.

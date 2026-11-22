@@ -26,6 +26,12 @@
             <input type="hidden" name="version" value="{{.Version}}">
             <button type="submit">{{if .GoogleHomeVisible}}Hide from Google Home{{else}}Show in Google Home{{end}}</button>
           </form>
+          {{if .Connected}}
+          <form class="inline" hx-post="{{url "/devices/" .ID "/presence"}}" hx-target="#page-content" hx-swap="outerHTML">
+            <input type="hidden" name="version" value="{{.Version}}">
+            <button type="submit">{{if .PresenceTracked}}Stop tracking presence{{else}}Track presence{{end}}</button>
+          </form>
+          {{end}}
         </td>
       </tr>
     {{else}}

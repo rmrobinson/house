@@ -225,10 +225,10 @@ type deviceRenameData struct {
 // housedb override (service/house.DeviceConfigOverlay), not written to the
 // device itself, via BridgeService.UpdateDeviceConfig, the same existing RPC
 // every other BridgeService write already uses. Carries the device's
-// current GoogleHomeVisible through unchanged - UpdateDeviceConfig always
+// current GoogleHomeVisible and PresenceTracked through unchanged - UpdateDeviceConfig always
 // writes both Config fields together (see its doc comment), so a rename
 // that only sent Name would silently make a device visible in Google Home
-// that was never opted in.
+// that was never opted in (and would likewise silently stop tracking a phone).
 func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
@@ -247,7 +247,7 @@ func (s *Server) handleDeviceRename(w http.ResponseWriter, r *http.Request) {
 	_, err = s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
 		Id:      deviceID,
 		Version: r.FormValue("version"),
-		Config:  &apiDevice.Device_Config{Name: name, GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible()},
+		Config:  &apiDevice.Device_Config{Name: name, GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible(), PresenceTracked: d.GetConfig().GetPresenceTracked()},
 	})
 	if err != nil {
 		data, loadErr := s.loadDevicesPageData(r)
@@ -295,6 +295,7 @@ func (s *Server) handleDeviceGoogleHomeToggle(w http.ResponseWriter, r *http.Req
 		Config: &apiDevice.Device_Config{
 			Name:              houseview.DisplayName(d),
 			GoogleHomeVisible: visible,
+			PresenceTracked:   d.GetConfig().GetPresenceTracked(),
 		},
 	})
 	if err != nil {
@@ -317,6 +318,52 @@ func (s *Server) handleDeviceGoogleHomeToggle(w http.ResponseWriter, r *http.Req
 		flash = "Hidden from Google Home again"
 	}
 	s.respond(w, "devices", data, fmt.Sprintf("%s: %s", houseview.DisplayName(d), flash), false)
+}
+
+// handlePresenceToggle flips a device's presence_tracked flag - whether its
+// network reachability (a person's phone on the wifi) counts toward building
+// occupancy. Re-reads the device fresh and resubmits its full Config, like
+// handleDeviceGoogleHomeToggle, so Name and GoogleHomeVisible carry through
+// unchanged.
+func (s *Server) handlePresenceToggle(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	ctx := r.Context()
+
+	d, err := s.bridge.GetDevice(ctx, &api2.GetDeviceRequest{Id: deviceID})
+	if err != nil {
+		s.httpError(w, r, err)
+		return
+	}
+	tracked := !d.GetConfig().GetPresenceTracked()
+
+	_, err = s.bridge.UpdateDeviceConfig(ctx, &api2.UpdateDeviceConfigRequest{
+		Id:      deviceID,
+		Version: r.FormValue("version"),
+		Config: &apiDevice.Device_Config{
+			Name:              houseview.DisplayName(d),
+			GoogleHomeVisible: d.GetConfig().GetGoogleHomeVisible(),
+			PresenceTracked:   tracked,
+		},
+	})
+
+	data, loadErr := s.loadDevicesPageData(r)
+	if loadErr != nil {
+		s.httpError(w, r, loadErr)
+		return
+	}
+	if err != nil {
+		s.respond(w, "devices", data, houseview.Message(err), true)
+		return
+	}
+	msg := fmt.Sprintf("No longer tracking %s for presence", houseview.DisplayName(d))
+	if tracked {
+		msg = fmt.Sprintf("Tracking %s for presence", houseview.DisplayName(d))
+	}
+	s.respond(w, "devices", data, msg, false)
 }
 
 type roomPickerData struct {

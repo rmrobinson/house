@@ -52,6 +52,21 @@ type DeviceConfigOverlay struct {
 	logger *zap.Logger
 	inner  api2.BridgeServiceServer
 	db     *db.Database
+
+	// onPresenceTracked, if set, is called after every UpdateDeviceConfig
+	// with the device's resulting presence_tracked value - see
+	// SetPresenceListener.
+	onPresenceTracked func(deviceID string, tracked bool)
+}
+
+// SetPresenceListener registers fn to be told a device's presence_tracked
+// value after every successful UpdateDeviceConfig, so the occupancy
+// aggregator learns of a toggle immediately rather than waiting for the
+// device's next bridge update (which may never come - the bridge only
+// publishes on change). Call before serving; not safe to call concurrently
+// with UpdateDeviceConfig.
+func (o *DeviceConfigOverlay) SetPresenceListener(fn func(deviceID string, tracked bool)) {
+	o.onPresenceTracked = fn
 }
 
 // NewDeviceConfigOverlay wraps inner with db-backed device name overrides.
@@ -74,6 +89,7 @@ func applyOverride(d *device.Device, cfg *db.DeviceConfig) {
 		Name:              cfg.Name,
 		Description:       d.GetConfig().GetDescription(),
 		GoogleHomeVisible: cfg.GoogleHomeVisible,
+		PresenceTracked:   cfg.PresenceTracked,
 	}
 }
 
@@ -148,7 +164,7 @@ func (o *DeviceConfigOverlay) GetDevice(ctx context.Context, req *api2.GetDevice
 // tradeoff adminui already makes elsewhere (see server.go's teardown doc
 // comment).
 //
-// req.Config carries both Name and GoogleHomeVisible together, and both are
+// req.Config carries Name, GoogleHomeVisible and PresenceTracked together, and all are
 // always written - there's no partial-update support (proto3 gives a bool
 // field no way to distinguish "leave as-is" from "set to false"), so every
 // caller is expected to read the device's current full Config first and
@@ -170,9 +186,17 @@ func (o *DeviceConfigOverlay) UpdateDeviceConfig(ctx context.Context, req *api2.
 		return nil, bridge.ErrVersionMismatch
 	}
 
-	cfg, err := o.db.SetDeviceConfig(ctx, req.GetId(), name, req.GetConfig().GetGoogleHomeVisible())
+	cfg, err := o.db.SetDeviceConfig(ctx, db.DeviceConfig{
+		ID:                req.GetId(),
+		Name:              name,
+		GoogleHomeVisible: req.GetConfig().GetGoogleHomeVisible(),
+		PresenceTracked:   req.GetConfig().GetPresenceTracked(),
+	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, "unable to save device config")
+	}
+	if o.onPresenceTracked != nil {
+		o.onPresenceTracked(cfg.ID, cfg.PresenceTracked)
 	}
 
 	applyOverride(d, cfg)
