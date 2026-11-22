@@ -1,6 +1,8 @@
 package house
 
 import (
+	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
+	"github.com/rmrobinson/house/service/house/db"
 )
 
 func phoneUpdate(id string, reachable bool) *api2.Update {
@@ -245,4 +248,73 @@ func TestPresence_UntrackingOnePhoneKeepsOthersGrace(t *testing.T) {
 	got := occupied(h.a)
 	require.NotNil(t, got)
 	assert.True(t, *got, "robert's grace period is still running")
+}
+
+func TestPresence_StartupWithTrackedDevicesGetsGrace(t *testing.T) {
+	d := newPresenceTestDB(t)
+	_, err := d.SetDeviceConfig(context.Background(), db.DeviceConfig{ID: "phone", Name: "Pixel", PresenceTracked: true})
+	require.NoError(t, err)
+	b, err := d.CreateBuilding(context.Background(), &db.Building{Name: "h", TZ: "America/Toronto"})
+	require.NoError(t, err)
+
+	a := newAggregator(zaptest.NewLogger(t))
+	now := time.Unix(1_700_000_000, 0)
+	a.now = func() time.Time { return now }
+	var timers int
+	a.afterFunc = func(time.Duration, func()) *time.Timer { timers++; return nil }
+	require.NoError(t, a.load(context.Background(), d))
+	assert.Equal(t, 1, timers, "a grace timer must be armed at startup")
+
+	// Phone is first reported already unreachable (asleep): still occupied
+	// for the grace period, then vacant.
+	a.handleUpdate(phoneUpdate("phone", false))
+	got := a.buildingOccupied(b.ID)
+	require.NotNil(t, got)
+	assert.True(t, *got)
+	now = now.Add(DefaultPresenceGrace + time.Second)
+	got = a.buildingOccupied(b.ID)
+	require.NotNil(t, got)
+	assert.False(t, *got)
+}
+
+func TestPresence_RemovedDeviceStopsCounting(t *testing.T) {
+	h := newPresenceHarness(t)
+	h.a.setPresenceTracked("phone", true)
+	h.a.handleUpdate(phoneUpdate("phone", true))
+
+	rm := phoneUpdate("phone", true)
+	rm.Action = api2.Update_REMOVED
+	h.a.handleUpdate(rm)
+	require.Len(t, h.timer, 1, "removal of the last reachable tracked device starts grace")
+
+	h.now = h.now.Add(DefaultPresenceGrace + time.Second)
+	got := occupied(h.a)
+	require.NotNil(t, got)
+	assert.False(t, *got)
+}
+
+func TestPresence_UpdateWithoutAddressIsIgnored(t *testing.T) {
+	h := newPresenceHarness(t)
+	h.a.setPresenceTracked("phone", true)
+	h.a.handleUpdate(phoneUpdate("phone", true))
+
+	u := phoneUpdate("phone", true)
+	u.GetDeviceUpdate().Device.Address = nil
+	h.a.handleUpdate(u)
+
+	assert.Empty(t, h.timer)
+	got := occupied(h.a)
+	require.NotNil(t, got)
+	assert.True(t, *got)
+}
+
+func newPresenceTestDB(t *testing.T) *db.Database {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.Close() })
+	d, err := db.NewDatabase(zaptest.NewLogger(t), sqlDB)
+	require.NoError(t, err)
+	return d
 }

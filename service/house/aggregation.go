@@ -196,6 +196,17 @@ func (a *aggregator) load(ctx context.Context, database *db.Database) error {
 			a.presenceTracked[id] = true
 		}
 	}
+	if len(a.presenceTracked) > 0 {
+		// Start-up counts as the moment tracked devices were last seen: until
+		// the bridge stream replays their real state, and for a phone that's
+		// home but asleep off the wifi, there's no reachable->unreachable
+		// transition to anchor a grace period to - without this a restart
+		// would call the house vacant on the spot.
+		a.presenceLastSeen = a.now()
+		for buildingID := range a.buildings {
+			a.armPresenceTimerLocked(buildingID)
+		}
+	}
 	return nil
 }
 
@@ -679,7 +690,7 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 	}
 
 	if device.GetConnectedDevice() != nil {
-		a.handlePresenceUpdate(device)
+		a.handlePresenceUpdate(device, u.GetAction() == api2.Update_REMOVED)
 	}
 
 	a.mu.Lock()
@@ -709,11 +720,18 @@ func (a *aggregator) handleUpdate(u *api2.Update) {
 	a.publishBuilding(buildingUpdate)
 }
 
-// handlePresenceUpdate records a ConnectedDevice's current reachability, and
+// handlePresenceUpdate records a ConnectedDevice's current reachability (or
+// removal), and
 // - only if it's a presence-tracked device - recomputes and publishes
 // building occupancy.
-func (a *aggregator) handlePresenceUpdate(d *apiDevice.Device) {
-	reachable := d.GetAddress().GetIsReachable()
+func (a *aggregator) handlePresenceUpdate(d *apiDevice.Device, removed bool) {
+	// A device that's been removed from the network is gone, and an update
+	// carrying no Address at all says nothing about reachability (it would
+	// otherwise read as unreachable) - ignore those.
+	if !removed && d.GetAddress() == nil {
+		return
+	}
+	reachable := !removed && d.GetAddress().GetIsReachable()
 
 	a.mu.Lock()
 	prev, seen := a.presenceReachable[d.GetId()]
