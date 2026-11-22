@@ -4,11 +4,13 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	api2 "github.com/rmrobinson/house/api"
 	apiDevice "github.com/rmrobinson/house/api/device"
@@ -160,6 +162,23 @@ func TestDetectionNotification_AlreadySeenObjectNotRenotified(t *testing.T) {
 	// this must not fire again.
 	_, _, ok = a.detectionNotification(d)
 	assert.False(t, ok)
+}
+
+// TestDetectionNotification_TimestampIgnoresObjectOrder guards against a real bug: the first
+// new object having no first_seen (frigate's FirstSeen can be its zero value) must not cause a
+// later object's real, earlier timestamp to be discarded in favour of time.Now().
+func TestDetectionNotification_TimestampIgnoresObjectOrder(t *testing.T) {
+	a := newNotifyAgent()
+	earlier := time.Now().Add(-time.Hour)
+	d := cameraWithDetection("camera1",
+		&apiTrait.Detection_Object{Label: "person", EventId: "evt1"}, // no FirstSeen
+		&apiTrait.Detection_Object{Label: "person", EventId: "evt2", FirstSeen: timestamppb.New(earlier)},
+	)
+
+	notification, _, ok := a.detectionNotification(d)
+	require.True(t, ok)
+	gotMs := notification["ObjectDetection"].(map[string]interface{})["detectionTimestamp"].(int64)
+	assert.Equal(t, earlier.UnixMilli(), gotMs)
 }
 
 func TestDetectionNotification_NoDetectionCapability(t *testing.T) {

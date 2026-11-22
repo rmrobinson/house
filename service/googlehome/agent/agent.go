@@ -278,8 +278,8 @@ func (a *Agent) detectionNotification(d *device.Device) (notification map[string
 	// anything with neither as "unclassified".
 	var named []string
 	var unfamiliar, unclassified int
-	latest := time.Now()
-	for i, obj := range newObjects {
+	var latest time.Time
+	for _, obj := range newObjects {
 		switch {
 		case obj.GetSubLabel() != "":
 			named = append(named, obj.GetSubLabel())
@@ -288,9 +288,16 @@ func (a *Agent) detectionNotification(d *device.Device) (notification map[string
 		default:
 			unclassified++
 		}
-		if firstSeen := obj.GetFirstSeen(); firstSeen != nil && (i == 0 || firstSeen.AsTime().After(latest)) {
-			latest = firstSeen.AsTime()
+		if firstSeen := obj.GetFirstSeen(); firstSeen != nil {
+			if t := firstSeen.AsTime(); latest.IsZero() || t.After(latest) {
+				latest = t
+			}
 		}
+	}
+	// Not every bridge sets first_seen (frigate's own FirstSeen can be its zero value) - fall
+	// back to now rather than reporting the zero time if none of newObjects had one.
+	if latest.IsZero() {
+		latest = time.Now()
 	}
 
 	objects := map[string]interface{}{}
