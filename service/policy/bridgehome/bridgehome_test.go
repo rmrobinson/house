@@ -530,6 +530,31 @@ func TestAdapter_SetState_ScalarField(t *testing.T) {
 	assert.EqualValues(t, 75, cmds[0].GetBrightnessAbsolute().GetBrightnessPercent())
 }
 
+// TestAdapter_SetState_IndicatorEffect pins that a policy script can drive an LED bar with no
+// adapter code specific to it, including the proto3 optional fields (hue, level_percent).
+func TestAdapter_SetState_IndicatorEffect(t *testing.T) {
+	srv := &fakeBridgeServer{cmdResp: lightDevice("light-1", true)}
+	adapter, _ := newStartedAdapter(t, srv)
+
+	require.NoError(t, adapter.SetState("light-1", "indicator_effect", map[string]any{
+		"effect":           "pulse",
+		"hue":              float64(0),
+		"level_percent":    float64(60),
+		"duration_seconds": float64(30),
+	}))
+
+	cmds := srv.recordedCommands()
+	require.Len(t, cmds, 1)
+	e := cmds[0].GetIndicatorEffect()
+	require.NotNil(t, e)
+	assert.Equal(t, "pulse", e.GetEffect())
+	require.NotNil(t, e.Hue, "an explicit hue of 0 (red) must be present, not mistaken for unset")
+	assert.EqualValues(t, 0, e.GetHue())
+	assert.EqualValues(t, 60, e.GetLevelPercent())
+	assert.EqualValues(t, 30, e.GetDurationSeconds())
+	assert.False(t, e.GetWhite())
+}
+
 func TestAdapter_SetState_NestedMessageField(t *testing.T) {
 	srv := &fakeBridgeServer{cmdResp: lightDevice("light-1", true)}
 	adapter, _ := newStartedAdapter(t, srv)

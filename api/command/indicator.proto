@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package faltung.house.api.command;
+
+option go_package = "github.com/rmrobinson/house/api/command";
+
+// IndicatorEffect controls a device with the indicator trait by playing a transient effect on the
+// whole indicator, e.g. pulsing it red for thirty seconds. The effect ends by itself after
+// duration_seconds, or can be ended early by sending the device's own "off" or "clear_effect"
+// effect (whichever Indicator.Attributes.effects lists).
+//
+// Which effects are valid is determined by the device's Indicator.Attributes.effects.
+message IndicatorEffect {
+  // The effect to play, one of Indicator.Attributes.effects.
+  string effect = 1;
+
+  // How long the effect plays, in seconds. Zero plays it until it is cleared. A device may only be
+  // able to represent a coarser duration for long values (e.g. whole minutes or hours), in which
+  // case it is rounded up, never down. A negative duration, or one longer than the device can
+  // represent at all, is rejected with INVALID_ARGUMENT rather than shortened.
+  int32 duration_seconds = 2;
+
+  // The colour of the effect, as a hue in degrees - between 0 and 360. Ignored if white is set.
+  // One of hue or white must be set for any effect that shows a colour; an effect which ends or
+  // clears the indicator needs neither.
+  optional int32 hue = 3;
+
+  // If true the effect is white, rather than a hue.
+  bool white = 4;
+
+  // The brightness of the effect, in percent - between 0 and 100. Defaults to 100 if unset. A value
+  // outside that range is rejected, not clamped. The same goes for a hue outside 0 to 360.
+  optional int32 level_percent = 5;
+
+  // Field 6 is reserved for a per-LED selector so an effect can target a single LED of a multi-LED
+  // indicator. Only whole-indicator effects are supported for now.
+  reserved 6;
+}

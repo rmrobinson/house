@@ -18,6 +18,7 @@ proto_library(
         "charging_session.proto",
         "colour.proto",
         "detection.proto",
+        "indicator.proto",
         "input.proto",
         "light_level.proto",
         "media.proto",

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package faltung.house.api.trait;
+
+option go_package = "github.com/rmrobinson/house/api/trait";
+
+// Indicator describes a device's own status indicator - an LED or LED bar that is separate from
+// the load the device controls (e.g. the light bar on an Inovelli dimmer's face) - and the
+// transient effects it can be told to play (a pulse, a blink, a solid colour) to signal something.
+//
+// It is unrelated to the Colour and Brightness traits, which describe the light the device
+// switches, not the indicator. Effects are commanded with command.IndicatorEffect.
+message Indicator {
+  message Attributes {
+    // If true, control of the indicator is possible.
+    // If false, control is not allowed and the property is read-only.
+    bool can_control = 1;
+
+    // The effect names this indicator accepts in command.IndicatorEffect.effect, in the device's own
+    // vocabulary (e.g. "solid", "pulse", "fast_blink"), same as Buttons.Attributes.actions.
+    repeated string effects = 2;
+  }
+  message State {
+    // Intentionally empty. A transient effect is not device state that outlives the effect, and
+    // the persistent idle appearance of an indicator (colour/intensity when the load is on or off)
+    // is not modeled yet. Reserved so persistent settings can be added here without changing the
+    // trait's shape.
+  }
+
+  Attributes attributes = 1;
+  State state = 2;
+}

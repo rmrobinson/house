@@ -13,6 +13,7 @@ proto_library(
         "channel.proto",
         "colour.proto",
         "command.proto",
+        "indicator.proto",
         "input.proto",
         "media.proto",
         "mode.proto",

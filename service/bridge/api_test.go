@@ -482,6 +482,37 @@ func TestExecuteCommand_UnsupportedCommand(t *testing.T) {
 	assert.ErrorIs(t, err, ErrCommandNotSupported)
 }
 
+func TestExecuteCommand_IndicatorEffect(t *testing.T) {
+	cmd := &command.Command{
+		DeviceId: "d1",
+		Details:  &command.Command_IndicatorEffect{IndicatorEffect: &command.IndicatorEffect{Effect: "solid", White: true}},
+	}
+
+	t.Run("light with an indicator", func(t *testing.T) {
+		withIndicator := lightDevice("d1")
+		withIndicator.GetLight().Indicator = &trait.Indicator{}
+		h := &fakeHandler{
+			processCommandFn: func(ctx context.Context, cmd *command.Command) (*device.Device, error) {
+				return withIndicator, nil
+			},
+		}
+		svc := newTestService(t, h)
+		svc.UpdateDevice(withIndicator)
+
+		_, err := svc.API().ExecuteCommand(context.Background(), cmd)
+		require.NoError(t, err)
+	})
+
+	t.Run("light without one", func(t *testing.T) {
+		svc := newTestService(t, &fakeHandler{})
+		svc.UpdateDevice(lightDevice("d1"))
+
+		d, err := svc.API().ExecuteCommand(context.Background(), cmd)
+		assert.Nil(t, d)
+		assert.ErrorIs(t, err, ErrCommandNotSupported)
+	})
+}
+
 func TestExecuteCommand_Supported(t *testing.T) {
 	wantDevice := lightDevice("d1")
 	h := &fakeHandler{

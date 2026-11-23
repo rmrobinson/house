@@ -9,6 +9,7 @@ import "api/command/audio_output.proto";
 import "api/command/brightness.proto";
 import "api/command/channel.proto";
 import "api/command/colour.proto";
+import "api/command/indicator.proto";
 import "api/command/input.proto";
 import "api/command/media.proto";
 import "api/command/mode.proto";
@@ -81,5 +82,6 @@ message Command {
     faltung.house.api.command.AudioOutput audio_output = 130;
     faltung.house.api.command.PlayMedia play_media = 131;
     faltung.house.api.command.OpenClose open_close = 132;
+    faltung.house.api.command.IndicatorEffect indicator_effect = 133;
   }
 }
