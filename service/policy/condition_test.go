@@ -583,7 +583,9 @@ func TestNotCondition(t *testing.T) {
 
 func TestHeldForConditionFiresAfterDurationThenResetsOnChildFalse(t *testing.T) {
 	child := &manualCondition{}
-	cond := NewHeldForCondition(child, 30*time.Millisecond)
+	// The hold must be far longer than assertNoChange's 30ms window. At 30ms the two expired
+	// together, so on a loaded runner Evaluate() below could already be true - a CI-only flake.
+	cond := NewHeldForCondition(child, 250*time.Millisecond)
 
 	changes := make(chan bool, 8)
 	cond.Start(t.Context(), func(v bool) { changes <- v })
@@ -611,19 +613,21 @@ func TestHeldForConditionFiresAfterDurationThenResetsOnChildFalse(t *testing.T) 
 // elapsed.
 func TestHeldForConditionResetsBeforeDurationElapses(t *testing.T) {
 	child := &manualCondition{}
-	cond := NewHeldForCondition(child, 30*time.Millisecond)
+	// Long enough that a sleep which overshoots on a loaded runner still resets well before it.
+	cond := NewHeldForCondition(child, 250*time.Millisecond)
 
 	changes := make(chan bool, 8)
 	cond.Start(t.Context(), func(v bool) { changes <- v })
 
 	child.set(true)
 	time.Sleep(10 * time.Millisecond)
-	child.set(false) // well before the 30ms duration elapses
+	child.set(false) // well before the 250ms duration elapses
 
+	// Wait past where the original countdown would have fired.
 	select {
 	case v := <-changes:
 		t.Fatalf("unexpected onChange(%v): countdown should have been cancelled", v)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(300 * time.Millisecond):
 	}
 	assert.False(t, cond.Evaluate())
 }
@@ -665,7 +669,7 @@ func TestHeldForConditionStartPicksUpAlreadyTrueChild(t *testing.T) {
 // not merely leave it to fire into a torn-down onChange later.
 func TestHeldForConditionStopsCountdownOnCancel(t *testing.T) {
 	child := &manualCondition{}
-	cond := NewHeldForCondition(child, 20*time.Millisecond)
+	cond := NewHeldForCondition(child, 100*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	changes := make(chan bool, 8)
@@ -674,10 +678,11 @@ func TestHeldForConditionStopsCountdownOnCancel(t *testing.T) {
 	child.set(true)
 	cancel()
 
+	// Wait past where the countdown would have fired had it not been stopped.
 	select {
 	case v := <-changes:
 		t.Fatalf("unexpected onChange(%v) after cancellation", v)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 	}
 	assert.False(t, cond.Evaluate())
 }
